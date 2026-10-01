@@ -290,7 +290,7 @@ async function buildWorld(cfg, S) {
     }
     if (!tpl(d.model, true)) continue;
     kind(d.model, { castShadow: d.block || /bush|underwood|tree/.test(d.model), holes: /tree|palm/.test(d.model) });
-    G.props.add(d.model, d.x, y, d.z, d.rot, d.scale);
+    G.props.add(d.model, d.x, y, d.z, d.rot, d.scale, d.q);
     addSprites(d.model, d.x, y, d.z, d.rot, d.scale, { ground: !/tree|palm|bamboo|deco/.test(d.model) });
     if (d.block) nav.markCircle(d.x, d.z, Math.min(24, radiusOf(d.model) * d.scale * 0.7));
   }

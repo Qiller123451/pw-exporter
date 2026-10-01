@@ -53,6 +53,7 @@ async function init() {
   setUiLang(ST.settings.ui_lang || 'en');
   viewer = new Viewer($('#view'));
   viewer.onTime = onTime;
+  window.PWX = { get viewer() { return viewer; }, get map() { return mapView; }, get cur() { return cur; } };   // for tests and the console
   wireStatic();
   if (!ST.configured) return showSetup();
   if (!ST.progress.ready) return showLoading();
@@ -69,6 +70,7 @@ function setUiLang(l) {
   $('#search').placeholder = S.search;
   $('#tb-frame').textContent = S.frame; $('#tb-shot').textContent = S.shot;
   $('#tb-grid-l').textContent = S.grid; $('#tb-wire-l').textContent = S.wire; $('#tb-bones-l').textContent = S.bones;
+  for (const k of ['tex', 'cloth', 'links', 'coll', 'normals']) { $('#tb-' + k + '-l').textContent = S['tb_' + k]; $('#tb-' + k).parentNode.title = S['tb_' + k + '_t']; }
   $('#tb-rot-l').textContent = S.autorotate; $('#tb-bg-l').textContent = S.bg;
   $('#pl-loop-l').textContent = S.loop; $('#pl-seam-l').textContent = S.seamless;
   $('#hint').textContent = S.help; $('#empty').textContent = S.pick;
@@ -95,6 +97,11 @@ function wireStatic() {
   $('#tb-grid').onchange = (e) => viewer.setGrid(e.target.checked);
   $('#tb-wire').onchange = (e) => viewer.wire(e.target.checked);
   $('#tb-bones').onchange = (e) => viewer.bones(e.target.checked);
+  $('#tb-tex').onchange = (e) => viewer.setOpt('texture', e.target.checked);
+  $('#tb-cloth').onchange = (e) => viewer.setOpt('cloth', e.target.checked);
+  $('#tb-links').onchange = (e) => viewer.setOpt('links', e.target.checked);
+  $('#tb-coll').onchange = (e) => viewer.setOpt('coll', e.target.checked);
+  $('#tb-normals').onchange = (e) => viewer.setOpt('normals', e.target.checked);
   $('#tb-rot').onchange = (e) => { viewer.autoRotate = e.target.checked; if (!e.target.checked) viewer.root.rotation.y = 0; };
   $('#tb-bg').onchange = (e) => viewer.setBackground(e.target.checked);
   $('#tb-shot').onclick = () => { const a = el('a', { href: viewer.screenshot(), download: (cur.exp.name || 'paraworld') + '.png' }); a.click(); };
@@ -553,7 +560,7 @@ async function loadMaps() {
 }
 function leaveMap() {
   if (mapView) { mapView.dispose(); mapView = null; }
-  if (cur.map) { cur.map = null; viewer.setGrid($('#tb-grid').checked); viewer.mapMode(false); }
+  if (cur.map) { cur.map = null; viewer.setGrid($('#tb-grid').checked); viewer.mapMode(false); document.body.classList.remove('mapmode'); }
 }
 let mapToken = 0;
 async function selectMap(m) {
@@ -572,7 +579,7 @@ async function selectMap(m) {
   const mv = mapView = new MapView(api);
   await mv.load(info);
   if (my !== mapToken) { mv.dispose(); return; }
-  viewer.mapMode(true);
+  viewer.mapMode(true); document.body.classList.add('mapmode');
   viewer.showGroup(mv.group);
   applyMapLayers();
   $('#busy').classList.add('hidden');

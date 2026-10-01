@@ -112,6 +112,15 @@ Every model also carries parts that the game switches on and off:
 **Player colour** tints the party-colour parts (banners, cloth, shields) with one of the eight colours of the game.
 The grey swatch shows the untinted texture.
 
+### View toggles
+
+The bar above the view: **Frame** (fit the model into the view), **Grid**, **Wireframe**, **Skeleton** (the bones),
+**Texture** (off: plain material colours), **Cloth** (the cloth parts: flags, banners, sails, paddle flaps – switched
+off they are left out of exports too), **Links** (the attachment points with their names: `Ride` riders, `we`
+turrets, `Bl_0..9` builders, `flag`, `D_01..16` damage effects …), **Collision** (the pathfinder boxes and spheres in
+yellow, the selection volumes in orange), **Normals** (the vertex normals), **Turn**, **Background** and
+**Screenshot**. On maps only Frame, Grid, Wireframe, Texture and the last three are offered.
+
 ### Step 5 – Animations
 
 ![Animations](screenshots/10_warrior_level3.png)
@@ -169,6 +178,8 @@ Click one to load it:
   many objects of each kind it holds.
 * **Show**: objects with their models, grass & small plants (the landscape decoration – many thousands), water, and
   pins for every object (handy for objects without a model in your installation).
+* **Walls** are joined like in the game: every wall piece shows only the arms towards its neighbouring pieces, towers
+  and gates (and one of the model's variants per arm) – in the 3D view and in the map exports.
 
 ### Exporting a map
 

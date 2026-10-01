@@ -61,6 +61,9 @@ export class Viewer {
     this.clock = new THREE.Clock();
     this.speed = 1; this.playing = true; this.loop = true;
     this.onTime = null;
+    this.opts = { texture: true, cloth: true, links: false, coll: false, normals: false };
+    this.overlays = [];             // helper objects of the toggles (links, collision volumes, normals)
+    this.liveNormals = [];          // normal lines of skinned meshes, updated every frame
     new ResizeObserver(() => this.resize()).observe(el);
     this.resize();
     this.renderer.domElement.addEventListener('dblclick', (e) => this.focusAt(e));
@@ -76,6 +79,7 @@ export class Viewer {
     for (const p of this.parts) { p.mixer && p.mixer.stopAllAction(); p.obj.removeFromParent(); }
     this.parts = [];
     if (this.skel) { this.skel.removeFromParent(); this.skel = null; }
+    this.clearOverlays();
   }
   // parts: [{url, parent (index), link, anim, name}] -> loaded and attached; part 0 is the main model
   async show(parts, keepCamera = false) {
@@ -104,7 +108,10 @@ export class Viewer {
     });
     if (this.party !== undefined) this.setParty(this.party);
     this.wire(this.wireOn);
+    this.setTextures(this.opts.texture);
     if (!keepCamera) this.frame();
+    this.buildOverlays();
+    if (this.skelOn) this.bones(true);
     return this.parts;
   }
   // map viewer: no grid / shadow ground, sun without shadows (a whole map), sky colour
@@ -133,6 +140,7 @@ export class Viewer {
     const p = this.parts[i];
     if (!p) return;
     p.hidden = P.apply(p.obj, p.fourcc, p.state);
+    if (!this.opts.cloth) for (const n of P.flagged(p.obj)) if (n.userData.kind === 'cloth' && n.visible) { n.visible = false; if (n.userData.nodeName) p.hidden.push(n.userData.nodeName); }
     for (const s of p.sprites) s.group.visible = isShown(s.node);      // sprites follow their billboard node
   }
   // play an animation on part i (null = rest pose); main model: t0/t1 = seamless loop
@@ -171,6 +179,7 @@ export class Viewer {
     if (this.autoRotate) this.root.rotation.y += dt * 0.4;
     this.controls.update();
     if (this.skel) this.skel.update && this.skel.update();
+    for (const f of this.liveNormals) f();
     this.renderer.render(this.scene, this.camera);
     if (this.onTime) this.onTime(this.time, this.duration);
   }
@@ -199,13 +208,14 @@ export class Viewer {
     const rect = this.renderer.domElement.getBoundingClientRect();
     const m = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
     const ray = new THREE.Raycaster(); ray.setFromCamera(m, this.camera);
-    const hit = ray.intersectObject(this.root, true).find((h) => isShown(h.object));
+    const hit = ray.intersectObject(this.root, true).find((h) => isShown(h.object) && !h.object.userData.overlay && !h.object.isSprite);
     if (hit) this.controls.target.copy(hit.point);
   }
   setGrid(on) { this.gridOn = on; this.grid.visible = on && !this.isMap; this.ground.visible = on && !this.isMap; }
   setBackground(light) { this.scene.background = light ? this.bgLight : this.bgDark; }
   wire(on) { this.wireOn = !!on; this.root.traverse((o) => { if (o.isMesh) for (const m of [].concat(o.material)) m.wireframe = this.wireOn; }); }
   bones(on) {
+    this.skelOn = !!on;
     if (this.skel) { this.skel.removeFromParent(); this.skel = null; }
     if (on && this.parts[0]) { this.skel = new THREE.SkeletonHelper(this.parts[0].obj); this.scene.add(this.skel); }
   }
@@ -222,6 +232,114 @@ export class Viewer {
         if (rgb) m.color.setRGB(rgb[0], rgb[1], rgb[2], THREE.SRGBColorSpace);
       }
     });
+  }
+  // the toolbar toggles: texture, cloth, links, collision volumes, normals
+  setOpt(key, on) {
+    this.opts[key] = !!on;
+    if (key === 'texture') this.setTextures(on);
+    else if (key === 'cloth') this.parts.forEach((_, i) => this.applyState(i));
+    else this.buildOverlays();
+  }
+  setTextures(on) {
+    this.root.traverse((o) => {
+      if (!o.isMesh) return;
+      for (const m of [].concat(o.material)) {
+        if (!('origMap' in m.userData)) m.userData.origMap = m.map || null;
+        const want = on ? m.userData.origMap : null;
+        if (m.map !== want) { m.map = want; m.needsUpdate = true; }
+      }
+    });
+  }
+  clearOverlays() {
+    for (const o of this.overlays) { o.removeFromParent(); o.traverse((x) => { if (x.geometry) x.geometry.dispose(); if (x.material) { if (x.material.map) x.material.map.dispose(); x.material.dispose(); } }); }
+    this.overlays = []; this.liveNormals = [];
+  }
+  buildOverlays() {
+    this.clearOverlays();
+    if (this.mapGroup || !this.parts.length) return;
+    const add = (parent, o) => { o.userData.overlay = true; o.traverse((x) => { x.userData.overlay = true; x.frustumCulled = false; }); parent.add(o); this.overlays.push(o); };
+    this.root.updateMatrixWorld(true);
+    const box = new THREE.Box3();
+    this.parts[0].obj.traverse((o) => { if (o.isMesh && isShown(o)) box.expandByObject(o); });
+    const size = box.isEmpty() ? 2 : box.getSize(new THREE.Vector3()).length();
+    for (const p of this.parts) {
+      const rootNode = p.obj.children[0];
+      if (!rootNode) continue;
+      if (this.opts.links) {
+        p.obj.traverse((o) => {
+          const n = o.userData.nodeName;
+          if (!n || !n.startsWith('link_') || o.userData.overlay) return;
+          const s = 1 / Math.max(1e-6, o.getWorldScale(new THREE.Vector3()).x);
+          const ax = new THREE.AxesHelper(size * 0.04 * s);
+          ax.material.depthTest = false; ax.renderOrder = 10;
+          const label = textSprite(n.slice(5), size * 0.025 * s);
+          label.position.set(0, 0, size * 0.012 * s);
+          ax.add(label);
+          add(o, ax);
+        });
+      }
+      if (this.opts.coll) {
+        const pf = rootNode.userData.pf || [];
+        const mat = new THREE.LineBasicMaterial({ color: 0xffd23f, depthTest: false, transparent: true, opacity: 0.9 });
+        for (const r of pf) {
+          let geo, pos;
+          if (r[0] === 1) { geo = new THREE.EdgesGeometry(new THREE.BoxGeometry(Math.abs(r[4]), Math.abs(r[5]), Math.abs(r[6]))); pos = [r[1] + r[4] / 2, r[2] + r[5] / 2, r[3] + r[6] / 2]; }
+          else if (r[0] === 0 && r[4] > 0) { geo = new THREE.WireframeGeometry(new THREE.SphereGeometry(r[4], 12, 8)); pos = [r[1], r[2], r[3]]; }
+          else continue;
+          const l = new THREE.LineSegments(geo, mat); l.position.set(...pos); l.renderOrder = 9;
+          add(rootNode, l);
+        }
+        // selection / pick volumes and flag-less hulls (the meshes the parts panel calls helpers)
+        const inv = new THREE.Matrix4().copy(rootNode.matrixWorld).invert();
+        const hmat = new THREE.LineBasicMaterial({ color: 0xff7a3d, depthTest: false, transparent: true, opacity: 0.8 });
+        for (const n of P.flagged(p.obj)) {
+          if (P.helper(n.userData.attr >>> 0, p.fourcc) !== 'pick' && !P.isHull(n)) continue;
+          n.traverse((m) => {
+            if (!m.isMesh || m.isSkinnedMesh) return;
+            const l = new THREE.LineSegments(new THREE.WireframeGeometry(m.geometry), hmat);
+            l.matrixAutoUpdate = false; l.matrix.multiplyMatrices(inv, m.matrixWorld); l.renderOrder = 9;
+            add(rootNode, l);
+          });
+        }
+      }
+      if (this.opts.normals) {
+        const mat = new THREE.LineBasicMaterial({ color: 0x3fb8ff });
+        p.obj.traverse((m) => {
+          if (!m.isMesh || m.userData.overlay || !m.geometry.attributes.normal) return;
+          const mats = [].concat(m.material);
+          if (mats.every((x) => x.visible === false)) return;
+          const P_ = m.geometry.attributes.position, N = m.geometry.attributes.normal, cnt = P_.count;
+          const arr = new Float32Array(cnt * 6);
+          const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+          const line = new THREE.LineSegments(geo, mat);
+          const len = size * 0.012;
+          if (!m.isSkinnedMesh) {
+            const s = 1 / Math.max(1e-6, m.getWorldScale(new THREE.Vector3()).x);
+            for (let i = 0; i < cnt; i++) for (let k = 0; k < 3; k++) { const v = P_.getComponent(i, k); arr[i * 6 + k] = v; arr[i * 6 + 3 + k] = v + N.getComponent(i, k) * len * s; }
+            add(m, line);
+          } else {
+            // skinned: follow the animation (world space, recomputed every frame)
+            add(this.scene, line);
+            const a = new THREE.Vector3(), b = new THREE.Vector3(), n = new THREE.Vector3();
+            const bs = 1 / Math.max(1e-6, m.getWorldScale(new THREE.Vector3()).x);
+            const upd = () => {
+              line.visible = isShown(m);
+              if (!line.visible) return;
+              for (let i = 0; i < cnt; i++) {
+                a.fromBufferAttribute(P_, i); n.fromBufferAttribute(N, i);
+                b.copy(a).addScaledVector(n, len * bs);
+                m.applyBoneTransform(i, a); m.applyBoneTransform(i, b);
+                a.applyMatrix4(m.matrixWorld); b.applyMatrix4(m.matrixWorld);
+                arr[i * 6] = a.x; arr[i * 6 + 1] = a.y; arr[i * 6 + 2] = a.z; arr[i * 6 + 3] = b.x; arr[i * 6 + 4] = b.y; arr[i * 6 + 5] = b.z;
+              }
+              geo.attributes.position.needsUpdate = true;
+            };
+            upd();
+            this.liveNormals.push(upd);
+          }
+        });
+      }
+    }
   }
   screenshot() { this.renderer.render(this.scene, this.camera); return this.renderer.domElement.toDataURL('image/png'); }
 }
@@ -291,6 +409,21 @@ function makeSprites(obj, rootNode) {
     });
   }
   return out;
+}
+
+// a camera-facing text label (link names)
+function textSprite(text, h) {
+  const c = document.createElement('canvas'), g = c.getContext('2d');
+  g.font = 'bold 28px sans-serif';
+  const w = Math.ceil(g.measureText(text).width) + 12;
+  c.width = w; c.height = 40;
+  g.font = 'bold 28px sans-serif'; g.textBaseline = 'middle';
+  g.fillStyle = 'rgba(20,24,30,0.7)'; g.fillRect(0, 0, w, 40);
+  g.fillStyle = '#ffe680'; g.fillText(text, 6, 21);
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false }));
+  sp.scale.set(h * w / 40, h, 1); sp.renderOrder = 11; sp.center.set(0, 0);
+  return sp;
 }
 
 function isShown(o) { for (let n = o; n; n = n.parent) if (!n.visible) return false; return true; }

@@ -17,12 +17,25 @@ import tempfile
 
 import numpy as np
 
-from . import parts, scape, scene as scene_mod, writers
+from . import parts, scape, scene as scene_mod, walls, writers
 
 
 def to_world(m, x, y, z):
     """map coordinates -> 3D file coordinates (Y up, origin at the map centre)"""
     return np.array([x - m.w / 2.0, z, -(y - m.h / 2.0)], dtype=np.float64)
+
+
+def world_quat(o):
+    """an object's orientation in the 3D files' frame. The engine applies the stored quaternion as its conjugate
+    (Direct3D row vectors, see ula.py); its axes are mapped like positions (x, y, z) -> (x, z, -y). Tilted landscape
+    pieces (plateaus, cliffs) need all of it, not just the heading."""
+    q = o.get('quat')
+    if not q:
+        a = o['rot'] / 2.0
+        return [0.0, math.sin(a), 0.0, math.cos(a)]
+    qx, qy, qz, qw = q
+    n = math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw) or 1.0
+    return [-qx / n, -qz / n, qy / n, qw / n]
 
 
 def terrain_grid(m, step=2):
@@ -97,7 +110,8 @@ def model_name(m_obj, index):
 
 
 def _static_model(sc, index, name, cache):
-    """a model's default look baked into static meshes of the map scene (one mesh per material) -> mesh ids"""
+    """a model's default look baked into static meshes of the map scene -> [(mesh id, wall tag)]: one mesh per
+    material; wall pieces one per material, arm and geometry variant (tag = (arm, variant, count), see walls.py)"""
     if name in cache:
         return cache[name]
     from . import glb as glbmod
@@ -105,13 +119,14 @@ def _static_model(sc, index, name, cache):
     j, _ = glbmod.load(path)
     msc = scene_mod.compose([{'glb': path, 'hide': parts.hidden_nodes(j), 'parent': None, 'link': None}], animations=[])
     geo = msc.pose()
+    tags = walls.arm_tags(j) if walls.is_wall_model(j) and 'gate' not in name.lower() else {}
     # copy the model's textures / materials into the map scene
     mat_map = {}
     out = []
     groups = {}
     for g in geo:
-        groups.setdefault(g['material'], []).append(g)
-    for mi, gs in groups.items():
+        groups.setdefault((g['material'], tags.get(g['name'])), []).append(g)
+    for (mi, tag), gs in groups.items():
         if mi is not None and mi not in mat_map:
             mj = json.loads(json.dumps(msc.j['materials'][mi]))
             tex = mj.get('pbrMetallicRoughness', {}).get('baseColorTexture')
@@ -134,8 +149,8 @@ def _static_model(sc, index, name, cache):
         tri, o = [], 0
         for g in gs:
             tri.append(g['tri'] + o); o += len(g['pos'])
-        out.append(_add_mesh(sc, '%s_%d' % (name, len(out)), pos.astype(np.float32), nrm.astype(np.float32),
-                             uv.astype(np.float32), np.concatenate(tri), mat_map.get(mi)))
+        out.append((_add_mesh(sc, '%s_%d' % (name, len(out)), pos.astype(np.float32), nrm.astype(np.float32),
+                              uv.astype(np.float32), np.concatenate(tri), mat_map.get(mi)), tag))
     cache[name] = out
     return out
 
@@ -166,8 +181,11 @@ def build_scene(m, install, index=None, objects=True, step=2, px_per_m=2.0, wate
         cache = {}
         objs = [o for o in m.objects if o['type'] != 'SLOC']
         if plants:
-            objs += [dict(type='PLNT', name=p['name'], cls=p['name'], gfx=p['name'], x=p['x'], y=p['y'], z=p['z'], rot=p['rot'])
+            objs += [dict(type='PLNT', name=p['name'], cls=p['name'], gfx=p['name'], x=p['x'], y=p['y'], z=p['z'], rot=p['rot'],
+                         quat=p.get('quat'))
                      for p in m.plants]
+        # wall pieces show only the arms towards their neighbours (walls.py)
+        wall_of = {id(m.objects[i]): w for i, w in walls.arms(m, index, lambda o: model_name(o, index)).items()}
         groups = {}
         missing = {}
         for o in objs:
@@ -185,9 +203,10 @@ def build_scene(m, install, index=None, objects=True, step=2, px_per_m=2.0, wate
                 continue
             for o in lst:
                 t = to_world(m, o['x'], o['y'], o['z'])
-                a = o['rot'] / 2.0
-                q = [0.0, math.sin(a), 0.0, math.cos(a)]           # heading about the up axis (map z -> Y)
-                inst = [_node(sc, o['name'] + ('_%d' % i if i else ''), mi) for i, mi in enumerate(meshes)]
+                q = world_quat(o)
+                w = wall_of.get(id(o))
+                sel = [mi for mi, tag in meshes if not tag or walls.show(tag, w['mask'] if w else 0xff, w['pick'] if w else None)]
+                inst = [_node(sc, o['name'] + ('_%d' % i if i else ''), mi) for i, mi in enumerate(sel)]
                 kids.append(_node(sc, o['name'], t=t, r=q, children=inst))
         if kids:
             top.append(_node(sc, 'objects', children=kids))

@@ -40,7 +40,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
-from . import VERSION, blender, glb, gsf, mapexport, parts, scape, scene, ula, writers
+from . import VERSION, blender, glb, gsf, mapexport, parts, scape, scene, ula, walls, writers
 from .catalog import Catalog, ModelIndex
 from .config import Settings, cache_dir, home
 from .install import LANGS, Install
@@ -253,11 +253,16 @@ class Maps:
                 models[k] = mapexport.model_name(o, idx) if idx else None
             return models[k]
         objs = [{'type': o['type'], 'name': o['name'], 'cls': o['cls'], 'model': model_of(o), 'x': round(o['x'], 2),
-                 'y': round(o['y'], 2), 'z': round(o['z'], 2), 'rot': round(o['rot'], 4), 'owner': o['owner'],
+                 'y': round(o['y'], 2), 'z': round(o['z'], 2), 'rot': round(o['rot'], 4), 'q': [round(v, 5) for v in o['quat']], 'owner': o['owner'],
                  'attr': {k: v for k, v in o['attr'].items() if k in ('hitpoints', 'spawn_type', 'spawn_max', 'tribe', 'skulls')}}
                 for o in m.objects]
+        if idx:
+            # wall pieces: the arms towards their neighbours and one geometry variant per piece (pwexport/walls.py)
+            for i, w in walls.arms(m, idx, model_of).items():
+                objs[i]['wall'] = w
         pl = [{'name': p['name'], 'model': model_of({'gfx': p['name'], 'cls': p['name'], 'name': p['name']}),
-               'x': round(p['x'], 2), 'y': round(p['y'], 2), 'z': round(p['z'], 2), 'rot': round(p['rot'], 3)} for p in m.plants]
+               'x': round(p['x'], 2), 'y': round(p['y'], 2), 'z': round(p['z'], 2), 'rot': round(p['rot'], 3),
+               'q': [round(v, 4) for v in p['quat']]} for p in m.plants]
         s = m.summary()
         return dict(s, id=mid, info=m.info, player_slots=m.players, desc=m.description, object_list=objs, plant_list=pl,
                     grid=[int(m.heights.shape[1]), int(m.heights.shape[0])], mgrid=[int(m.mats.shape[1]), int(m.mats.shape[0])],

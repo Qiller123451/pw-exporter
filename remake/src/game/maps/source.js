@@ -13,7 +13,8 @@
 //   splat(hf)   -> (x, z) => weights (array of textures.length)
 //   minimapColor(x, z) -> [r, g, b]
 //   trees[]     {model, x, z, rot, scale, wood, inside, stump, timber}
-//   decor[]     {model, x, z, rot, scale, block, sprites}  (block = obstacle for units)
+//   decor[]     {model, x, z, rot, q, scale, block, sprites}  (block = obstacle for units; q = stored map quaternion:
+//               tilted landscape pieces such as plateaus and cliffs)
 //   stones[]    {model, x, z, rot, amount}
 //   bushes[]    {model, x, z, rot, amount}
 //   fish[]      {model, x, z, amount}         (food in the water, for fishing boats)
@@ -143,7 +144,7 @@ export function originalSource(md, D, cfg, manifest) {
       }
       case 'ANML': if (o.owner == null && D.exists(cls)) { animals.push({ species: cls, x, z, home: [x, z] }); use(lc(D.stats(cls, 1, null)?.gfx)); } break;
       case 'DCCO': case 'DECO': case 'VGTN': case 'WOOD':
-        if (g && !NO_PROP.test(g)) decor.push({ model: use(g), x, z, rot: o.rot, scale: 1, block: o.type === 'DCCO' || SOLID.test(g), y: o.z, sprites: true });
+        if (g && !NO_PROP.test(g)) decor.push({ model: use(g), x, z, rot: o.rot, q: o.q, scale: 1, block: o.type === 'DCCO' || SOLID.test(g), y: o.z, sprites: true });
         break;
       default: break;                                       // units / buildings of campaign maps, item spawns, flags
     }

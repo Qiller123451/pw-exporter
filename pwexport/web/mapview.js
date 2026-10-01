@@ -161,8 +161,11 @@ export class MapView {
       if (this.cancelled || !parts) return;
       const objs = byModel.get(name);
       for (const pt of parts) {
-        const im = new THREE.InstancedMesh(pt.geometry, pt.material, objs.length);
-        objs.forEach((o, i) => { q.setFromAxisAngle(up, o.rot); m4.compose(this.toWorld(o.x, o.y, o.z), q, s1); im.setMatrixAt(i, m4); });
+        // wall pieces (o.wall = {mask, pick} from pwexport/walls.py): only the arms towards neighbours, one variant
+        const sel = pt.tag ? objs.filter((o) => wallShows(pt.tag, o.wall)) : objs;
+        if (!sel.length) continue;
+        const im = new THREE.InstancedMesh(pt.geometry, pt.material, sel.length);
+        sel.forEach((o, i) => { setQuat(q, o); m4.compose(this.toWorld(o.x, o.y, o.z), q, s1); im.setMatrixAt(i, m4); });
         im.castShadow = false; im.receiveShadow = false; im.name = name;
         im.computeBoundingSphere();
         g.add(im);
@@ -181,6 +184,16 @@ export class MapView {
     await Promise.all(lanes);
     return { models: names.length, missing };
   }
+}
+
+// an object's orientation: the engine applies the stored quaternion (x, y, z, w; z up) as its conjugate (Direct3D
+// row vectors, pwexport/ula.py); its axes are mapped like positions (x, y, z) -> (x, z, -y). Landscape pieces
+// (plateaus, cliffs) are tilted to the slope, so the heading alone is not enough. o.rot = the heading (CCW, map).
+const UP = new THREE.Vector3(0, 1, 0);
+function setQuat(q, o) {
+  if (o.q) q.set(-o.q[0], -o.q[2], o.q[1], o.q[3]).normalize();
+  else q.setFromAxisAngle(UP, o.rot);
+  return q;
 }
 
 function numberTexture(text, color) {
@@ -204,11 +217,15 @@ function staticModel(api, name) {
     const st = P.defaultState(P.describe(root, fourcc));
     P.apply(root, fourcc, st);
     root.updateMatrixWorld(true);
-    const out = new Map();        // material -> [geometries]
+    // wall pieces: every part tagged with its arm and geometry variant, so each map piece shows only its own arms
+    const tags = fourcc === 'Wall' ? wallTags(top) : null;
+    const isWall = !!tags && new Set([...tags.values()].filter((t) => t[0] >= 0).map((t) => t[0])).size >= 4 && !/gate/i.test(name);
+    const out = new Map();        // material|tag -> {mat, tag, geos}
     const v = new THREE.Vector3();
     root.traverse((o) => {
       if (!o.isMesh) return;
       for (let n = o; n; n = n.parent) if (!n.visible) return;
+      const tag = isWall ? tags.get(o) : null;
       const g = new THREE.BufferGeometry();
       const src = o.geometry, pa = src.attributes.position, cnt = pa.count;
       const pos = new Float32Array(cnt * 3);
@@ -222,17 +239,57 @@ function staticModel(api, name) {
       if (src.index) g.setIndex(src.index);
       g.computeVertexNormals();
       const mat = Array.isArray(o.material) ? o.material[0] : o.material;
-      if (!out.has(mat)) out.set(mat, []);
-      out.get(mat).push(g);
+      const key = mat.uuid + '|' + (tag ? tag.join(',') : '');
+      if (!out.has(key)) out.set(key, { mat, tag, geos: [] });
+      out.get(key).geos.push(g);
     });
     const parts = [];
-    for (const [mat, geos] of out) {
+    for (const { mat, tag, geos } of out.values()) {
       const g = geos.length === 1 ? geos[0] : mergeSimple(geos);
-      if (g) parts.push({ geometry: g, material: mat });
+      if (g) parts.push({ geometry: g, material: mat, tag });
     }
     return parts;
   })().catch((e) => { console.warn('model', name, e); return null; }));
   return modelCache.get(name);
+}
+
+// [arm, variant, count] of every mesh of a wall model (arm -1 = hub post, 0..7 = E, NE, N ... in GSF space):
+// the remake's tagWallArms / pwexport.walls.arm_tags. top = the glTF root node (GSF Z-up frame).
+function wallTags(top) {
+  const inv = new THREE.Matrix4().copy(top.matrixWorld).invert();
+  const box = new THREE.Box3(), c = new THREE.Vector3(), m = new THREE.Matrix4();
+  const nodeOf = (o) => { let n = o; while (n && n.userData.attr === undefined && n !== top) n = n.parent; return n && n.userData.attr !== undefined ? n : o; };
+  const nodes = new Map();
+  top.traverse((o) => {
+    if (!o.isMesh || !o.geometry) return;
+    if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+    const n = nodeOf(o);
+    if (!nodes.has(n)) nodes.set(n, { meshes: [], box: new THREE.Box3() });
+    const e = nodes.get(n);
+    e.meshes.push(o);
+    e.box.union(box.copy(o.geometry.boundingBox).applyMatrix4(m.multiplyMatrices(inv, o.matrixWorld)));
+  });
+  const groups = new Map();
+  for (const [n, e] of nodes) {
+    e.box.getCenter(c);
+    e.arm = Math.hypot(c.x, c.y) < 1.2 ? -1 : ((Math.round(Math.atan2(c.y, c.x) / (Math.PI / 4)) % 8) + 8) % 8;
+    const r = (v) => Math.round(v * 2) / 2;
+    const key = e.arm + '|' + ((n.userData.attr >>> 0) >>> 5) + '|' + [r(e.box.min.x), r(e.box.min.y), r(e.box.max.x), r(e.box.max.y)].join(',');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(e);
+  }
+  const out = new Map();
+  for (const g of groups.values()) {
+    g.sort((a, b) => a.box.max.z - b.box.max.z || a.box.min.z - b.box.min.z);
+    g.forEach((e, k) => { for (const o of e.meshes) out.set(o, [e.arm, k, g.length]); });
+  }
+  return out;
+}
+function wallShows(tag, w) {
+  const [arm, variant, count] = tag;
+  const mask = w ? w.mask : 0xff, pick = w ? w.pick : null;
+  if (arm >= 0 && !((mask >> arm) & 1)) return false;
+  return count <= 1 || ((pick ? pick[arm + 1] : 0) % count) === variant;
 }
 
 function mergeSimple(geos) {

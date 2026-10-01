@@ -143,7 +143,9 @@ function objects(b, w, h) {
     if (!ok) continue;
     const name = td.decode(b.subarray(i + 41, i + 40 + ln));
     const owner = b[i + 8];
-    out.push({ type: td.decode(b.subarray(i, i + 4)), name, cls: name.replace(/_\d+$/, ''), x, y, z, rot: 2 * Math.atan2(qz, qw),
+    // the engine applies the stored quaternion as its conjugate (Direct3D row vectors): the heading is -2 atan2(z, w)
+    // counter-clockwise in map space; q = the stored quaternion (tilted landscape pieces need all of it)
+    out.push({ type: td.decode(b.subarray(i, i + 4)), name, cls: name.replace(/_\d+$/, ''), x, y, z, rot: -2 * Math.atan2(qz, qw), q: [qx, qy, qz, qw],
       owner: owner === 0xff ? null : owner, at: i });
     i += 40 + ln;
   }
@@ -164,8 +166,8 @@ function plants(b) {
   for (let k = 0; k < nb && o + 4 <= b.length; k++) {
     const n = dv.getUint32(o, true); o += 4;
     for (let i = 0; i < n; i++, o += 32) {
-      const qz = dv.getFloat32(o + 20, true), qw = dv.getFloat32(o + 24, true);
-      out.push({ name: names[dv.getUint32(o + 28, true)] || '', x: dv.getFloat32(o, true), y: dv.getFloat32(o + 4, true), z: dv.getFloat32(o + 8, true), rot: 2 * Math.atan2(qz, qw) });
+      const qx = dv.getFloat32(o + 12, true), qy = dv.getFloat32(o + 16, true), qz = dv.getFloat32(o + 20, true), qw = dv.getFloat32(o + 24, true);
+      out.push({ name: names[dv.getUint32(o + 28, true)] || '', x: dv.getFloat32(o, true), y: dv.getFloat32(o + 4, true), z: dv.getFloat32(o + 8, true), rot: -2 * Math.atan2(qz, qw), q: [qx, qy, qz, qw] });
     }
   }
   return out;

@@ -25,7 +25,7 @@ export function flagged(root) {
   return out;
 }
 // flag-less low-poly hulls (whole-object pick / collision volumes, no part flags at all): helpers too
-function isHull(o) {
+export function isHull(o) {
   if ((o.userData.attr >>> 5) !== 0) return false;
   let n = 0, skinned = false;
   const box = new THREE_Box();

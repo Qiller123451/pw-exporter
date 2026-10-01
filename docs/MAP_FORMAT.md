@@ -122,11 +122,23 @@ char[4] type      SLOC start location, TREE, FRUI fruit bush / fish shoal, STON 
 u8[4]   ?
 u8      owner (255 = nobody)
 f32     x, y, z
-f32     rotation quaternion x, y, z, w   (upright: heading = 2 * atan2(z, w))
+f32     rotation quaternion x, y, z, w   (applied as its conjugate, see below)
 string  unique name (<class>_<n>)
 u8[16]  guid
 ...     (fixed-size rest, not decoded)
 ```
+
+**Rotations.** The engine multiplies row vectors (Direct3D), so the stored quaternion turns a model the other way
+round than the usual column-vector reading: apply its **conjugate** (-x, -y, -z, w). The heading of an upright object
+(counter-clockwise from east, map x east / y north) is `-2 * atan2(z, w)`. In a Y-up world with X east and -Z north
+(glTF) the rotation is the quaternion `(-x, -z, y, w)`. Evidence: gates only line up with their wall pieces this way,
+harbours face the water, and tilted plateau pieces sink their skirts into the ground instead of floating above it
+(the "hollow" terrain of the untilted / mirrored reading). `pwexport.ula.rotation_matrix(q)` gives the 3 x 3 matrix.
+
+**Walls.** Wall pieces (model type `Wall`: palisades, clay walls, fences) are a hub with arms in eight directions and
+several variants of every part. The map only stores the pieces; the engine (WallMap) shows the arms towards the
+neighbouring pieces, towers and gates on the 8 m wall grid, and one variant of each. `pwexport/walls.py` does the same
+for the map viewer and the map exports (the rules: `remake/docs/spec/walls.md`).
 
 ### IOMG – landscape decoration instances
 
@@ -147,7 +159,7 @@ bushes, fish, animals, starts and bases, and the set of models to load. The rema
 ```
 game x = map x - W/2
 game z = H/2 - map y
-rotation = 2 * atan2(qz, qw)
+rotation = -2 * atan2(qz, qw)        (props: the full quaternion, (-qx, -qz, qy, qw) in game space)
 ```
 
 (the toolkit's map exports use the same centre, with -Z = north in the glTF convention.)

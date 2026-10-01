@@ -65,9 +65,13 @@ export class PropField {
     return k;
   }
   // returns instance handle
-  add(name, x, y, z, rotY, scale) {
+  // q (optional): the stored map quaternion of an original map object (x, y, z, w; z up). The engine applies it as
+  // its conjugate (Direct3D row vectors); axes map like positions (x, y, z) -> (x, z, -y). Tilted plateaus and cliffs
+  // need it; everything else only turns by rotY.
+  add(name, x, y, z, rotY, scale, q = null) {
     const k = this.kinds.get(name);
-    const m = new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rotY), new THREE.Vector3(scale, scale, scale));
+    const quat = q ? new THREE.Quaternion(-q[0], -q[2], q[1], q[3]).normalize() : new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rotY);
+    const m = new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), quat, new THREE.Vector3(scale, scale, scale));
     const inst = { m, sphere: new THREE.Sphere(new THREE.Vector3(x, y + k.sphere.center.y * scale, z), k.sphere.radius * scale + 4), alive: true };
     k.inst.push(inst);
     this.dirty = true;

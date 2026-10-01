@@ -22,8 +22,9 @@ doc: |
     IOMG  landscape decoration instances: grass, ferns, flowers (drawn as ground sprites)
     Trgr, Ques, DlgS, AI   triggers, quests, dialogues, scripted AI of campaign maps (nested trees, not described)
 
-  Map coordinates: x east 0..width, y north 0..height, z up, in metres. Rotations are quaternions (x, y, z, w);
-  objects stand upright, so only z and w are used (heading = 2 * atan2(z, w)).
+  Map coordinates: x east 0..width, y north 0..height, z up, in metres. Rotations are quaternions (x, y, z, w).
+  The engine applies the conjugate (D3D row vectors): heading (counter-clockwise from east) = -2 * atan2(z, w), and
+  tilted objects (plateaus, rocks on slopes) need the full conjugate quaternion (-x, -y, -z, w).
 
   Reverse engineered for the ParaWorld Toolkit from the maps shipped with the game and community maps.
 seq:

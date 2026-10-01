@@ -9,7 +9,13 @@
     m.heights         numpy float32 [hy, hx], metres, 2 m grid (row 0 = south edge, y grows north)
     m.mats            numpy uint8 [my, mx], ground material 0..7 of the setting, 4 m grid
     m.objects         [{'type', 'name', 'cls', 'gfx', 'x', 'y', 'z', 'rot', 'quat', 'owner', 'attr'}]
-    m.plants          [{'name', 'x', 'y', 'z', 'rot'}]   landscape decoration instances (grass, ferns)
+                      quat = the stored orientation (x, y, z, w). The engine applies it the Direct3D way (row vectors),
+                      i.e. as the rotation of the conjugate quaternion in the usual maths convention - see world_quat().
+                      rot = the heading as a counter-clockwise angle in map space (x east, y north) = -2 atan2(z, w).
+                      Most objects only turn about the up axis; landscape pieces (plateaus, cliffs) are tilted too.
+                      (Checked on the maps: harbours face the water, gates lie along their walls, plateau cliffs
+                      reach into the ground only this way.)
+    m.plants          [{'name', 'x', 'y', 'z', 'rot', 'quat'}]   landscape decoration instances (grass, ferns)
     m.surf            the unpacked SURF data (bytes);  m.chunks  {tag: Chunk}
 
 The format (see docs/MAP_FORMAT.md and the Kaitai Struct descriptions pwexport/data/ksy/ula.ksy, surf.ksy):
@@ -32,7 +38,7 @@ import zlib
 
 import numpy as np
 
-VERSION = '2026.10.1'     # bump when what the reader returns changes (cached map summaries)
+VERSION = '2026.10.2'     # bump when what the reader returns changes (cached map summaries)
 SETTINGS = ['Northland', 'Savanna', 'Jungle', 'Icewaste', 'Ashvalley', 'TestSet', 'Cave1', 'Cave2', 'Cave3']
 
 
@@ -234,7 +240,8 @@ def plants(b):
         r.o += 32 * n
         for k in range(n):
             out.append({'name': names[cls[k]] if cls[k] < len(names) else '', 'x': float(a[k, 0]), 'y': float(a[k, 1]),
-                        'z': float(a[k, 2]), 'rot': float(2 * np.arctan2(a[k, 5], a[k, 6]))})
+                        'z': float(a[k, 2]), 'rot': float(-2 * np.arctan2(a[k, 5], a[k, 6])),
+                        'quat': [float(v) for v in a[k, 3:7]]})
     return out
 
 
@@ -258,7 +265,7 @@ def objects(b):
         qx, qy, qz, qw = r.f32(4)
         name = r.s()
         o = {'type': d[:4].decode('latin1'), 'name': name, 'cls': _R(cl.data).s() if cl is not None and cl.data else name,
-             'gfx': '', 'x': x, 'y': y, 'z': z, 'rot': float(2 * np.arctan2(qz, qw)), 'quat': [qx, qy, qz, qw],
+             'gfx': '', 'x': x, 'y': y, 'z': z, 'rot': float(-2 * np.arctan2(qz, qw)), 'quat': [qx, qy, qz, qw],
              'owner': None if owner == 0xff else owner, 'attr': {}}
         data = ob.child('data')
         gobj = data.child('gobj') if data else None
@@ -324,6 +331,16 @@ class Map:
                 'players': self.max_players, 'objects': len(self.objects), 'plants': len(self.plants), 'types': counts,
                 'author': self.description.get('Author', ''), 'description': self.description.get('Description', ''),
                 'game_type': self.info.get('GameType', ''), 'chunks': sorted(self.chunks)}
+
+
+def rotation_matrix(q):
+    """3x3 matrix (column vectors, map space) of a stored quaternion as the engine applies it: the conjugate"""
+    x, y, z, w = q
+    n = (x * x + y * y + z * z + w * w) ** 0.5 or 1.0
+    x, y, z, w = -x / n, -y / n, -z / n, w / n
+    return np.array([[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+                     [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+                     [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]])
 
 
 def preview_png(m, path):
