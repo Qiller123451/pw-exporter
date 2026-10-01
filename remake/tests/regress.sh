@@ -15,5 +15,6 @@ run looks_ninigi python3 tests/evaljs.py tests/looks.js "&tribe=Ninigi&enemy=Hu"
 run walls python3 tests/evaljs.py tests/walls.js "&tribe=Hu&enemy=Aje&debug"
 run pathing python3 tests/evaljs.py tests/pathing.js
 run rally python3 tests/evaljs.py tests/rally_task.js "&tribe=Hu&enemy=Aje&debug"
+run sle python3 tests/evaljs.py tests/sle.js "&tribe=Hu&enemy=Aje&debug"
 for t in "Hu&enemy=Aje" "SEAS&enemy=Ninigi" "Aje&enemy=Hu" "Ninigi&enemy=SEAS"; do run comp_${t%%&*} python3 tests/evaljs.py tests/composites.js "&tribe=$t"; done
 echo done >> $R

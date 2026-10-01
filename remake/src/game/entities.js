@@ -354,7 +354,7 @@ export class Unit extends Entity {
       const as = run ? this.runAnimSpeed : this.animSpeed;
       const ws = this.walkSet();
       if (ws) { const i = Math.min(3, Math.max(1, this.stats.speed || 2)); a = this.anim.pick(ws + '_walk_' + i, ws + '_walk_2', ws + '_walk_1') || a; }
-      this.anim.play(a, { ts: Math.max(0.4, Math.min(1.8, sp / as)) });
+      this.anim.play(a, { ts: Math.max(0.4, Math.min(1.8, sp / as)), cut: true });   // moving off: no end part of the last action first
     } else if (!this.busyAnim) this.anim.play(this.standAnim());
   }
 }

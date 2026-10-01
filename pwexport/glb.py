@@ -138,10 +138,25 @@ def _dist(p, q):
     return float(np.mean([1 - abs(np.dot(p[k], q[k]) / (np.linalg.norm(p[k]) * np.linalg.norm(q[k]) + 1e-9)) for k in ks]) * 1000)
 
 
+def loop_marks(j):
+    """Clips made of a start, a loop and an end part ("S/L/E"): {clip name: [t0, t1]} = the loop part in seconds,
+    from the loop marks of the GSF animation chunks (animation extras "loop" = [first, last] frame, written by
+    pwexport.gsf). The game plays the start once, repeats the loop and plays the end when the action stops.
+    Clips whose loop is the whole clip are left out."""
+    out = {}
+    for a in j.get('animations', []):
+        ex = a.get('extras') or {}
+        lp, n, fps = ex.get('loop'), ex.get('frames'), ex.get('fps') or 25.0
+        if lp and n and (lp[0] > 0 or lp[1] < n - 1):
+            out[a['name']] = [round(lp[0] / fps, 4), round(lp[1] / fps, 4)]
+    return out
+
+
 def walk_loops(j, b):
-    """Walk/run clips that are "start + loop + stop" in one (e.g. the SEAS Black widow): the clip begins and ends in
-    the stand pose and a stretch in the middle loops seamlessly. The original engine loops only that stretch.
-    Returns {clip name: [t0, t1]} (seconds)."""
+    """the loop parts of a model's clips: loop_marks(j); for files converted before the loop marks were read, the old
+    estimate (walk / run clips that begin and end in the stand pose: the stretch in the middle that repeats)."""
+    if any('frames' in (a.get('extras') or {}) for a in j.get('animations', [])):
+        return loop_marks(j)
     anims = {a['name']: a for a in j.get('animations', [])}
     st = anims.get('standanim')
     if not st:

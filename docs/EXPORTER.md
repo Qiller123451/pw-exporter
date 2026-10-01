@@ -142,8 +142,10 @@ the game does); *Visibility* is the raw flags underneath it. Exports keep what y
 * The **Animations** list shows every animation of the model with its length. Click one to play it; type into the
   filter to find one quickly (`walk`, `attack`, `die` …). *Rest pose* stops the animation.
 * The player bar under the view: pause/play, scrub through the animation, speed (¼× – 2×), loop.
-* **Seamless walk loop** (shown for walk animations made as *start → loop → stop*, like the Black widow's): plays only
-  the looping middle part, as the game does.
+* **Start, then loop (as in the game)** (shown for animations the game stores as *start → loop → end* in one clip,
+  with the loop marked in the file – many walk, rest, feeding and working animations): plays the start once and then
+  repeats only the loop part, like the game does while the action lasts. Off: the whole clip from start to end. When
+  you export "only the playing one" with this on, the file holds just the loop part.
 * Below the list, every add-on with animations has its own drop-down: what the rider, gunner or turret plays.
 
 ### Step 6 – Export

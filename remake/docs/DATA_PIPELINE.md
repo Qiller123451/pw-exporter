@@ -4,21 +4,8 @@ Everything the remake shows or plays comes from the player's own game folder (`D
 **No game file is part of the toolkit or its repository.** The first time the remake is started from the launcher,
 `remake/pipeline` converts what the game needs (about 5 minutes on a desktop PC, once); the result lives in the
 toolkit's data folder (`%APPDATA%\ParaWorldToolkit\remake\<installation id>\`, Linux/macOS
-`~/.config/paraworld-toolkit/remake/...`).
-
-**Later builds only redo what is out of date.** `build.json` records a fingerprint for every step; a step runs again
-only when
-
-* the game files it reads changed (names, sizes and times of the folders in the diagram below),
-* its code changed: the step's module and every toolkit module it imports (`pwexport/gsf.py` for the models,
-  `pwexport/tree.py` for the rules ...), found by following the imports, plus the data files they name
-  (`roster.json`, `composites.json`) – see `pipeline/stamps.py`,
-* a step it builds on ran again (assets after rules or models, sounds after assets), or its output was deleted.
-
-The model conversion keeps its output in `_conv` (`_conv/stamps.json`) and converts only the archives that changed;
-a change to the textures or to the converter converts all of them. `_conv` can be deleted to save disk space (the
-next build that needs it converts everything again). A code change needs no version bump; `pipeline.ASSET_VERSION`
-is only for forcing a full rebuild on every installation. The launcher's ↻ button and `--force` build everything.
+`~/.config/paraworld-toolkit/remake/...`) and is rebuilt only when the installation or the pipeline changes
+(`pipeline.ASSET_VERSION`, a signature of the archives and the tech tree).
 
 **The game-file readers live in `pwexport`** (the Model & Map Exporter, see docs/EXPORTER.md of the toolkit): the GSF
 converter (`gsf.py`), the tech tree / settings parser (`tree.py`), the texts (`texts.py`), the composites table of
@@ -31,7 +18,7 @@ Scripts/Server/settings/techtree/_TechTree.ttree ┐
 Scripts/Server/classes/**/*.txt                  ├► rules    build_data.py      ──► techtree.json, gamedata.json
 Scripts/Server/settings/Resources.txt, NPCList   │
 Scripts/Game/misc/IdleAnims.txt, DefPresets.txt  ┘
-Data/*/GSF/*.gsf                                 ──► models   convert_models.py  ──► _conv/<archive>/*.glb (kept)
+Data/*/GSF/*.gsf                                 ──► models   convert_models.py  ──► _conv/<archive>/*.glb (scratch)
                                                  ──► assets   build_assets.py    ──► assets/models, assets/tex, manifest.json
 UI/hud/**, UI/All_def.txt                        ──► ui       build_ui.py        ──► assets/ui/*.png, atlas.json
 UI/menue/**                                      ──► menu     build_menu.py      ──► assets/ui/menu/*
@@ -44,9 +31,8 @@ Audio/Sound/**/*.wav, Audio/Music/*.mp3, Maps/** ──► read straight from th
 Run it by hand (all steps, or some):
 
 ```
-python -m remake.pipeline "C:\Games\ParaWorld" "C:\temp\remake-data"            # what is out of date
-python -m remake.pipeline "C:\Games\ParaWorld" "C:\temp\remake-data" --force    # everything
-python -m remake.pipeline "C:\Games\ParaWorld" "C:\temp\remake-data" rules assets # exactly these steps
+python -m remake.pipeline "C:\Games\ParaWorld" "C:\temp\remake-data"            # everything
+python -m remake.pipeline "C:\Games\ParaWorld" "C:\temp\remake-data" rules assets # some steps (--keep-conv keeps _conv)
 python remake/devserver.py --game "C:\Games\ParaWorld" --data "C:\temp\remake-data"   # play it on :8411
 ```
 
@@ -136,9 +122,11 @@ npm run build        # src/ -> game/game.js, index.src.html -> game/index.html
 
 ## Animation fixes applied at build or load time
 
-* `anim_loops.py` (run by `build_assets.py`): walk clips made as "start + loop + stop" (the stand pose at both ends,
-  e.g. the SEAS Black widow, many dinosaurs) get `manifest.models[m].loops = {clip: [t0, t1]}`; the game plays only
-  the loop (`engine/assets.js loopPart`).
+* `anim_loops.py` (run by `build_assets.py`): clips made of a start, a loop and an end part (the GSF animation chunk
+  marks the loop: flag 0x1 at `+12`, first and last loop frame as int16 at `+16`) get
+  `manifest.models[m].loops = {clip: [t0, t1]}`. The game cuts them into `<clip>#s`, `#l`, `#e`
+  (`engine/assets.js splitLoops`) and `game/anim.js` plays start → loop … → end: a unit accelerates into its walk
+  cycle and settles when it stops, an animal lies down, rests and gets up again.
 * Borrowed animations (`anims` = another model's clips, e.g. level 4/5 characters, seas_warrior) are retargeted at load
   time: position tracks are shifted by (own rest offset − source rest offset), so the mesh keeps its own bone lengths
   (`engine/assets.js retarget`).

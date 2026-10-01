@@ -18,19 +18,6 @@ export function loadGltf(url) {
   return cache.get(url);
 }
 
-// walk clips made as start + loop + stop: only the seamless middle stretch (pwexport.glb.walk_loops)
-function subclip(clip, t0, t1) {
-  const tracks = clip.tracks.map((tr) => {
-    const T = tr.times, V = tr.values, n = V.length / T.length;
-    const at = (t) => Array.from(tr.createInterpolant().evaluate(t));
-    const times = [0], values = [...at(t0)];
-    for (let i = 0; i < T.length; i++) if (T[i] > t0 + 1e-4 && T[i] < t1 - 1e-4) { times.push(T[i] - t0); for (let k = 0; k < n; k++) values.push(V[i * n + k]); }
-    times.push(t1 - t0); values.push(...at(t1));
-    return new tr.constructor(tr.name, times, values, tr.getInterpolation());
-  });
-  return new THREE.AnimationClip(clip.name, t1 - t0, tracks);
-}
-
 export class Viewer {
   constructor(el) {
     this.el = el;
@@ -148,11 +135,12 @@ export class Viewer {
     const p = this.parts[i];
     if (!p) return;
     p.mixer.stopAllAction();
-    p.action = null; p.clipName = name || null;
+    p.action = null; p.clipName = name || null; p.loopRange = null;
     if (!name) { p.obj.traverse((o) => { if (o.isSkinnedMesh) o.skeleton.pose(); }); this.resetPose(p); return; }
-    let clip = p.clips.find((c) => c.name === name);
+    const clip = p.clips.find((c) => c.name === name);
     if (!clip) return;
-    if (loop) clip = subclip(clip, loop[0], loop[1]);
+    // a start + loop + end clip (loop = [t0, t1] of its loop part): the start plays once, then the loop repeats
+    p.loopRange = loop && loop[1] - loop[0] > 0.04 ? loop : null;
     p.action = p.mixer.clipAction(clip);
     p.action.setLoop(this.loop || i > 0 ? THREE.LoopRepeat : THREE.LoopOnce, Infinity);
     p.action.clampWhenFinished = true;
@@ -175,7 +163,11 @@ export class Viewer {
   }
   tick() {
     const dt = Math.min(0.1, this.clock.getDelta());
-    if (this.playing) for (const p of this.parts) p.mixer.update(dt * this.speed);
+    if (this.playing) for (const p of this.parts) {
+      p.mixer.update(dt * this.speed);
+      const r = p.loopRange;
+      if (r && p.action && this.loop && p.action.time >= r[1]) { p.action.time = r[0] + ((p.action.time - r[1]) % (r[1] - r[0])); p.mixer.update(0); }
+    }
     if (this.autoRotate) this.root.rotation.y += dt * 0.4;
     this.controls.update();
     if (this.skel) this.skel.update && this.skel.update();

@@ -237,17 +237,15 @@ export function loadModel(name, opts = {}) {
       else if (fourcc === 'Char') applyMask(scene, 1 << 16);      // VIS_FLAG_CHTR_ACTIVATED parts (healer kit) start hidden
       else applyState(scene, 4, 0, 1);
       let clips = gltf.animations;
-      if (info.loops) clips = clips.map((c) => (info.loops[c.name] ? loopPart(c, ...info.loops[c.name]) : c));
-      if (info.loops && info.sounds && !info._loopSounds) {
-        // the clip's sound events move with the trimmed start; events outside the loop are dropped
-        info._loopSounds = true;
-        for (const [cn, [t0, t1]] of Object.entries(info.loops)) {
-          if (info.sounds[cn]) info.sounds[cn] = info.sounds[cn].filter((e) => e[0] >= t0 && e[0] < t1).map((e) => [e[0] - t0, ...e.slice(1)]);
-        }
-      }
+      // clips made of a start, a loop and an end part (the loop marks of the GSF animation chunks, manifest
+      // models[m].loops = {clip: [t0, t1]}): the parts as extra clips "<name>#s", "<name>#l", "<name>#e" - AnimCtl
+      // plays the start once, repeats the loop and plays the end when the action stops, like the original engine.
+      let loops = info.loops || null;
+      if (loops) clips = splitLoops(clips, loops);
       if (info.anims) {
-        try { const src = await loadModel(info.anims); clips = retarget(src.clips, src.scene, scene); } catch (e) { clips = []; }
+        try { const src = await loadModel(info.anims); clips = retarget(src.clips, src.scene, scene); loops = src.clips.loops || null; } catch (e) { clips = []; loops = null; }
       }
+      clips.loops = loops;
       const root = scene.children[0];
       const extras = (root && root.userData) || {};
       res({ scene, clips, info, extras, fourcc, pick: pick.isEmpty() ? null : pick, name: name.toLowerCase() });
@@ -330,10 +328,8 @@ function retarget(clips, srcScene, dstScene) {
     return changed ? new THREE.AnimationClip(c.name, c.duration, tracks) : c;
   });
 }
-// Walk clips made as "start + loop + stop" (stand pose at both ends; tools/anim_loops.py finds the seamless stretch
-// in the middle, manifest models[m].loops = {clip: [t0, t1]}): keep only the loop, like the original engine, so a
-// walking unit doesn't sink back into its stand pose once per cycle.
-function loopPart(clip, t0, t1) {
+// Clips made as start + loop + end: cut into their parts (see loadModel). Parts shorter than a frame are left out.
+function clipPart(clip, name, t0, t1) {
   const tracks = clip.tracks.map((tr) => {
     const T = tr.times, V = tr.values, n = V.length / T.length;
     const at = (t) => { const ip = tr.createInterpolant(); return Array.from(ip.evaluate(t)); };
@@ -342,7 +338,19 @@ function loopPart(clip, t0, t1) {
     times.push(t1 - t0); values.push(...at(t1));
     return new tr.constructor(tr.name, times, values, tr.getInterpolation());
   });
-  return new THREE.AnimationClip(clip.name, t1 - t0, tracks);
+  return new THREE.AnimationClip(name, t1 - t0, tracks);
+}
+function splitLoops(clips, loops) {
+  const out = clips.slice();
+  for (const c of clips) {
+    const lp = loops[c.name];
+    if (!lp || lp[1] - lp[0] < 0.05 || lp[1] > c.duration + 0.02) continue;
+    const t1 = Math.min(lp[1], c.duration);
+    out.push(clipPart(c, c.name + '#l', lp[0], t1));
+    if (lp[0] > 0.05) out.push(clipPart(c, c.name + '#s', 0, lp[0]));
+    if (c.duration - t1 > 0.05) out.push(clipPart(c, c.name + '#e', t1, c.duration));
+  }
+  return out;
 }
 export function findClip(clips, name) {
   if (!name) return null;

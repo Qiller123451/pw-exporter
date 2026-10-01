@@ -77,7 +77,8 @@ collision" list of SEK's exporter; attr = the record's visibility bits): type 0 
   Vertex bone indices and animation track indices use this same depth-first order.
 
 ## Skeletal animation chunk (0x40000005) — **new**
-- `+12` flags: 0x80000000 always; 0x1 loop marks (`+16` int16 loop start, int16 loop end, -1 = none); 0x2 no single
+- `+12` flags: 0x80000000 always; 0x1 loop marks (`+16` int16 first and last frame of the loop part, -1 = none: the clip is start + loop + end, the
+  engine plays the start once, repeats the loop and plays the end when the action stops); 0x2 no single
   root track (`+25` = 0xFF); 0x4 root height (`+20` float); probably 0x8 fix root z, 0x10 absolute root. `+48` = the
   loop's speed in m/s (allosaurus walk_1/2/3: 1.5 / 5 / 7). The root layout's 3 "unused" floats are the root's
   velocity per frame. Animations are made at 25 fps. (From SEK's 3ds Max exporter source, checked on the data.)

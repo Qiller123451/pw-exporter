@@ -163,8 +163,11 @@ export class Composite {
     w.obj.rotation.y = h;
     w.obj.visible = u.obj.visible;
     if (w.anim) {
+      // not every trailer has a "walk_1" clip (some epoch variants of the collector wagon only have others):
+      // take the walk clip it has, or leave it still
+      if (w.walk === undefined) w.walk = w.anim.pick('walk_1', 'walk_2', 'walk_3', 'walk_0') || [...w.anim.byName.keys()].find((n) => n.includes('walk') && !n.includes('#')) || null;
       const moving = u.vel.lengthSq() > 0.05;
-      if (moving) { if (w.anim.curName !== 'walk_1') w.anim.play('walk_1'); w.anim.cur.timeScale = Math.min(2, Math.sqrt(u.vel.lengthSq()) / 2.5); }
+      if (moving && w.walk) w.anim.play(w.walk, { ts: Math.min(2, Math.sqrt(u.vel.lengthSq()) / 2.5) });
       else if (w.anim.cur) w.anim.cur.timeScale = 0;
       w.anim.update(dt);
     }

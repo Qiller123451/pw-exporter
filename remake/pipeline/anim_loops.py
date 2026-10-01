@@ -1,7 +1,8 @@
-"""Find walk/run clips that are "start + loop + stop" in one (e.g. the SEAS Black widow): the clip begins and ends in
-the stand pose, and a stretch in the middle loops seamlessly. The original engine loops only that stretch; looping the
-whole clip makes the unit stop for a moment every cycle. Writes manifest.models[m].loops = {clip: [t0, t1]}.
-The detection itself is pwexport.glb.walk_loops (shared with the Model Exporter, which offers the same trimming).
+"""Clips made of a start, a loop and an end part ("S/L/E", e.g. the walk of the SEAS Black widow or an animal's rest):
+the GSF animation chunks mark the loop (pwexport.gsf writes it into the animation extras). The original engine plays
+the start once, repeats the loop while the action lasts and plays the end when it stops; looping the whole clip makes
+a unit stop for a moment every cycle. Writes manifest.models[m].loops = {clip: [t0, t1]} (the loop part in seconds,
+pwexport.glb.walk_loops); the game cuts the clips into their parts (engine/assets.js splitLoops, game/anim.js).
 Usage: python3 tools/anim_loops.py [dist]"""
 import json, sys, os
 try:
@@ -27,7 +28,7 @@ def main(log=lambda *a: None):
             log(name, loops)
         elif 'loops' in m: del m['loops']
     json.dump(man, open(MAN, 'w'), indent=1)
-    log(found, 'models with start/loop/stop walk clips')
+    log(found, 'models with start/loop/end clips')
 
 
 if __name__ == '__main__':
