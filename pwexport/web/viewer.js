@@ -284,7 +284,9 @@ export class Viewer {
         for (const r of pf) {
           let geo, pos;
           if (r[0] === 1) { geo = new THREE.EdgesGeometry(new THREE.BoxGeometry(Math.abs(r[4]), Math.abs(r[5]), Math.abs(r[6]))); pos = [r[1] + r[4] / 2, r[2] + r[5] / 2, r[3] + r[6] / 2]; }
-          else if (r[0] === 0 && r[4] > 0) { geo = new THREE.WireframeGeometry(new THREE.SphereGeometry(r[4], 12, 8)); pos = [r[1], r[2], r[3]]; }
+          else if (r[0] === 0 && r[4] > 0) { geo = new THREE.WireframeGeometry(new THREE.SphereGeometry(r[4], 12, 8)); pos = [r[1], r[2], r[3]]; }   // centre, (r, r², 0)
+          else if (r[0] === 2 && r[4] > 0) { geo = new THREE.WireframeGeometry(new THREE.CylinderGeometry(r[4], r[4], Math.max(0.01, r[6]), 12, 1, true).rotateX(Math.PI / 2)); pos = [r[1], r[2], r[3] + r[6] / 2]; }  // tube: bottom centre, (r, 0, h)
+          else if (r[0] === 3) { geo = new THREE.WireframeGeometry(new THREE.SphereGeometry(1, 12, 8).scale(Math.max(1e-3, r[4]), Math.max(1e-3, r[5]), Math.max(1e-3, r[6]))); pos = [r[1], r[2], r[3]]; }  // ellipsoid: centre, radii
           else continue;
           const l = new THREE.LineSegments(geo, mat); l.position.set(...pos); l.renderOrder = 9;
           add(rootNode, l);

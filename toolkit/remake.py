@@ -56,22 +56,23 @@ class Remake:
                       elapsed=round(time.time() - job['t0']))
             return st
         s = pipeline.status(self.app.install.data, out)
-        st.update(ready=s['ready'], reason=s.get('reason'), built=s.get('built'))
+        st.update(ready=s['ready'], reason=s.get('reason'), built=s.get('built'), todo=s.get('todo'))
         if job and job.get('error'):
             st['error'] = job['error']; st['log'] = job['log'][-30:]
         return st
 
-    def build(self):
+    def build(self, force=False):
+        """build what is out of date in the background (force: everything again)"""
         with self.lock:
             if self.job and self.job.get('running'):
                 return False
             if not self.app.install:
                 raise ValueError('no installation')
             self.job = {'stage': 'starting', 'frac': 0.0, 'log': [], 'running': True, 'error': None, 't0': time.time()}
-        threading.Thread(target=self._run, daemon=True).start()
+        threading.Thread(target=self._run, args=(force,), daemon=True).start()
         return True
 
-    def _run(self):
+    def _run(self, force=False):
         from remake import pipeline
         job = self.job
 
@@ -83,7 +84,7 @@ class Remake:
             if len(job['log']) > 400:
                 del job['log'][:100]
         try:
-            rec = pipeline.build(self.app.install.data, self.out_dir(), progress=prog, log=log)
+            rec = pipeline.build(self.app.install.data, self.out_dir(), progress=prog, log=log, force=force)
             if not rec.get('ok'):
                 job['error'] = rec.get('error') or 'failed'
         except Exception as e:                  # noqa: BLE001

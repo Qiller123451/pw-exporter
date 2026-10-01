@@ -108,7 +108,8 @@ Contributions welcome – keep game files out of commits (`.gitignore` blocks th
 
 * GSF model format research: **Zidell** (the GSF documentation) and **arceusVen1**'s
   [Paraworld_gsf_viewer](https://github.com/arceusVen1/Paraworld_gsf_viewer) (with its `gsf.ksy`) – thank you!
-* The ParaWorld community at [para-welt.com](https://para-welt.com) for the script documentation.
+* The ParaWorld community at [para-welt.com](https://para-welt.com) for the script documentation, and for the table
+  of the model part flags per model type.
 * [three.js](https://threejs.org) (MIT license; `pwexport/web/vendor/three`, and bundled into `remake/game/game.js`),
   [esbuild](https://esbuild.github.io), [Kaitai Struct](https://kaitai.io).
 * ParaWorld © SEK / Sunflowers / Ubisoft. This project is an unofficial fan work; it contains no files of the game

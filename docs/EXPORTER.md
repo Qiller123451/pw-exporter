@@ -121,6 +121,20 @@ turrets, `Bl_0..9` builders, `flag`, `D_01..16` damage effects …), **Collision
 yellow, the selection volumes in orange), **Normals** (the vertex normals), **Turn**, **Background** and
 **Screenshot**. On maps only Frame, Grid, Wireframe, Texture and the last three are offered.
 
+### Visibility
+
+Under **Model parts** the **Visibility** section shows the model's raw part flags – the bits every mesh of a
+ParaWorld model carries – named as the game's model type (FourCC: Bldg, Anim, Char, Wall, Ress …) defines them:
+
+* **Level of detail 0–4**: the game draws simpler versions of a model from farther away. 0 is full detail.
+* One line per flag the model uses, with its bit number and how many parts carry it. A ticked box means parts with
+  that flag are shown now (a dash: some of them). Untick to hide every part with the flag; tick to force them on,
+  even the ones *Model parts* hides (selection volumes, shadow models, construction scaffolds …). Forced lines are
+  highlighted; **Reset** goes back to the game's rules.
+
+*Model parts* is the game's logic (one switch such as "Construction: stage 2" sets several flags at once, the way
+the game does); *Visibility* is the raw flags underneath it. Exports keep what you see in both.
+
 ### Step 5 – Animations
 
 ![Animations](screenshots/10_warrior_level3.png)
@@ -178,6 +192,9 @@ Click one to load it:
   many objects of each kind it holds.
 * **Show**: objects with their models, grass & small plants (the landscape decoration – many thousands), water, and
   pins for every object (handy for objects without a model in your installation).
+* **Ground tiles of the game** (on by default): the ground is drawn with the setting's pre-blended transition tiles
+  exactly as the game picks them (`Texture/Scape/<Setting>/ScapeTexture5.dat`); off shows a smooth blend of the
+  material textures (sharper up close). The map exports use the game's tiles.
 * **Walls** are joined like in the game: every wall piece shows only the arms towards its neighbouring pieces, towers
   and gates (and one of the model's variants per arm) – in the 3D view and in the map exports.
 

@@ -35,7 +35,7 @@ const T = {
     play: 'Play', prepare: 'Prepare the game data', rebuild: 'Rebuild game data',
     ready: 'Ready', notReady: 'Game data not prepared yet', building: 'Preparing…', failed: 'Preparing failed',
     reasons: { 'not built': 'The first start converts the models, textures and rules of your installation (about 5–15 minutes, once).',
-      'toolkit updated': 'The toolkit was updated: the game data has to be prepared again.', 'game files changed': 'Your game files changed: the game data has to be prepared again.',
+      'toolkit updated': 'The toolkit was updated: the parts of the game data it affects have to be prepared again.', 'game files changed': 'Your game files changed: the parts of the game data they affect have to be prepared again.',
       'last build failed': 'The last attempt failed. Try again, or look at the log.', 'no installation': 'Choose the game folder first.' },
     noCode: 'The remake\'s game code (remake/game/game.js) is missing from this copy of the toolkit.',
     stage: { rules: 'Reading the rules', models: 'Converting models', assets: 'Collecting models', ui: 'Interface', menu: 'Menu art', cursors: 'Cursors', terrain: 'Ground textures', sounds: 'Sounds', done: 'Done', failed: 'Failed', starting: 'Starting' },
@@ -63,7 +63,7 @@ const T = {
     play: 'Spielen', prepare: 'Spieldaten vorbereiten', rebuild: 'Spieldaten neu erstellen',
     ready: 'Bereit', notReady: 'Spieldaten noch nicht vorbereitet', building: 'Wird vorbereitet…', failed: 'Vorbereitung fehlgeschlagen',
     reasons: { 'not built': 'Beim ersten Start werden Modelle, Texturen und Regeln deiner Installation umgewandelt (etwa 5–15 Minuten, einmalig).',
-      'toolkit updated': 'Das Toolkit wurde aktualisiert: die Spieldaten müssen neu vorbereitet werden.', 'game files changed': 'Deine Spieldateien haben sich geändert: die Spieldaten müssen neu vorbereitet werden.',
+      'toolkit updated': 'Das Toolkit wurde aktualisiert: die betroffenen Teile der Spieldaten müssen neu vorbereitet werden.', 'game files changed': 'Deine Spieldateien haben sich geändert: die betroffenen Teile der Spieldaten müssen neu vorbereitet werden.',
       'last build failed': 'Der letzte Versuch ist fehlgeschlagen. Versuche es erneut oder sieh ins Protokoll.', 'no installation': 'Wähle zuerst den Spielordner.' },
     noCode: 'Der Spielcode des Remakes (remake/game/game.js) fehlt in dieser Kopie des Toolkits.',
     stage: { rules: 'Regeln lesen', models: 'Modelle umwandeln', assets: 'Modelle sammeln', ui: 'Oberfläche', menu: 'Menügrafik', cursors: 'Mauszeiger', terrain: 'Bodentexturen', sounds: 'Klänge', done: 'Fertig', failed: 'Fehlgeschlagen', starting: 'Start' },
@@ -138,12 +138,12 @@ function home() {
       el('div', { class: 'progress' }, el('i', { style: `width:${f}%` })), el('div', { class: 'log', text: (R.log || []).join('\n') }));
   } else if (R.ready) {
     act.append(el('a', { class: 'button primary', href: '/remake/', id: 'play' }, L.play),
-      el('span', { class: 'status ok', text: L.ready + (R.built && R.built.seconds ? ' · ' + L.builtIn(R.built.seconds) : '') }),
-      el('button', { onclick: build, title: L.rebuild }, '↻'));
+      el('span', { class: 'status ok', text: L.ready + (R.built && R.built.seconds >= 30 ? ' · ' + L.builtIn(R.built.seconds) : '') }),
+      el('button', { onclick: () => build(true), title: L.rebuild }, '↻'));
   } else {
     rem.append(el('p', { class: 'note', text: (L.reasons[R.reason] || R.reason || '') }));
     if (R.error) rem.append(el('div', { class: 'log', text: R.error + '\n' + (R.log || []).slice(-12).join('\n') }));
-    act.append(el('button', { class: 'primary', id: 'prepare', onclick: build, disabled: !R.code || !ST.install_path }, L.prepare),
+    act.append(el('button', { class: 'primary', id: 'prepare', onclick: () => build(false), disabled: !R.code || !ST.install_path }, L.prepare),
       el('span', { class: 'status ' + (R.error ? 'bad' : 'warn'), text: R.error ? L.failed : L.notReady }));
   }
   rem.append(act);
@@ -151,8 +151,9 @@ function home() {
   if (R.building || !P.ready) setTimeout(refresh, 1200);
 }
 
-async function build() {
-  await api.post('/api/toolkit/remake/build', {});
+// the "prepare" button redoes only what is out of date, the rebuild button (↻) everything
+async function build(force) {
+  await api.post('/api/toolkit/remake/build', { force: !!force });
   refresh();
 }
 

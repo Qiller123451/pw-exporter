@@ -21,6 +21,7 @@ HTTP API (JSON)
     GET  /api/map/mats?id=          ground material per 4 m cell, uint8 (X-Grid header)
     GET  /api/map/preview?id=       the map's 200 x 200 preview picture (png)
     GET  /api/ground?setting=&k=    ground material k of a setting (jpg)
+    GET  /api/map/ground?id=        the map's ground with the game's transition tiles (jpg, north up)
     POST /api/map/export            {id, format, objects, plants, step, extras: [...]} -> {files}
     GET  /cache/...                 converted models and textures
 """
@@ -286,9 +287,21 @@ class Maps:
         Image.frombytes('RGBA', (m.preview['w'], m.preview['h']), m.preview['rgba']).save(b, 'PNG')
         return b.getvalue()
 
+    def ground_map(self, mid):
+        """the map's ground drawn with the game's transition tiles (scape.bake), cached as jpg"""
+        import hashlib
+        path = self.path(mid)
+        key = hashlib.sha1(('%s|%s|%s' % (path, os.path.getmtime(path), scape.VERSION)).encode()).hexdigest()[:16]
+        f = os.path.join(cache_dir('maps', 'ground'), key + '.jpg')
+        if not os.path.exists(f):
+            m = self.load(mid)
+            scape.bake(self.app.install, m.setting, m.mats, m.w, m.h, px_per_m=4.0, max_side=4096).save(f + '.tmp.jpg', quality=88)
+            os.replace(f + '.tmp.jpg', f)
+        return f
+
     def ground(self, setting, k):
         scape.material_textures(self.app.install, setting)
-        return os.path.join(cache_dir('scape', scape.FOLDERS.get(setting, 'Jungle')), 'material_%d.jpg' % k)
+        return os.path.join(cache_dir('scape', scape.FOLDERS.get(setting, 'Jungle')), 'material%s_%d.jpg' % (scape.VERSION, k))
 
     def export(self, d):
         m = self.load(d['id'])
@@ -428,6 +441,7 @@ def make_handler(app):
                 if p == '/api/map/preview':
                     data = app.maps.preview(q['id'])
                     return self.send_bytes(data, 'image/png', cache=True) if data else self.send_error(404)
+                if p == '/api/map/ground': return self.send_file(app.maps.ground_map(q['id']), cache=True)
                 if p == '/api/ground': return self.send_file(app.maps.ground(q.get('setting') or 'Jungle', int(q.get('k') or 0)), cache=True)
                 if p.startswith('/cache/'):
                     root = os.path.realpath(cache_dir())

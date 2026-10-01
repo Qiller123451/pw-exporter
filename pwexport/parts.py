@@ -31,12 +31,20 @@ def sig_visible(sig, level, dmg, age):
     return bool((sig >> level) & 1 and (sig >> (5 + dmg)) & 1 and (sig >> (7 + age)) & 1)
 
 
+# per model type (FourCC): which helper bits exist (web/parts.js FLAGS has the full name table)
+SELVOL = {'Char', 'Ress', 'Bldg', 'Deko', 'Vehi', 'Fiel', 'Misc', 'Anim', 'Vgtn', 'RIVR'}
+NIGHT = {'Bldg', 'Deko', 'Fiel', 'Misc', 'Ship'}
+STATES = {'Bldg', 'Wall', 'Fiel', 'Misc', 'Deko', 'Vgtn', 'Ship'}      # construction / damage / epoch bits 9-13, 21-28
+
+
 def helper(a, fourcc):
-    if (a >> 18) & 1 and fourcc != 'Wall':
+    if (a >> 18) & 1 and fourcc in SELVOL:
         return 'pick'
-    if fourcc not in ('Anim', 'Char') and (a >> 19) & 1:
+    if (a >> 19) & 1 and fourcc == 'Vgtn':
+        return 'billboard'
+    if (a >> 19) & 1 and fourcc not in ('Anim', 'Char'):
         return 'shadow'
-    if fourcc in ('Bldg', 'Misc', 'Deko') and (a >> 20) & 1:
+    if (a >> 20) & 1 and fourcc in NIGHT:
         return 'night'
     if a & 0x1F and not a & 1:
         return 'lod'
@@ -80,7 +88,7 @@ def visible_nodes(j, owned=True, flags=None, level=4, dmg=0, age=None, night=Fal
     fourcc = _fourcc(j)
     nodes = mesh_nodes(j)
     if age is None:       # the most advanced epoch the model has
-        ages = {k for n in nodes for k in range(5) if (n['extras']['attr'] >> (9 + k)) & 1}
+        ages = {k for n in nodes for k in range(5) if (n['extras']['attr'] >> (9 + k)) & 1} if fourcc in STATES else set()
         age = max(ages) + 1 if ages else 1
     show_flags = {5: owned, 6: owned, 7: owned, 8: False, 9: owned, 10: False, 11: True, 16: False}
     for b in range(20, 28):
@@ -97,8 +105,12 @@ def visible_nodes(j, owned=True, flags=None, level=4, dmg=0, age=None, night=Fal
             continue
         if fourcc in DYNAMIC:
             ok = not (a >> 18) & 3 and all(show_flags.get(b, True) for b in range(5, 28) if (a >> b) & 1 and b not in (18, 19))
-        else:
+        elif fourcc == 'Ress':
+            ok = not (a >> 5) & 0x3F or (a >> 10) & 1             # the full resource stage (res_6)
+        elif fourcc in STATES:
             ok = sig_visible(static_sig(a), level, dmg, age)
+        else:
+            ok = True
         if ok:
             out.add(n.get('name'))
     return out

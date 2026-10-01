@@ -117,7 +117,7 @@ class ModelIndex:
         return self.get(name)
 
     def convert(self, name, out_dir=None, archive=None, embed_textures=False, fps=25.0):
-        """convert one model (all parts, all animations) -> path of the .glb. Results are cached on disk."""
+        """convert one model (all parts and levels of detail, all animations) -> path of the .glb. Results are cached on disk."""
         e = self.locate(name, archive)
         if not e:
             raise KeyError('unknown model %s' % name)
@@ -128,7 +128,7 @@ class ModelIndex:
             return out
         a = self.archive(e['path'])
         tmp = out + '.part'
-        res = a.export_index(e['index'], tmp, data_dir=self.install.data, all_parts=True, embed_textures=embed_textures,
+        res = a.export_index(e['index'], tmp, data_dir=self.install.data, all_parts=True, all_lods=True, embed_textures=embed_textures,
                              tex_dir=os.path.join(out_dir, 'textures'), fps=fps, log=lambda *x: None)
         if not res:
             if os.path.exists(tmp):

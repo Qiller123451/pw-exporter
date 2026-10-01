@@ -30,6 +30,11 @@ export class MapView {
   }
   toWorld(x, y, z) { return new THREE.Vector3(x - this.info.w / 2, z, -(y - this.info.h / 2)); }
 
+  // ground drawn with the game's tiles (true) or the blended material textures (false)
+  setTiles(on) {
+    this.tiles = on;
+    if (this.layers.terrain && this.mats) this.layers.terrain.material = on ? this.mats.tiles : this.mats.blend;
+  }
   // ---------------------------------------------------------------- terrain
   async load(info, onProgress = () => {}) {
     this.info = info;
@@ -42,11 +47,13 @@ export class MapView {
     const [mx, my] = mb.grid, M = new Uint8Array(mb.data);
     this.H = { nx, ny, H, step: 2 * step };
     onProgress(0.1);
+    const uvs = new Float32Array(nx * ny * 2);
     const pos = new Float32Array(nx * ny * 3), w0 = new Float32Array(nx * ny * 4), w1 = new Float32Array(nx * ny * 4);
     const cell = (cx, cy) => M[Math.min(my - 1, Math.max(0, cy)) * mx + Math.min(mx - 1, Math.max(0, cx))];
     for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
       const k = j * nx + i, x = i * 2 * step, y = j * 2 * step;
       pos[k * 3] = x - info.w / 2; pos[k * 3 + 1] = H[k]; pos[k * 3 + 2] = -(y - info.h / 2);
+      uvs[k * 2] = x / info.w; uvs[k * 2 + 1] = y / info.h;          // the baked ground: north at the image top
       // material weights: bilinear over the 4 m cell centres
       const fx = x / 4 - 0.5, fy = y / 4 - 0.5, cx = Math.floor(fx), cy = Math.floor(fy), u = fx - cx, v = fy - cy;
       const add = (m, wt) => { if (m < 4) w0[k * 4 + m] += wt; else w1[k * 4 + m - 4] += wt; };
@@ -60,6 +67,7 @@ export class MapView {
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
     geo.setAttribute('splat', new THREE.BufferAttribute(w0, 4));
     geo.setAttribute('splat2', new THREE.BufferAttribute(w1, 4));
     geo.setIndex(new THREE.BufferAttribute(idx, 1));
@@ -86,7 +94,11 @@ export class MapView {
           diffuseColor.rgb *= c;`);
     };
     mat.customProgramCacheKey = () => 'pw-map-terrain';
-    const terrain = new THREE.Mesh(geo, mat);
+    // the game's look: every 4 m tile from the setting's pre-blended transition tiles (server side, scape.bake)
+    const gtex = texLoader.load('/api/map/ground?id=' + encodeURIComponent(info.id));
+    gtex.colorSpace = THREE.SRGBColorSpace; gtex.anisotropy = 8;
+    this.mats = { tiles: new THREE.MeshLambertMaterial({ map: gtex }), blend: mat };
+    const terrain = new THREE.Mesh(geo, this.tiles === false ? mat : this.mats.tiles);
     terrain.name = 'terrain'; terrain.receiveShadow = true; terrain.userData.own = true;
     this.layers.terrain = terrain;
     this.group.add(terrain);
@@ -264,6 +276,8 @@ function wallTags(top) {
     if (!o.isMesh || !o.geometry) return;
     if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
     const n = nodeOf(o);
+    const la = (n.userData.attr >>> 0) & 0x1f;
+    if (la && !(la & 1)) return;                // lower levels of detail
     if (!nodes.has(n)) nodes.set(n, { meshes: [], box: new THREE.Box3() });
     const e = nodes.get(n);
     e.meshes.push(o);

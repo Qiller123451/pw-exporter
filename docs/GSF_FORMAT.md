@@ -15,7 +15,10 @@ and checked by rendering the results.
 ## Header 2
 - `+16` model info table ptr, `+20` count; `+24` anim info ptr, `+28` count; `+32` material count, `+36` materials ptr.
 - Material (24 bytes): attr1, attr2, texture name ptr, normal-map name ptr, env-map name ptr, 0.
-  `attr1 & 0xF` = alpha mode (1 = alpha test, 2 = blend, …); `0x10` = uses a normal map; `0x1000` = player colour.
+  attr1: `0x1` alpha test, `0x2` alpha blend, `0x4` additive (particles, gore), `0x8` environment map, `0x10` normal
+  map, `0x100` probably no z-write (particles), `0x200` probably two-sided, `0x1000` player colour, `0x4000` probably
+  specular (attr2 = 0xF). attr2: bits 0–3 specular / environment strength, bits 4–7 normal-map strength.
+  (SEK's exporter source: flags, flags2, texture, bump if MF_Bump, env if MF_Environment.)
 - Model info (84 bytes): fourcc (Char/Anim/Bldg/…), name ptr, chunk table ptr + count, used-material table,
   bbox at `+52`, per-model animation table ptr `+76` + count `+80`.
 - Per-model animation k → list of (anim chunk ptr, frame count). **new:** entry j belongs to chunk j of the
@@ -23,17 +26,41 @@ and checked by rendering the results.
 - Animation chunks are heavily shared between models (all_characters: 1269 unique chunks, 85779 references).
 
 ## Chunk attributes (visibility flags)
-- Flag number i has mask `1 << (8*(i//8+1) - i%8 - 1)`.
-- LOD0..LOD4 = masks 0x01, 0x02, 0x04, 0x08, 0x10.
-- 21 = selection volume; 20 = shadow model (Bldg/Deko/Fiel/Ship) or tree impostor (Vgtn); 19 = night-only.
-- Buildings: 29 = construction flags in use, 30 = finished (con4); 27/28 = damage states.
-- Anim (tamed animals): 0/1/13/14/15/16–19/28–31 = helmet, saddle, armour, standard, limb/body armour.
-- Ress: 13 = full resource (res6), others are depletion stages.
+Every mesh / billboard chunk carries a u32 attribute word. The engine draws a chunk when its bits fit the object's
+current render mask (bits that must be set, bits that must be clear). **Bits 0–4 are the LoD mask** (bit k = drawn at
+level of detail k) for every model type; what bits 5–31 mean depends on the model type (FourCC) and was defined per
+type in SEK's object class files (not shipped; the 3ds Max tools read them). SEK's tools number the bits **raw**
+(`1 << bit`); the community table (Paraworld_gsf_viewer `docs/gsf/flags.jpg`, "Bit1..Bit32") counts every byte from
+its top bit, so its BitN is raw bit `8*((N-1)//8) + 7 - (N-1)%8` (and `gsf.py BIT(i)` uses that old numbering).
+
+| raw bit | Char | Ress | Bldg / Fiel | Wall | Deko | Vehi / Ship | Misc | Anim | Vgtn | RIVR |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 5 | Head | res_1 | AnimateConStart | AnimateConStart | Sequence | ram_low | Misc_Step0 | PartyCol | | |
+| 6 | Body | res_2 | AnimateConEnd | AnimateConEnd | | ram_high | Misc_Step1 | Saddle | | |
+| 7 | Legs | res_3 | ? (cloth) | | | | Misc_Step2 | Helmet | | |
+| 8 | | res_4 | ? (con flag) | | | | | Armor | | |
+| 9–13 | | res_5, res_6 (9, 10) | Age 1–5 (Bldg) | ? | ? (sequence steps) | | | Standarte, Armorsaddle, Misc (9–11) | | |
+| 18 | SelVol | SelVol | SelVol | ? (drawn) | SelVol | SelVol (Vehi) | SelVol | SelVol | SelVol | SelVol |
+| 19 | | | ShadowModel | ? (shadow) | ShadowModel | ShadowModel | ShadowModel | | TreeBillboard | |
+| 20 | | | Night | | Night | Night (Ship) | Night | arm_li | | |
+| 21–24 | | | Con 0–3 | Con 0–3 | (Con) | (Con 0–3, Ship) | ? (hu_ruin_ws) | arm_re, leg_li, leg_re, bauch_li | | 21 UseWaterShader |
+| 25 | | | Con 4 (finished) | Con 4 | | Con 4 (Ship) | ? | bauch_re | | |
+| 26 | | | UseConFlags (shown intact) | same | | same (Ship) | ? | head | | |
+| 27 / 28 | | | Dest 1 / Dest 2 | Dest 1 / 2 | | Dest 1 / 2 (Ship) | ? | tail / – | | |
+
+Towe (not used by the shipped models): Zinnen_1–9 at bits 5–13. Fiel adds bit 9 (hu_corn_field). Full table with
+the unknowns: `pwexport/web/parts.js FLAGS` (shown in the exporter's Visibility section).
+
+**Collision table** (model info `+44` / `+48`, 32-byte records `[u32 type][3f pos][3f size][u32 attr]`, the "walk
+collision" list of SEK's exporter; attr = the record's visibility bits): type 0 sphere (centre, r, r², 0), 1 box
+(min corner, size; never rotated), 2 tube (bottom centre, r, 0, height), 3 ellipsoid (centre, radii).
 
 ## Mesh chunks
 - Types: 0 static, 0x80000000 skinned, 0x20000000 "simple skinned" (the whole chunk is bound to one bone set),
   9 / 0x80000009 / 0x20000009 cloth (same header, 36 bytes of cloth data before the bbox, 60-byte submeshes).
 - `+12` 4x4 row-major matrix (D3D, row vectors). Positions are quantised inside the **chunk** bbox.
+- Vertex strides 9 and 17 add one byte of baked ambient occlusion ("NormalLight", 1..255, computed by SEK's
+  resource builder from 511 rays and the mesh's convexity) after the 8 / 16 bytes below.
 - Vertex (8 bytes): bits 0–38 = 3×13-bit position (value/8191 inside bbox), bits 39–47 = index into a 511-entry
   unit-normal table, byte 6 = u×256, byte 7 = v×256. **v runs bottom-up** (OpenGL style): for glTF/top-down
   images use v = 1 − byte7/256. (Checked against atlas features: nuts, valve wheels and skin charts line up exactly.) 16-byte vertices add 4 bone indices (255 = none) and 4 u8 weights.
@@ -50,6 +77,10 @@ and checked by rendering the results.
   Vertex bone indices and animation track indices use this same depth-first order.
 
 ## Skeletal animation chunk (0x40000005) — **new**
+- `+12` flags: 0x80000000 always; 0x1 loop marks (`+16` int16 loop start, int16 loop end, -1 = none); 0x2 no single
+  root track (`+25` = 0xFF); 0x4 root height (`+20` float); probably 0x8 fix root z, 0x10 absolute root. `+48` = the
+  loop's speed in m/s (allosaurus walk_1/2/3: 1.5 / 5 / 7). The root layout's 3 "unused" floats are the root's
+  velocity per frame. Animations are made at 25 fps. (From SEK's 3ds Max exporter source, checked on the data.)
 - `+25` root-track layout (0: 40 bytes/frame = quat, pos, 3 unused floats; 1: 52 bytes = … + scale; 2: quat only),
   `+28` root track ptr, `+32` track tree ptr, `+36` count, `+40` frame count, `+44` 3 floats (walk distances).
 - Track node (16 bytes): u32 attr = [depth-first bone index, type, child count, ?], data ptr, children ptr, child count.

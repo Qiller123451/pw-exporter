@@ -61,6 +61,8 @@ def node_boxes(j):
     for i, n in enumerate(j['nodes']):
         if 'mesh' not in n or 'attr' not in (n.get('extras') or {}):
             continue
+        if n['extras']['attr'] & 0x1F and not n['extras']['attr'] & 1:
+            continue                                # lower levels of detail
         mn, mx = np.full(3, 1e9), np.full(3, -1e9)
         for p in j['meshes'][n['mesh']]['primitives']:
             a = j['accessors'][p['attributes']['POSITION']]

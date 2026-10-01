@@ -1,32 +1,32 @@
-# Terrain texture atlases (Texture/Scape/<Setting>/ScapeTexture<Q>.dat) – findings so far
+# Terrain texture atlases (Texture/Scape/<Setting>/ScapeTexture<Q>.dat)
 
-Community tip: the `.dat` files describe how the tiles of `ScapeTexture<Q>_<n>.dds` are combined, one set per
-quality level (Q = 1 low: one 1024² atlas; Q = 5 high: seven 2048² atlases).
+SEK built these sets with its ScapeTextureCalc tool (source seen 2026-10-01, not part of the toolkit): per quality
+level Q (1 low: one 1024² atlas of 14 px tiles; 5 high: seven 2048² atlases of 70 px tiles = 64 px + 3 px border) it
+packs the variants of the setting's 8 ground materials and every pre-blended transition between them. Reader:
+`pwexport/scape.py read_dat` (layout in its docstring, verified on every set of the game).
 
-What is known (Jungle, Q = 5):
+The `.dat` (gzip): page count, page file names (`.tga`, the game loads the `.dds`), tile size, page size, mip-map
+border setting, then **u16 tile[65536]** indexed by a 16-bit "MatDesc", then per material the tile ranges of its
+single / double (2 × 2) / quad (4 × 4) variants, a 32 × 32 **macro map** and 32 empty slope-list words, and 1024
+unknown bytes. Tile i = atlas i // (k·k), row (i % k²) // k, column i % k with k = page / tile; tile 0 is magenta.
 
-* The `.dat` file is gzip-compressed. Decompressed:
-  * `u32 7` (version?), `u32 7` (number of atlases), then 7 strings (`u32 length` + zero-terminated name,
-    e.g. `ScapeTexture5_0000.tga`),
-  * `u32 70` – tile size in pixels (64 px + 3 px border on each side), `u32 2048` – atlas size, `u32 4`,
-  * 6144 rows of 8 × u16 (rows come in identical pairs), then a second table (4236 rows of 8 × u16) whose values
-    grow in steps of 658 per column and 76 per row, ending in a large permutation-like block.
-* Atlases: 29 × 29 tiles of 70 px, tile index i → atlas i / 841, row (i % 841) / 29, column (i % 841) % 29.
-  Tile 0 is magenta (invalid). The top rows hold "pure" materials in long runs (grass, sand with rocks, lush
-  grass, red dirt, rock, sand, cracked earth ...), the rest are pre-blended transition tiles.
-* In the first table, column k of every row always points into the tile range of material k (e.g. column 0:
-  grass tiles, column 1: sand-with-rocks tiles 89..), so a row looks like "one variant tile for each of the 8
-  materials" – probably chosen by position to avoid repetition.
+MatDesc: bits 14–15 type. **3 = transition**: bits 0–2, 3–5, 6–8, 9–11 the materials at the tile's top-left,
+top-right, bottom-left and bottom-right corner, bits 12–13 one of 4 variants (the tool blended the corner materials
+through blend masks; with fewer materials it made fewer variants and the table reuses them). **0 / 1 / 2 = one
+material** (bits 0–2) at macro-map position x = bits 4–8, y = bits 9–13 as a single / double / quad tile; the macro
+map entry holds the single variant (bits 0–7), the double variant (8–15) with its tile x / y (24 / 25, bit 30 = part
+of a double) and the quad variant (16–23) with its tile x / y (26–27 / 28–29, bit 31 = part of a quad). So a pure
+area repeats every 32 tiles (128 m) and rocks, bushes and patches spanning 2 × 2 or 4 × 4 tiles stay whole.
 
-Used by the remake: `pipeline/build_terrain.py` (reading with `pwexport/scape.py`) takes each material's variant tiles (the value set of table column k,
-weighted by how often the table picks them), strips the 3 px borders and lays 8 × 8 random variants into
-`assets/terrain/scape_<k>.jpg`. The variants of a material tile seamlessly, so these are the original ground
-textures. The splat shader (src/engine/terrain.js) blends materials 2 (lush grass), 0 (dry grass), 3 (red earth)
-and 4 (rock with moss) at ~3 m per tile. Jungle materials: 0 dry grass, 1 sand with rocks, 2 lush grass,
-3 red earth, 4 mossy rock, 5 pale sand, 6 sand patches, 7 cracked earth.
+How a map uses it (`scape.bake`, map exports and the exporter's map view "Ground tiles of the game"): a 4 m tile spans
+the square between four material cell centres and takes the transition tile of their four materials; the tile
+picture's top is north and the macro map's rows run southwards (the only orientation in which the 2 × 2 / 4 × 4
+groups join; north vs. south of the whole picture is not provable from the data). The variant of a transition tile
+is a hash of the position (the engine's choice is not known). `material_textures` lays out the first 8 × 8 macro
+map cells of each material: the seamless material textures of the exporter's blended view and the remake.
 
-Not yet decoded: how a map cell's material combination selects a transition tile (second table); the remake blends
-materials in the shader instead of using the pre-blended transition tiles.
+Not used yet: the remake still blends the material textures in its shader instead of drawing the transition tiles;
+the 1024 bytes at the end of the file.
 
 ## Grass, detail and cave sets (2026-10-01)
 

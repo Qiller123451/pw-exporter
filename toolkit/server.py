@@ -3,7 +3,8 @@ API under /api/) and the remake (under /remake/, see toolkit/remake.py). Listens
 
     GET  /                          the launcher (toolkit/web)
     GET  /api/toolkit/state         installation, exporter loading progress, remake build state
-    POST /api/toolkit/remake/build  build the remake's game data from the installation (runs in the background)
+    POST /api/toolkit/remake/build  build the remake's game data from the installation (runs in the background;
+                                    only what is out of date, {"force": true} everything)
     GET  /exporter/                 the Model & Map Exporter (pwexport/web; its API: pwexport/app.py)
     GET  /remake/...                the remake
 """
@@ -72,8 +73,7 @@ def make_handler(app, remake):
             p = urlparse(self.path).path
             if p == '/api/toolkit/remake/build':
                 try:
-                    self.body()
-                    return self.send_json({'ok': remake.build()})
+                    return self.send_json({'ok': remake.build(force=bool(self.body().get('force')))})
                 except Exception as e:                   # noqa: BLE001
                     return self.send_json({'ok': False, 'error': str(e)}, 500)
             return super().do_POST()

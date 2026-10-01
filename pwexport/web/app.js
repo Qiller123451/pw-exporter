@@ -43,7 +43,7 @@ const cur = {
   party: null, anim: null, partAnim: {}, seamless: true,
   exp: { format: 'glb', animations: 'all', name: '' },
   map: null,                    // /api/map result of the map shown
-  mapLayers: { objects: true, plants: false, water: true, markers: false },
+  mapLayers: { objects: true, plants: false, water: true, markers: false, tiles: true },
   mapExp: { format: 'glb', objects: true, plants: false, step: 2, extras: ['heightmap', 'csv'] },
 };
 
@@ -443,11 +443,12 @@ function renderParts() {
   const vp = viewer.parts[0];
   if (!vp) return;
   const inf = vp.info, st = vp.state;
-  const upd = () => { viewer.applyState(0); cur.state = st; };
+  const upd = () => { viewer.applyState(0); cur.state = st; renderVis(); };
   const body = [];
   if (inf.dynamic) {
     for (const b of inf.flags.filter((x) => x < 20)) {
-      body.push(el('label', { class: 'chk' }, el('input', { type: 'checkbox', checked: st.flags[b] !== false, onchange: (ev) => { st.flags[b] = ev.target.checked; upd(); } }), el('span', { text: S.flags[b] || `Flag ${b}` })));
+      const label = (vp.fourcc === 'Anim' && S.flags[b]) || P.flagName(vp.fourcc, b) || S.flags[b] || `Flag ${b}`;
+      body.push(el('label', { class: 'chk' }, el('input', { type: 'checkbox', checked: st.flags[b] !== false, onchange: (ev) => { st.flags[b] = ev.target.checked; upd(); } }), el('span', { text: label })));
     }
     const w = inf.flags.filter((x) => x >= 20);
     if (w.length) body.push(el('label', { class: 'chk' }, el('input', { type: 'checkbox', checked: w.some((b) => st.flags[b]), onchange: (ev) => { for (const b of w) st.flags[b] = ev.target.checked; upd(); } }), el('span', { text: `${S.wounds} (${w.length})` })));
@@ -467,6 +468,11 @@ function renderParts() {
       for (const a of inf.ages) sel.append(el('option', { value: a, selected: a === st.age }, ['I', 'II', 'III', 'IV', 'V'][a - 1]));
       body.push(el('div', { class: 'row' }, el('label', { text: S.epoch }), sel));
     }
+    if (inf.res && inf.res.length > 1) {
+      const sel = el('select', { onchange: (ev) => { st.res = +ev.target.value; upd(); } });
+      for (const r of inf.res) sel.append(el('option', { value: r, selected: r === st.res }, `${r} / ${Math.max(...inf.res)}`));
+      body.push(el('div', { class: 'row' }, el('label', { text: S.resLeft }), sel));
+    }
     if (inf.night) body.push(el('label', { class: 'chk' }, el('input', { type: 'checkbox', checked: st.night, onchange: (ev) => { st.night = ev.target.checked; upd(); } }), el('span', { text: S.night })));
   }
   if (inf.fx) body.push(el('label', { class: 'chk' }, el('input', { type: 'checkbox', checked: st.fx, onchange: (ev) => { st.fx = ev.target.checked; upd(); } }), el('span', { text: S.fx })));
@@ -477,6 +483,42 @@ function renderParts() {
   for (const c of PARTY) sw.append(el('button', { class: cur.party === c ? 'on' : '', style: `background:rgb(${c})`, onclick: () => { cur.party = c; viewer.setParty(c.map((x) => x / 255)); renderParts(); } }));
   body.push(el('div', { class: 'row' }, el('label', { text: S.party }), sw));
   s.append(el('h3', { text: S.parts }), ...body);
+  renderVis();
+}
+
+// Visibility: the raw attribute bits of the main model's mesh chunks, named per model type (parts.js FLAGS), and the
+// level of detail. Overrides on top of Model Parts: unticking hides every chunk with that bit, ticking shows them.
+function renderVis() {
+  const s = $('#s-vis'); s.innerHTML = '';
+  const vp = viewer.parts[0];
+  if (!vp || cur.map) return;
+  const inf = vp.info, st = vp.state;
+  st.vis = st.vis || {};
+  const upd = () => { viewer.applyState(0); cur.state = st; renderVis(); };
+  const head = el('h3', {}, el('span', { text: S.visibility }));
+  if (Object.keys(st.vis).length || st.lod) head.append(el('button', { class: 'link', text: S.reset, onclick: () => { st.vis = {}; st.lod = 0; upd(); } }));
+  s.append(head);
+  if (inf.lods.length > 1) {
+    const row = el('div', { class: 'lods' });
+    for (const k of inf.lods) row.append(el('button', { class: (st.lod || 0) === k ? 'on' : '', text: String(k), title: S.lodTip(k), onclick: () => { st.lod = k; upd(); } }));
+    s.append(el('div', { class: 'row' }, el('label', { text: S.lod }), row));
+  }
+  // which chunks with each bit are shown now
+  const shown = new Map();
+  for (const n of P.flagged(vp.obj)) {
+    const a = n.userData.attr >>> 0;
+    for (const [b] of inf.bits) if ((a >>> b) & 1) { const e = shown.get(b) || [0, 0]; e[0]++; if (n.visible) e[1]++; shown.set(b, e); }
+  }
+  for (const [b, count] of inf.bits) {
+    const [tot, on] = shown.get(b) || [count, 0];
+    const forced = st.vis[b];
+    const cb = el('input', { type: 'checkbox', checked: forced !== undefined ? forced : on > 0, onchange: (ev) => { st.vis[b] = ev.target.checked; upd(); } });
+    if (forced === undefined && on > 0 && on < tot) cb.indeterminate = true;
+    const name = P.flagName(vp.fourcc, b) || S.unknownBit;
+    s.append(el('label', { class: 'chk' + (forced !== undefined ? ' forced' : ''), title: S.visTip(b, tot, on) }, cb, el('span', { text: name }), el('small', { text: `bit ${b} · ${tot}` })));
+  }
+  if (!inf.bits.length && inf.lods.length <= 1) s.append(el('div', { class: 'note', text: S.visNone }));
+  s.append(el('div', { class: 'note', text: S.visNote(vp.fourcc || '?') }));
 }
 
 function renderAnims() {
@@ -607,12 +649,13 @@ function applyMapLayers() {
   mv.layers.plants.visible = L.plants;
   mv.layers.markers.visible = L.markers || !L.objects;
   if (mv.layers.water) mv.layers.water.visible = L.water;
+  mv.setTiles(L.tiles);
 }
 function renderMapDetails() {
   const M = cur.map;
   const head = $('#d-head'); head.innerHTML = '';
   $('#details').scrollTop = 0;
-  for (const id of ['#s-model', '#s-addons', '#s-parts', '#s-anims', '#s-export']) $(id).innerHTML = '';
+  for (const id of ['#s-model', '#s-addons', '#s-parts', '#s-vis', '#s-anims', '#s-export']) $(id).innerHTML = '';
   if (!M) return;
   head.append(el('h2', { text: M.name }));
   head.append(el('div', { class: 'sub', text: `${M.id}` }));
@@ -635,6 +678,7 @@ function renderMapDetails() {
   s.append(cb('objects', S.mapLayerObjects, (on) => { if (on) loadMapModels('objects', mapToken); }));
   s.append(cb('plants', S.mapLayerPlants, (on) => { if (on) loadMapModels('plants', mapToken); }));
   s.append(cb('water', S.mapLayerWater));
+  s.append(cb('tiles', S.mapLayerTiles));
   s.append(cb('markers', S.mapLayerMarkers));
   s.append(el('div', { id: 'map-progress', class: 'mapprog hidden' }, el('div', { class: 'progress' }, el('i')), el('span', { class: 'note' })));
   renderMapExport();
