@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ParaWorld Model &amp; Map Exporter</title>
+<link rel="icon" href="icon.svg">
+<link rel="stylesheet" href="style.css">
+<script type="importmap">{ "imports": { "three": "./vendor/three/three.module.js", "three/addons/": "./vendor/three/addons/" } }</script>
+</head>
+<body>
+<header id="top">
+  <a class="home hidden" id="btn-home" href="/" title="Launcher">⌂</a><div class="brand"><img src="icon.svg" alt=""><span id="t-title">ParaWorld Model &amp; Map Exporter</span></div>
+  <div class="spacer"></div>
+  <select id="lang-quick" title="Language"></select>
+  <button id="btn-settings" class="ghost" title="Settings">⚙</button>
+  <button id="btn-about" class="ghost" title="About">?</button>
+</header>
+
+<main id="app">
+  <aside id="explorer">
+    <div class="tabs"><button data-tab="units" class="on" id="tab-units"></button><button data-tab="models" id="tab-models"></button><button data-tab="maps" id="tab-maps"></button></div>
+    <input id="search" type="search" autocomplete="off">
+    <div id="filters">
+      <div class="chips" id="f-tribe"></div>
+      <div class="chips" id="f-type"></div>
+      <select id="f-archive" class="hidden"></select>
+    </div>
+    <div id="count"></div>
+    <ul id="list"></ul>
+  </aside>
+
+  <section id="stage">
+    <div id="view"></div>
+    <div id="toolbar">
+      <button data-tool="frame" id="tb-frame"></button>
+      <label><input type="checkbox" id="tb-grid" checked> <span id="tb-grid-l"></span></label>
+      <label><input type="checkbox" id="tb-wire"> <span id="tb-wire-l"></span></label>
+      <label><input type="checkbox" id="tb-bones"> <span id="tb-bones-l"></span></label>
+      <label><input type="checkbox" id="tb-rot"> <span id="tb-rot-l"></span></label>
+      <label><input type="checkbox" id="tb-bg"> <span id="tb-bg-l"></span></label>
+      <button data-tool="shot" id="tb-shot"></button>
+    </div>
+    <div id="hint"></div>
+    <div id="busy" class="hidden"><div class="spinner"></div><span id="busy-text"></span></div>
+    <div id="empty"></div>
+    <div id="player" class="hidden">
+      <button id="pl-play" class="round">❚❚</button>
+      <input id="pl-time" type="range" min="0" max="1" step="0.001" value="0">
+      <span id="pl-clock">0.00 s</span>
+      <select id="pl-speed"><option value="0.25">¼×</option><option value="0.5">½×</option><option value="1" selected>1×</option><option value="2">2×</option></select>
+      <label><input type="checkbox" id="pl-loop" checked> <span id="pl-loop-l"></span></label>
+      <label id="pl-seam-w" class="hidden"><input type="checkbox" id="pl-seam" checked> <span id="pl-seam-l"></span></label>
+    </div>
+  </section>
+
+  <aside id="details">
+    <div id="d-head"></div>
+    <div class="sect" id="s-model"></div>
+    <div class="sect" id="s-addons"></div>
+    <div class="sect" id="s-parts"></div>
+    <div class="sect" id="s-anims"></div>
+    <div class="sect" id="s-export"></div>
+  </aside>
+</main>
+
+<div id="setup" class="modal hidden"><div class="card wide" id="setup-card"></div></div>
+<div id="dialog" class="modal hidden"><div class="card" id="dialog-card"></div></div>
+<div id="toast" class="hidden"></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

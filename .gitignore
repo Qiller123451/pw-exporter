@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.pyc
+# the remake's npm packages (only needed to rebuild game/game.js)
+remake/node_modules/
+remake/esbuild
+# nothing of the game belongs in the repository: built game data, conversions, exports
+*.glb
+*.gltf
+*.ula
+*.gsf
+*.surf
+/remake/data/
+/exports/

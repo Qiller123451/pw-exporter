@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ParaWorld Remake</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; color: #f0e2c0; user-select: none;
+    font-family: "Palatino Linotype", "Book Antiqua", Palatino, Georgia, serif; }
+  canvas#game { position: fixed; inset: 0; display: block; }
+  canvas.overlay { position: fixed; inset: 0; pointer-events: none; }
+  .hidden { display: none !important; }
+  /* mouse cursors: the original ones are installed by Input.loadCursors (body[data-cursor]) */
+  body.paused::after { content: 'Paused'; position: fixed; left: 50%; top: 40%; transform: translate(-50%, -50%); font-size: 42px;
+    color: #f6dfa8; text-shadow: 0 2px 8px #000; pointer-events: none; }
+
+  /* ---------------------------------------------------------------- HUD (original ParaWorld textures) */
+  .hud { position: fixed; inset: 0; pointer-events: none; }
+  .hud > * { pointer-events: auto; }
+  .hud .msgs { pointer-events: none; }
+  .corner { position: absolute; }
+  .corner.tl { left: 4px; top: 4px; transform-origin: 0 0; }
+  .corner.tr { right: 6px; top: 4px; transform-origin: 100% 0; display: flex; gap: 2px; }
+  .corner.bl { left: 0; bottom: 0; transform-origin: 0 100%; display: flex; align-items: flex-end; }
+  .resbar { position: relative; width: 390px; height: 32px; }
+  .resbar .rv { position: absolute; top: 0; height: 32px; width: 76px; padding-left: 22px; display: flex; flex-direction: column; justify-content: center; line-height: 1; }
+  .resbar .rv b { font-size: 13px; color: #f7e7c3; text-shadow: 0 1px 2px #000; font-variant-numeric: tabular-nums; }
+  .resbar .rv i { font-style: normal; font-size: 9.5px; color: #a8e07a; text-shadow: 0 1px 2px #000; font-family: Georgia, serif; }
+  .resbar .rv i:empty { display: none; }
+  .resbar .rv.full b { color: #ff9a6a; }
+  .epoch { margin: 3px 0 0 8px; font-size: 12px; color: #f3d58c; text-shadow: 0 1px 2px #000, 0 0 6px #000; }
+  .mbtn { position: relative; width: 95px; height: 32px; display: grid; place-items: center; cursor: pointer; }
+  .mbtn:hover { filter: brightness(1.2); }
+  .mbtn span { font-size: 12px; font-weight: bold; color: #f3dca6; text-shadow: 0 1px 2px #000; }
+  .perf { position: absolute; left: 50%; top: 40px; transform: translateX(-50%); font: 12px/1.3 Consolas, monospace; color: #cfe8c0;
+    background: rgba(0,0,0,.55); padding: 3px 10px; border-radius: 3px; pointer-events: none !important; white-space: nowrap; }
+
+  .minimap { position: relative; width: 270px; height: 270px; flex: none; }
+  .minimap .mmc { position: absolute; left: 37px; top: 38px; width: 216px; height: 216px; border-radius: 50%; cursor: pointer; background: #000; }
+  .minimap .mmframe { position: absolute; inset: 0; pointer-events: none; }
+
+  .info { position: relative; width: 209px; height: 197px; flex: none; margin-left: -8px; }
+  .info .ibody { position: absolute; inset: 0; font-size: 11px; }
+  .info .por { position: absolute; left: 16px; top: 14px; border: 1px solid #8a6a38; background-color: #1b130c; }
+  .info .nm { position: absolute; left: 88px; top: 15px; width: 108px; font-size: 13px; font-weight: bold; color: #f3d58c; line-height: 1.1; }
+  .info .nm.wide { left: 18px; width: 180px; }
+  .info .lv { position: absolute; left: 88px; top: 48px; font-size: 10.5px; color: #d8c49a; }
+  .info .hp { position: absolute; left: 16px; top: 82px; width: 178px; height: 11px; background: #1b130c; border: 1px solid #6d5430; }
+  .info .hp i { display: block; height: 100%; background: linear-gradient(#9ce05a, #4d9a1f); }
+  .info .hp span { position: absolute; inset: 0; text-align: center; font-size: 9px; line-height: 10px; color: #fff; text-shadow: 0 1px 1px #000; }
+  .info .st { position: absolute; left: 20px; top: 98px; width: 180px; line-height: 17px; }
+  .info .st div { display: flex; align-items: center; gap: 5px; }
+  .info .st span { display: inline-block; flex: none; }
+  .info .carry { position: absolute; left: 20px; bottom: 36px; display: flex; gap: 5px; align-items: center; }
+  .info .carry.big { position: absolute; left: 18px; top: 44px; bottom: auto; font-size: 14px; }
+  .info .hint { position: absolute; left: 18px; top: 72px; color: #d8c49a; }
+  .info .prog { position: absolute; left: 16px; bottom: 16px; width: 178px; height: 12px; background: #1b130c; border: 1px solid #6d5430; }
+  .info .prog i { display: block; height: 100%; background: linear-gradient(#f0d070, #a07820); }
+  .info .prog span { position: absolute; inset: 0; text-align: center; font-size: 9px; line-height: 11px; color: #fff; text-shadow: 0 1px 1px #000; }
+  .info .queue { position: absolute; left: 16px; bottom: 28px; display: flex; gap: 2px; }
+  .info .qi { position: relative; width: 31px; height: 30px; border: 1px solid #8a6a38; cursor: pointer; background-color: #1b130c; }
+  .info .qi i { position: absolute; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,.55); }
+  .info .grp { position: absolute; left: 14px; top: 14px; width: 184px; display: flex; flex-wrap: wrap; gap: 2px; }
+  .info .gi { position: relative; width: 29px; height: 31px; cursor: pointer; border: 1px solid #6d5430; background: #1b130c; overflow: hidden; }
+  .info .gi div { width: 27px !important; height: 26px !important; background-size: auto; }
+  .info .gi i { position: absolute; left: 0; bottom: 0; height: 3px; }
+  .info .gcount { position: absolute; left: 16px; bottom: 12px; color: #d8c49a; }
+
+  .cmdbar { display: flex; align-items: flex-end; margin: 0 0 4px 4px; height: 59px; }
+  .menub, .actb { position: relative; cursor: pointer; flex: none; }
+  .menub .sym, .actb .sym { position: absolute; left: 0; top: 0; pointer-events: none; }
+  .menub:hover, .actb:hover { filter: brightness(1.25); }
+  .menub.on { filter: brightness(1.15) saturate(1.2); }
+  .spacer { flex: none; }
+
+  .flyout { position: fixed; transform-origin: 0 100%; padding: 8px 10px 6px; background-size: 100% 100%; border: 1px solid #7a5a2e;
+    box-shadow: 0 4px 16px rgba(0,0,0,.6); border-radius: 3px; background-color: #2a2015; min-width: 150px; }
+  .flyout .frow { display: flex; align-items: center; gap: 4px; margin: 2px 0; }
+  .flyout .ftitle { width: 64px; font-size: 11px; color: #e8cf98; text-shadow: 0 1px 2px #000; flex: none; }
+  .flyout .card { position: relative; width: 44px; height: 43px; border: 1px solid #a07a40; cursor: pointer; background-color: #1b130c; }
+  .flyout .card .ci { position: absolute; left: 0; top: 0; }
+  .flyout .card:hover { filter: brightness(1.25); border-color: #f0d080; }
+  .flyout .card.dim .ci { filter: grayscale(0.4) brightness(0.75); }
+  .flyout .card.locked .ci, .flyout .card.locked { filter: grayscale(1) brightness(0.5); }
+  .flyout .card.on { border-color: #9cf06a; box-shadow: 0 0 6px #7ddc62; }
+  .flyout .card .cd { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.55); color: #ffe7a0; font-weight: bold; font-size: 15px; text-shadow: 0 0 3px #000; }
+  .flyout .card .qn { position: absolute; right: 1px; bottom: 0; font-size: 12px; font-weight: bold; color: #fff; text-shadow: 0 0 3px #000, 0 0 3px #000; }
+
+  .pyrwrap { position: absolute; right: 0; top: 64px; transform-origin: 100% 0; }
+  .pyramid { position: relative; width: 177px; height: 545px; }
+  .pyrhead { position: absolute; left: 0; right: 0; top: -16px; text-align: center; font-size: 12px; color: #f3d58c; text-shadow: 0 1px 2px #000; }
+  .pcard { position: absolute; cursor: pointer; overflow: hidden; }
+  .pcard:hover { filter: brightness(1.3); }
+  .pcard.sel { outline: 2px solid #9cf06a; outline-offset: -1px; }
+  .dragghost { position: fixed; z-index: 90; pointer-events: none; opacity: .85; outline: 2px solid #f3d58c; }
+  .dragghost.bad { outline-color: #ff5a3a; filter: grayscale(.6); }
+  .pcard.queued { opacity: .45; filter: grayscale(.7); }
+  .pcard .php { position: absolute; left: 0; bottom: 0; height: 3px; background: #7ddc62; }
+  .pcard .ptask { position: absolute; left: 0; top: 0; pointer-events: none; }
+  .pcard .pup { position: absolute; right: 1px; top: 1px; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent;
+    border-bottom: 7px solid #ffd850; filter: drop-shadow(0 0 2px #000); }
+
+  .tip { position: fixed; z-index: 50; max-width: 320px; padding: 8px 11px; font-size: 12px; line-height: 1.35; color: #f0e2c0; pointer-events: none;
+    background: #2b2117 url(assets/ui/hud_tooltip_centercenter.png); border: 1px solid #a07a40; border-radius: 3px; box-shadow: 0 4px 14px rgba(0,0,0,.7); }
+  .tip h4 { margin: 0 0 3px; font-size: 13px; color: #f3d58c; }
+  .tip .cost { display: flex; gap: 10px; margin: 3px 0 4px; }
+  .tip .c { display: inline-flex; align-items: center; gap: 3px; }
+  .tip .bad, .tip .c.bad { color: #ff8060; }
+  .tip .sub { color: #d8c49a; font-size: 11px; }
+  .tip .med { margin-top: 4px; }
+  .tip .long { margin-top: 5px; color: #cdbd98; font-size: 11px; }
+  .tip small { color: #cdbd98; }
+
+  .msgs { position: absolute; left: 50%; top: 44px; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 3px; }
+  .mapsel { display:flex; gap:12px; align-items:flex-start; margin-top:6px; }
+  .mapsel canvas { width:150px; height:150px; border:1px solid rgb(152,133,99); background:#0c0a07; flex:none; }
+  .mapinfo { display:flex; flex-direction:column; gap:6px; min-width:0; flex:1; }
+  .mapinfo select { max-width:100%; }
+  .mapinfo .mapfile { align-self:flex-start; cursor:pointer; width:auto; padding:0 14px; }
+  .mapdesc { font-size:13px; line-height:1.35; color:#e8d6b0; max-height:84px; overflow:auto; }
+  .mapdesc.bad { color:#ffb090; }
+  .pcolors { display:flex; align-items:center; gap:6px; margin:6px 2px 0; font-size:13px; }
+  .pcolors span { margin-right:6px; color:#e0b978; }
+  .pcolors .pc { width:20px; height:20px; border:2px solid #3a2a14; border-radius:3px; cursor:pointer; display:inline-block;
+    background:repeating-linear-gradient(45deg,#666 0 4px,#999 4px 8px); box-shadow:inset 0 0 3px #000; }
+  .pcolors .pc.on { border-color:#ffe08a; box-shadow:0 0 6px #ffd060; }
+  .msg { font-size: 14px; color: #f0dcae; text-shadow: 0 1px 3px #000; padding: 3px 50px; transition: opacity .9s;
+    background: linear-gradient(90deg, transparent, rgba(30,20,10,.78) 15%, rgba(30,20,10,.78) 85%, transparent); }
+  .msg.bad { color: #ffb090; } .msg.good { color: #c8f0a0; } .msg.warn { color: #ffd070; }
+  .msg.fade { opacity: 0; }
+
+  /* ---------------------------------------------------------------- menus (original art: UI/menue, fonts/colours from UI/VisDef_GAM2.vis) */
+  :root { --pw-text: rgb(224,185,120); --pw-dim: rgb(152,133,99); --pw-title: rgb(60,21,0); --pw-hi: rgb(255,255,200); }
+  .modal { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: url(assets/ui/menu/menue__windows__darken_overlay.png); }
+  .modal.title { background: #000 url(assets/ui/menu/menue__decoration__loadbg_mp_jungle.jpg) center / cover no-repeat; }
+  .pwwin { position: relative; min-width: 380px; max-width: 700px; padding: 44px 34px 30px; color: var(--pw-text);
+    font: bold 16px "Trebuchet MS", "Segoe UI", sans-serif; text-shadow: 1px 1px 0 #000, 0 0 3px #000; }
+  .pwwin::before { content: ''; position: absolute; inset: 0; pointer-events: none; z-index: -1;
+    background: url(assets/ui/menu/menue__windows__outerframe_corner_topleft.png) left top no-repeat,
+      url(assets/ui/menu/menue__windows__outerframe_corner_topright.png) right top no-repeat,
+      url(assets/ui/menu/menue__windows__outerframe_corner_bottomleft.png) left bottom no-repeat,
+      url(assets/ui/menu/menue__windows__outerframe_corner_bottomright.png) right bottom no-repeat,
+      url(assets/ui/menu/menue__windows__outerframe_toptile.png) 27px 0 / auto 25px no-repeat,
+      url(assets/ui/menu/menue__windows__outerframe_bottomtile.png) 0 100% / auto 25px repeat-x,
+      url(assets/ui/menu/menue__windows__outerframe_lefttile.png) 0 0 / 27px auto repeat-y,
+      url(assets/ui/menu/menue__windows__outerframe_righttile.png) 100% 0 / 25px auto repeat-y; }
+  .pwwin::after { content: ''; position: absolute; inset: 25px 25px 25px 27px; z-index: -2; pointer-events: none;
+    background: url(assets/ui/menu/menue__windows__outerframe_centertile.png); }
+  .pwwin h2 { position: absolute; left: 44px; top: 3px; margin: 0; height: 20px; line-height: 20px; font-size: 15px; color: var(--pw-title);
+    text-shadow: none; letter-spacing: .02em; max-width: 170px; white-space: nowrap; overflow: hidden; }
+  .pwwin h3 { margin: 0 0 12px; text-align: center; font-size: 22px; color: var(--pw-hi); }
+  .pwwin p { text-align: center; margin: 8px 0; color: var(--pw-dim); }
+  .pwwin .won { color: #c8f0a0; } .pwwin .lost { color: #ff9a7a; }
+  .btns { display: flex; flex-direction: column; gap: 8px; align-items: center; margin-top: 16px; }
+  .btns.row { flex-direction: row; justify-content: center; }
+  .pwbtn { display: block; min-width: 240px; height: 30px; padding: 0 16px; line-height: 30px; text-align: center; cursor: pointer;
+    font: bold 17px "Trebuchet MS", "Segoe UI", sans-serif; color: var(--pw-text); text-shadow: 1px 1px 0 #000; border: 0; outline: 0;
+    background: url(assets/ui/menu/menue__controls__button_idle_left.png) left top no-repeat, url(assets/ui/menu/menue__controls__button_idle_right.png) right top no-repeat,
+      url(assets/ui/menu/menue__controls__button_idle_center.png) 3px 0 / calc(100% - 6px) 30px no-repeat; }
+  .pwbtn:hover { color: #fff3cf; background: url(assets/ui/menu/menue__controls__button_hover_left.png) left top no-repeat, url(assets/ui/menu/menue__controls__button_hover_right.png) right top no-repeat,
+      url(assets/ui/menu/menue__controls__button_hover_center.png) 3px 0 / calc(100% - 6px) 30px no-repeat; }
+  .pwbtn:active { background: url(assets/ui/menu/menue__controls__button_down_left.png) left top no-repeat, url(assets/ui/menu/menue__controls__button_down_right.png) right top no-repeat,
+      url(assets/ui/menu/menue__controls__button_down_center.png) 3px 0 / calc(100% - 6px) 30px no-repeat; }
+  .pwbtn.small { min-width: 120px; }
+  .pwgrp { position: relative; padding: 12px 14px; margin: 6px 0 10px; border: 1px solid rgba(152,133,99,.45); background: rgba(0,0,0,.18); }
+  .pwgrp > b { position: absolute; top: -10px; left: 10px; padding: 0 6px; font-size: 14px; color: var(--pw-text); background: rgba(20,16,12,.85); }
+  .set { display: grid; grid-template-columns: 1fr auto; gap: 8px 18px; align-items: center; font-size: 15px; }
+  .set .full { grid-column: 1 / -1; }
+  .pwcheck { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  .pwcheck input { display: none; }
+  .pwcheck i { width: 21px; height: 21px; flex: none; background: url(assets/ui/menu/menue__controls__checkbox_empty.png); }
+  .pwcheck input:checked + i { background: url(assets/ui/menu/menue__controls__checkbox_checked.png); }
+  .pwsel { font: bold 14px "Trebuchet MS", sans-serif; color: var(--pw-text); background: #15110c; border: 1px solid rgb(152,133,99); padding: 2px 6px; height: 24px; }
+  input[type=range].pwrange { -webkit-appearance: none; appearance: none; width: 180px; height: 21px; background:
+      url(assets/ui/menu/menue__controls__slider_hrz_left.png) left no-repeat, url(assets/ui/menu/menue__controls__slider_hrz_right.png) right no-repeat,
+      url(assets/ui/menu/menue__controls__slider_hrz_leftbar.png) 9px 0 / calc(100% - 18px) 21px no-repeat; }
+  input[type=range].pwrange::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 21px; border: 0; background: url(assets/ui/menu/menue__controls__slider_hrz_mover.png); cursor: pointer; }
+  input[type=range].pwrange::-moz-range-thumb { width: 16px; height: 21px; border: 0; background: url(assets/ui/menu/menue__controls__slider_hrz_mover.png); }
+  .tribes { display: flex; gap: 8px; justify-content: center; }
+  .tribe { width: 118px; padding: 6px 4px; text-align: center; cursor: pointer; border: 1px solid rgba(152,133,99,.35); background: rgba(0,0,0,.25); font-size: 14px; }
+  .tribe i { display: block; width: 38px; height: 21px; margin: 0 auto 4px; background: url(assets/ui/menu/menue__decoration__menu_tribeselecticons.png) 0 0 no-repeat; }
+  .tribe.on { border-color: var(--pw-text); background: rgba(160,110,40,.35); color: #fff3cf; }
+  .gameover { display: block; margin: 0 auto 10px; width: 250px; height: 150px; }
+  .keys { border-collapse: collapse; font-size: 14px; margin: 0 auto; }
+  .keys td { padding: 3px 10px; border-bottom: 1px solid rgba(152,133,99,.3); }
+  .keys td:first-child { color: var(--pw-hi); white-space: nowrap; }
+  .credits { position: fixed; right: 12px; bottom: 8px; font: 12px "Trebuchet MS", sans-serif; color: rgba(255,255,220,.55); text-shadow: 1px 1px 0 #000; }
+
+  #loading { position: fixed; inset: 0; z-index: 100; background: #000 url(assets/ui/menu/menue__decoration__loadbg_mp_jungle.jpg) center / cover no-repeat;
+    display: grid; place-items: end center; padding-bottom: 8vh; transition: opacity .6s; }
+  #loading.done { opacity: 0; pointer-events: none; }
+  #loading .ld { position: relative; width: 609px; height: 66px; background: url(assets/ui/menu/menue__decoration__loading_display_off.png); }
+  #loadbar { position: absolute; left: 0; top: 0; height: 66px; width: 0; background: url(assets/ui/menu/menue__decoration__loading_display_on.png) left top no-repeat; transition: width .2s; }
+  #loadtxt { margin-top: 8px; text-align: center; font: bold 15px "Trebuchet MS", sans-serif; color: var(--pw-text); text-shadow: 1px 1px 0 #000, 0 0 4px #000; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="loading"><div><div class="ld"><div id="loadbar"></div></div><div id="loadtxt">Starting…</div></div></div>
+<script src="game.js"></script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+{
+  "name": "paraworld-remake",
+  "private": true,
+  "description": "The ParaWorld remake's game code. `npm install` then `npm run build` bundles src/ into game/game.js.",
+  "license": "Unlicense",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.27.7",
+    "three": "0.186.0"
+  }
+}
