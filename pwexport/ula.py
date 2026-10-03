@@ -4,7 +4,7 @@
     m.info            {'MapWidth': '2208', 'Setting': 'Jungle', ...}     level info key/values
     m.players         8 player slots (tribe, team, colour, start ...)
     m.description     {'LevelName': ..., 'Author': ..., 'Description': ...} (the editor's description tree, flattened)
-    m.preview         200 x 200 RGBA preview picture (bytes) or None
+    m.preview         200 x 200 preview picture (RGBA bytes; the file stores B G R A) or None
     m.w, m.h          size in metres;  m.setting ('Jungle', 'Northland', ...);  m.water (water level, metres)
     m.heights         numpy float32 [hy, hx], metres, 2 m grid (row 0 = south edge, y grows north)
     m.mats            numpy uint8 [my, mx], ground material 0..7 of the setting, 4 m grid
@@ -182,7 +182,9 @@ def level_info(b):
         r.u8()
         w, h, npix, nbytes, bpp = (r.u32() for _ in range(5))
         if w * h == npix and npix * bpp == nbytes and r.o + nbytes <= len(b):
-            res['preview'] = dict(w=w, h=h, rgba=b[r.o:r.o + nbytes]); r.o += nbytes
+            px = bytearray(b[r.o:r.o + nbytes]); r.o += nbytes
+            px[0::4], px[2::4] = px[2::4], px[0::4]                # stored blue first (B G R A)
+            res['preview'] = dict(w=w, h=h, rgba=bytes(px))
         r.o += 16
         desc = {}
 
@@ -355,6 +357,8 @@ class Map:
         self.setting = self.info.get('Setting') if self.info.get('Setting') in SETTINGS else t['setting']
         self.objects = objects(self.chunks['Objs'].data) if 'Objs' in self.chunks else []
         self.plants = plants(self.chunks['IOMG'].data) if 'IOMG' in self.chunks else []
+        from . import forest as _forest
+        self.forest = _forest.blocks(self.chunks['Frst'].data if 'Frst' in self.chunks else b'')
         base = os.path.splitext(os.path.basename(path))[0]
         self.name = self.description.get('LevelName') or self.info.get('LevelName') or self.info.get('MapName') or base
         self.max_players = sum(1 for o in self.objects if o['type'] == 'SLOC') or int(self.info.get('MaxPlayers') or 0) or 2
@@ -385,6 +389,7 @@ class Map:
             counts[o['type']] = counts.get(o['type'], 0) + 1
         return {'name': self.name, 'w': self.w, 'h': self.h, 'setting': self.setting, 'water': self.water,
                 'players': self.max_players, 'objects': len(self.objects), 'plants': len(self.plants), 'types': counts,
+                'forest_blocks': len(self.forest['blocks']),
                 'author': self.description.get('Author', ''), 'description': self.description.get('Description', ''),
                 'game_type': self.info.get('GameType', ''), 'chunks': sorted(self.chunks)}
 

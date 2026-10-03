@@ -13,11 +13,13 @@ or **FBX, .blend, USD and Alembic** when Blender is installed.
   level flags, weapons by unit level, worker tools, carried goods – each one can be switched on and off.
 * **Visibility**: the in-game look as presets (saddles, armour, helmets, wounds, construction stages, damage
   stages, epoch variants, night lights) and the raw 32 flag bits of the meshes as a filter – plus the player colour.
-* **Mods**: every copy of a model in the game and its mods (Base, BoosterPack, MIRAGE, Wintermod …), chosen per model.
+* **Mods**: by default the exporter shows the base game. The **Mod** selector in the title bar loads a mod the way the
+  game does (BoosterPack, MIRAGE, Wintermod … with everything it requires): units, models, textures, texts and maps
+  follow. Any other mod's copy of a single model can still be looked at, chosen per model.
 * **Animations** play on the model, add-ons included (the rider keeps riding while the mount walks).
 * **Exports** keep textures, skeletons and animations (GLB/glTF/FBX), or a posed static mesh (OBJ/STL/PLY/DAE).
 * **Map viewer**: every map of your installation in 3D – terrain with the original ground textures, the sea, every
-  tree, rock, nest and building – exported as a 3D file, height map, object list or raw data with
+  tree (the forest blocks included), rock, nest and building – exported as a 3D file, height map, object list or raw data with
   [Kaitai Struct](https://kaitai.io) descriptions of the map format.
 * English and German user interface. Runs on Windows, Linux and macOS.
 
@@ -100,12 +102,41 @@ attachment point it hangs on (`@Ride`, `@HndR` = right hand, `@we` = weapon moun
 
 ![Ballista tower](screenshots/08_ballista_tower.png)
 
-### Step 4 – Mod, player colour
+### Step 4 – Mods, player colour
 
-**Mod** (in the *Model* section, shown when there is a choice): the same model often exists in several places –
-`all_characters.gsf` of `Data/Base`, `Data/BoosterPack3`, `Data/MIRAGE`, `Data/Wintermod` … Units and buildings start
-with the copy of the official game (BoosterPack1 over Base); the selector switches the model – and its add-ons, where
-the mod has them – to another mod's copy. Textures follow: a mod's own texture folder first, then the official ones.
+![Mod selector](screenshots/18_mod_selector_global.png)
+
+**Mod** in the title bar decides which game data the exporter shows. It lists what the game itself knows from its
+mod files `Data/Info/*.info`:
+
+* **Base game (no mod)** – the default: only `Data/Base`.
+* every installed add-on and mod – Booster Pack 1, Booster Pack 3, MIRAGE, Wintermod, ReColor … A mod is loaded with
+  everything it requires, as the game does with `Paraworld.exe -enable <mod>`: MIRAGE requires Booster Pack 3, which
+  requires the base data, so MIRAGE loads `Base → BoosterPack3 → MIRAGE` (hover over the selector to see the
+  folders). A file is taken from the last folder of that chain that has it.
+
+Switching reads everything again (a few seconds): the unit and building list comes from that configuration's tech
+tree and class files, names and descriptions from its texts (the mod's `locale/<language>` over the base texts),
+models and textures from its folders, the ground tiles and forest kinds of maps too, and the *Maps* tab lists the
+maps of the loaded folders. The choice is remembered. (Language packs and the level editor scripts are not offered;
+they are not game content. The remake is not affected: it is built from the official game, Base with Booster Pack 1.)
+
+**Add-ons of mod units.** The exporter knows how the base game assembles its units from a table that was written
+by hand from the game scripts. Units a mod adds are not in it, so for those the exporter reads the mod's own scripts
+(`Scripts/Server/classes/**/*.usl`): it follows the unit's class far enough to see which objects it creates and
+where it links them - build-ups, turrets, wagons, gunners and riders, with the offsets MIRAGE gives them
+(`AddObjCustomized(object, "Ride", {3.04,-1.15,-1.21})`). The CBR titan gets its basket and both machine gun nests
+this way. Parts the script adds only on an upgrade or under a condition the exporter cannot decide appear as
+unticked add-ons. Weapons come from the mod's tech tree. What it cannot see: things task scripts put into a hand
+for a moment (tools), and parts placed by code it cannot follow - such a unit simply shows fewer add-ons.
+
+![Add-ons of a mod unit](screenshots/19_mod_unit_addons.png)
+
+**Mod of this model** (in the *Model* section, shown when there is a choice): the same model often exists in several
+places – `all_characters.gsf` of `Data/Base`, `Data/BoosterPack3`, `Data/MIRAGE`, `Data/Wintermod` … A model starts
+with the copy the chosen configuration loads; this selector switches the model – and its add-ons, where the mod has
+them – to any other mod's copy, with that mod's own textures (its folder, then what it requires). Handy for
+comparing a mod's model with the original without switching everything.
 
 **Player colour** tints the party-colour parts (banners, cloth, shields) with one of the eight colours of the game.
 The grey swatch shows the untinted texture.
@@ -205,12 +236,26 @@ Click one to load it:
 
 * **The 3D view** shows the terrain with the setting's original ground materials (blended like the game does), the
   sea at its water level and every placed object with its model – trees, stones, fruit bushes, nests, ruins,
-  buildings. Start locations stand out as numbered poles in the player colours. Drag, right-drag and wheel as in the
+  buildings. Start locations stand out as numbered poles in the player colours. Ships float: a map stores them at
+  the height of the sea bed (or at 0) and the game lifts them to the water level when it loads the map, so the
+  viewer and the 3D export do the same for every object of type SHIP and every model of type "Ship" (boats, mines,
+  water turrets, wrecks). Two kinds of part objects are not drawn on their own, because the game does not show them
+  where the map stores them: the `universal_captain` of a transport (the driver / rider slot of every ship, vehicle
+  and ridden animal, stored at the transport's position; hidden on boats, replaced by the rider's own model on
+  mounts) and the nets of fishing boats. The object list (CSV) keeps everything, with the stored height. Drag, right-drag and wheel as in the
   model view; **Frame** brings back the overview.
 * **The panel** shows the map's preview picture, size, setting, water level, players, author and description, and how
   many objects of each kind it holds.
 * **Show**: objects with their models, grass & small plants (the landscape decoration – many thousands), water, and
   pins for every object (handy for objects without a model in your installation).
+* **Forest blocks**: most of a map's trees are not placed objects but 32 m squares of forest that the level editor
+  paints (Alt+F there). The map only says which squares are forest; the game grows 15 trees and 16 undergrowth
+  plants in each from layouts built into its program. The viewer reads those layouts from your game's
+  `bin/PWServer.exe` (or `PWClient.exe`) and shows the trees where the game puts them – *Forest blocks: trees* (on)
+  and *Forest blocks: undergrowth* (off; as many plants again). The panel says how many blocks and trees a map has;
+  big forests are drawn with the models' simpler levels of detail. Details: [MAP_FORMAT.md](MAP_FORMAT.md).
+
+  ![Forest blocks](screenshots/17_forest_blocks.png)
 * **Ground tiles of the game** (on by default): the ground is drawn with the setting's pre-blended transition tiles
   exactly as the game picks them (`Texture/Scape/<Setting>/ScapeTexture5.dat`); off shows a smooth blend of the
   material textures (sharper up close). The map exports use the game's tiles.
@@ -223,11 +268,11 @@ Click one to load it:
 
 | Option | What you get |
 |---|---|
-| **3D file** (GLB, glTF, OBJ, Collada, STL, PLY) | the terrain (textured with one baked texture of the whole map), the sea, and – if ticked – every object with its model. Y is up, metres, the origin in the centre of the map. *Terrain grid* sets the detail: 2 m is the game's own resolution. |
+| **3D file** (GLB, glTF, OBJ, Collada, STL, PLY) | the terrain (textured with one baked texture of the whole map), the sea, and – if ticked – every object with its model, the trees of the forest blocks and their undergrowth. Y is up, metres, the origin in the centre of the map. *Terrain grid* sets the detail: 2 m is the game's own resolution. |
 | **Height map** | 16-bit greyscale PNG, 1 pixel = 2 m, black = 0 m, white = the highest point (the file name says nothing about the scale; the JSON export has `w`, `h` and the heights) |
 | **Ground materials** | 8-bit PNG, 1 pixel = 4 m, value = material index × 32 |
-| **Object list** | CSV: type, name, class, model, position, heading, owner and every attribute (hit points = resource amount, nest spawn settings …) |
-| **Everything as JSON** | level info, player slots, description, objects, plants |
+| **Object list** | CSV: type, name, class, model, position, heading, owner and every attribute (hit points = resource amount, nest spawn settings …); the trees of the forest blocks follow as `TREE` rows named `forest_<n>` |
+| **Everything as JSON** | level info, player slots, description, objects, plants, forest blocks (the stored squares and every tree and undergrowth plant they grow) |
 | **Preview picture** | the 200 × 200 picture the game shows in the map list |
 | **Unpacked map data (.surf)** + **Kaitai Struct descriptions** | the raw map data and the formal description of it, see below |
 | **The map file itself** | a copy of the `.ula` |
@@ -306,8 +351,8 @@ Animations run at 25 frames per second. GLB, glTF and the Blender formats keep t
 
 ## 6. Command line
 
-Everything the app does is also available for scripts (the install folder and language saved by the app are used,
-or pass `--install` / `--lang`):
+Everything the app does is also available for scripts (the install folder, language and mod saved by the app are
+used, or pass `--install` / `--lang` / `--mod MIRAGE`; `--mod ""` = the base game):
 
 ```
 python -m pwexport.cli list --tribe Hu --type ANML                      # what is there
@@ -332,8 +377,10 @@ python -m pwexport.gsf "C:\Games\ParaWorld\Data\Base\GSF\all_animals.gsf" -o raw
 * **Disk space** – converted models are cached in `%APPDATA%\ParaWorldToolkit\cache` (Linux/macOS:
   `~/.config/paraworld-toolkit/cache`). Delete the folder any time; it is rebuilt when needed. Set the
   environment variable `PWTOOLKIT_HOME` to keep settings and cache somewhere else (e.g. on a USB stick).
-* **Mods** – models of BoosterPack 1/3 and mods in `Data\<mod>\GSF` (MIRAGE, Wintermod …) appear under *All models*;
-  a mod's archive replaces the Base archive of the same name.
+* **Mods** – *All models* lists the models of every folder in `Data\<mod>\GSF` (BoosterPack 1/3, MIRAGE, Wintermod …)
+  whatever is chosen in the title bar; a plain name means the copy of the chosen configuration. A unit you miss in
+  the *Units & buildings* list probably belongs to an add-on: pick it in the **Mod** selector (the base game alone
+  has fewer units than Booster Pack 1). A mod without a file in `Data\Info` is offered as its folder on top of Base.
 
 ## 8. For developers
 
@@ -347,17 +394,20 @@ converter writes, bump `VERSION` in `pwexport/gsf.py`: that invalidates the cach
 | `gsf.py` | GSF archives → glTF 2.0: meshes, textures (DDS → PNG), skeletons, skin weights, attachment points, animations, walk sets, sound events. `Archive(path).export(name, out)`; command line `python -m pwexport.gsf` |
 | `glb.py` | read / write `.glb`, trim animations, find seamless walk loops, list links |
 | `tree.py` | parser of the game's text data (tech tree `.ttree`, class / settings `.txt`) |
-| `install.py` | finding the installation, mods, locales; case-insensitive paths |
+| `install.py` | finding the installation, its folders and locales; case-insensitive paths. `Install(root)` = the official game (Base + BoosterPack1), what the remake is built from |
+| `mods.py` | mod configurations from `Data/Info/*.info`: `ModInstall(root, mod)` loads a mod with the folders it requires; texts and ground textures per configuration |
 | `gamedata.py` | tech tree, class files, the models an object can show (levels, upgrades) |
 | `texts.py` | display names and descriptions in every language of the game |
 | `composites.py` + `data/composites.json` | how the scripts assemble multi-part objects (datamined, see `docs/COMPOSITES.md`; regenerate with `tools/datamine/`) |
+| `modparts.py` | the same for objects the table does not know (mod units): a small interpreter of the game scripts that records what a class links where. `python -m pwexport.modparts <game folder>` checks it against the table, `... <game folder> MIRAGE` lists what it finds for a mod |
 | `catalog.py` | model index (model → archive, cached) and the unit/building catalog with add-ons |
 | `parts.py` / `web/parts.js` | which parts of a model show (GSF attribute flags) |
 | `scene.py` | put a model and its add-ons together into one glTF scene; pose it |
 | `writers.py` | GLB, glTF, OBJ, Collada, STL, PLY writers |
 | `blender.py` | FBX / .blend / USD / Alembic through Blender in the background |
 | `app.py`, `web/` | the local server and the browser UI (three.js) |
-| `ula.py` | map files: reader (level info, preview, terrain, objects, plants), unpack / pack, command line |
+| `ula.py` | map files: reader (level info, preview, terrain, objects, plants, forest squares), unpack / pack, command line |
+| `forest.py` | forest blocks: the engine's tree layouts (read from the game's program file), the kinds per setting, every tree of a map |
 | `scape.py` | the 8 ground materials of every setting (from the scape atlases); a baked texture of a whole map |
 | `mapexport.py` | maps → 3D files (terrain, sea, objects), height map, material map, CSV, JSON |
 | `data/ksy/*.ksy` | Kaitai Struct descriptions of the map format |

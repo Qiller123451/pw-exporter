@@ -12,11 +12,12 @@ doc: |
   trees - "UOF2" in Objs, "SURF" in Trgr / Ques, "AIMM" in AI - count from their own first byte).
 
   Top-level chunks:
-    LInf  level info: key/values, player slots, a 200 x 200 RGBA preview picture, the map editor's description
+    LInf  level info: key/values, player slots, a 200 x 200 BGRA preview picture, the map editor's description
     Terr  terrain: size, setting, water level, heights (2 m grid), ground materials (4 m grid)
     PaFi  pathfinding grid (not described)
     Rgns  named regions, e.g. the areas of the animal nests (not described)
-    Frst  list of ids with obfuscated names (not described)
+    Frst  forest blocks: u4 width, u4 height (squares of 32 m), then { u4 square index, 32 item bytes } per forest
+          square, then u4 0xffffffff (docs/MAP_FORMAT.md; not described here)
     Objs  placed objects: start locations, trees, stones, fruit bushes, nests, animals, buildings, decoration
     GWFl  group: GrWa, Flck (not described)
     IOMG  landscape decoration instances: grass, ferns, flowers (drawn as ground sprites)
@@ -167,7 +168,7 @@ types:
         type: u4
       - id: pixels
         size: len_pixels
-        doc: RGBA, rows from the top. 200 x 200 in every map seen.
+        doc: B G R A, rows from the top. 200 x 200 in every map seen.
   description_node:
     seq:
       - id: num_children

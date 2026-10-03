@@ -147,6 +147,7 @@ export class World {
     const nv = this.navFor({ naval: !!opts.swim || (this.data.info(name)?.type === 'SHIP' && !AMPHIBIOUS.test(name)), amphib: AMPHIBIOUS.test(name) });
     if (!nv.isFree(x, z)) { const c = nv.nearestFree(nv.idx(x, z)); [x, z] = nv.center(c); }
     const u = new Unit(this, name, owner, x, z, level || this.defaultLevel(name, owner), heading, opts);
+    u.pos.y = this.groundY(u); u.syncObj();          // ships and swimmers start on the water, not on the sea bed below
     this.units.push(u);
     this.uHash.insert(u);
     if (owner) {

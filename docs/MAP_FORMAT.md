@@ -49,7 +49,7 @@ the tree (`SURF` = the start of the map data; nested trees count from their own 
 | `Terr` | terrain (below) |
 | `PaFi` | pathfinding grid |
 | `Rgns` | named regions, e.g. each nest's `Nest_<kind>_<n>_ActionArea / SafeArea / HotspotArea / ToleranceArea` |
-| `Frst` | list of ids with 32-character obfuscated names (not forests: trees are placed objects) |
+| `Frst` | forest blocks: 32 m squares of forest, with the state of their 15 trees and 16 undergrowth plants (below) |
 | `Objs` | placed objects (below) |
 | `GWFl` { `GrWa`, `Flck` } | |
 | `IOMG` | landscape decoration instances (below) |
@@ -63,7 +63,7 @@ u32 count, count x { key, value }            key/value strings: MapSourceType, V
 s32 slot ids [8]                              (-1 in every map seen)
 8 x { u32 count, count x { key, value } }    player slots: type, ready, tribe, team, color, hp_value, headquater, name
 u8  ?
-picture: u32 width, u32 height, u32 pixel count, u32 byte count, u32 bytes per pixel, RGBA pixels (rows from the top)
+picture: u32 width, u32 height, u32 pixel count, u32 byte count, u32 bytes per pixel, BGRA pixels (rows from the top)
                                               the 200 x 200 preview of the map list, drawn turned by 45 degrees
 16 bytes ?
 description tree: node = { u32 child count, string name, string value, children }
@@ -140,6 +140,89 @@ several variants of every part. The map only stores the pieces; the engine (Wall
 neighbouring pieces, towers and gates on the 8 m wall grid, and one variant of each. `pwexport/walls.py` does the same
 for the map viewer and the map exports (the rules: `remake/docs/spec/walls.md`).
 
+**Height of ships.** The stored `z` of a ship is not where the game shows it: of the 96 placed ships of the shipped
+maps 88 are stored below the water level (at the sea bed under them, or at 0, e.g. the pirate ships of
+`anvil_jungle`). The game puts ships on the water when the map loads. `pwexport.mapexport.object_height(map, obj,
+index)` does that for objects of type `SHIP` and for models of type (FourCC) "Ship"; ships above the water (a
+hovercraft on land) keep their height.
+
+**Part objects.** Parts of composite objects are saved as objects of their own at their parent's position: type
+`PROD` (captains, build-ups, turret tops), `TRRT`, `MNIO` (turrets, cranes), and untyped ones (`Hu_Fishnet`). Every
+transport (234 on the shipped maps: ships, vehicles, ridden animals, a few buildings) has a `universal_captain`.
+`TransportObj.usl` `LinkCaptainObj` links it to the class's captain link point and hides it when the class has none
+(`GetCaptainLink` returns false: all boats; only the Kronosaurus has "Ride"). `mapexport.hidden_parts(map)` lists
+the captains and the fishing nets so that viewers do not draw them as people and nets under the ships.
+
+### Frst – forest blocks
+
+The game has two kinds of vegetation: plants placed like any object (`Objs`, type `TREE` ...) and **forest blocks**.
+The level editor's forest mode (Alt+F) marks 32 m squares of the map as forest; a square is far cheaper than its
+trees as objects and does not count towards the editor's object limit. Mappers fill areas with blocks and soften
+the edges with single trees. Some maps have no placed tree at all (the tutorial map `ausbildungslager`: 2,382
+blocks, 35,730 trees); the shipped maps hold 20,579 blocks with 196,236 trees.
+
+```
+u32 width, u32 height         squares of 32 m = map size / 32, rounded down (the server refuses a size that differs
+                              from the terrain's)
+records, sorted by square:    u32 index (= y * width + x), 32 bytes
+u32 0xffffffff                end (a chunk is at least 128 bytes: maps without forest have unused bytes after it)
+```
+
+A record's 32 bytes: byte 0 is unused (0), bytes 1..15 are the square's 15 **trees**, bytes 16..31 its 16
+**undergrowth** plants ("deco"). Per item byte:
+
+| Bits | Meaning |
+|---|---|
+| 0-4 | amount. The editor stores `floor(size * 6.2)` (size 2..5 from the layout, so 12..30), times 10/16 or 8/16 for spots near a side of the square where no forest block follows (6..18). The client only tests it for > 0 |
+| 5-6 | state: 2 = standing, 1 = stump (trees), 0 = gone. A new block has state 2 everywhere |
+
+Two kinds of blocks are found in maps: **trees + undergrowth** (all 31 items standing) and **undergrowth only** (the
+15 trees gone, state 0 - e.g. the squares along the shore of `antarctica`).
+
+**Where the items stand is not in the map.** The engine has 32 fixed layouts of 31 spots built in (the same table in
+PWServer.exe and PWClient.exe, 32 x 624 bytes) and picks one per square from the square's position:
+
+```
+layout (624 bytes)   u32 31
+                     f32 x[31], f32 y[31]     position inside the square, metres (0.6 .. 31.3)
+                     f32 size[31]             2 .. 5
+                     i32 random[31]           see below
+                     i32 edge[31]             0 = inside, 1..4 = near one side of the square
+layout of square (x, y) = word[(2317 * y + 13 * x) % 4992] & 31        the table itself read as 4992 u32 words
+item position = (32 * x + layout.x[i], 32 * y + layout.y[i]), on the ground
+tree i (0..14):        kind = ((random >> 1) & 0x3fffffff) % 5,  heading = -((random >> 4) & 7) * 45 degrees,  scale 1
+undergrowth i (15..30): kind = random & 7, not turned
+```
+
+The kinds are the setting's `Scripts/Server/classes/vegetation/Forest_<Setting>.txt` (`Forest_Test.txt` for the
+setting `TestSet`):
+
+```
+Tree0 .. Tree4 { Standard = model of the standing tree, Stump = stump model, Timber = timber model,
+                 FallAnim = animation the timber plays when the tree falls, Size = '[x y z]' billboard size }
+FakeTreeTexture  texture of the billboards that stand in for far trees
+Deco0 .. Deco7 { Standard = model, Size }
+```
+
+On some maps (about 15 of the shipped 78) the stored amounts belong to another layout than the square's: the map
+was resized or moved after its forest was painted. That does not matter - the game places by the square's
+current position.
+
+Rules of the engine (read from the program code):
+
+* Nothing of a forest block stands at or below **16 m**, the water level: the server removes those trees when it
+  loads the map, the client draws neither trees nor undergrowth there. Blocks may lie in the sea.
+* The client draws a tree with its model near the camera (5 levels of detail by distance), beyond that as a
+  billboard with `FakeTreeTexture`; undergrowth only at the nearest 3 levels.
+* A worker chops a forest tree like any tree ("6 hits": `GetMaxHPFakeTrees`); the tree then becomes a
+  `<Setting>_Tree_0<kind+1>_Timber` object next to its stump (`HarvesterTask.usl` `CreateObjTree`).
+
+`pwexport/forest.py` reads all of this: `patterns(install)` finds the layout table in the game's own program file
+(the toolkit ships no game data; without `bin/PWServer.exe` or `PWClient.exe` forests cannot be placed),
+`config(install, setting)` the kinds, `items(map, patterns)` every tree and undergrowth plant, `objects(map,
+install)` the same as map objects. `map.forest` holds the squares as stored. The map viewer shows the trees
+("Forest blocks: trees", and the undergrowth on request), the 3D export and the CSV / JSON exports contain them.
+
 ### IOMG – landscape decoration instances
 
 ```
@@ -163,6 +246,10 @@ rotation = -2 * atan2(qz, qw)        (props: the full quaternion, (-qx, -qz, qy,
 ```
 
 (the toolkit's map exports use the same centre, with -Z = north in the glTF convention.)
+
+Forest blocks (`maps/forest.js`, the twin of `pwexport/forest.py`): every standing tree of a block becomes a tree of
+the map source like a placed one - same models, stump, timber and wood. The layouts and the kinds per setting come
+from `forest.json`, which the pipeline step "forest" builds from the player's installation.
 
 Water: a cell deeper than 0.4 m blocks land units; ships need 1.5 m. Maps larger than 1400 m use a 4 m pathing cell.
 

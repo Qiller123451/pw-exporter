@@ -22,7 +22,7 @@ HTTP API (JSON)
     GET  /api/map/preview?id=       the map's 200 x 200 preview picture (png)
     GET  /api/ground?setting=&k=    ground material k of a setting (jpg)
     GET  /api/map/ground?id=        the map's ground with the game's transition tiles (jpg, north up)
-    POST /api/map/export            {id, format, objects, plants, step, extras: [...]} -> {files}
+    POST /api/map/export            {id, format, objects, plants, forest, undergrowth, step, extras: [...]} -> {files}
     GET  /cache/...                 converted models and textures
 """
 import io
@@ -41,7 +41,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
-from . import VERSION, blender, glb, gsf, mapexport, parts, scape, scene, ula, walls, writers
+from . import VERSION, blender, forest, glb, gsf, mapexport, mods, parts, scape, scene, ula, walls, writers
 from .catalog import Catalog, ModelIndex
 from .config import Settings, cache_dir, home
 from .install import LANGS, Install
@@ -54,6 +54,7 @@ class App:
     def __init__(self):
         self.settings = Settings()
         self.install = None
+        self.official = None         # the installation as the remake uses it (Install(root): the official game)
         self.index = None
         self.catalog = None
         self.progress = {'stage': '', 'frac': 0.0, 'ready': False, 'error': None}
@@ -70,7 +71,15 @@ class App:
 
     def _load(self):
         try:
-            self.install = Install(self.settings['install'])
+            # the exporter shows the game as the chosen mod configuration loads it ("Mod" setting; '' = the base game)
+            self.install = mods.ModInstall(self.settings['install'], mod=self.settings.get('mod') or '')
+            if self.settings.get('mod') and not self.install.mod:
+                self.settings['mod'] = ''                    # a mod that is no longer installed
+                self.settings.save()
+            # the remake keeps its own view of the installation: the official game (Base + BoosterPack1), whatever
+            # the exporter shows
+            self.official = Install(self.settings['install'])
+            self.maps = Maps(self)
             self.index = ModelIndex(self.install, progress=lambda s, f: self.progress.update(stage=s, frac=f * 0.9))
             self.index.quality = self.settings.get('tex_quality', 'max')
             self.progress.update(stage='Reading texts and the tech tree', frac=0.92)
@@ -84,7 +93,7 @@ class App:
 
     def _texts(self, lang):
         if lang not in self.texts:
-            self.texts[lang] = Texts(self.install, lang)
+            self.texts[lang] = mods.Texts(self.install, lang)
         return self.texts[lang]
 
     def _add_other_names(self):
@@ -92,6 +101,21 @@ class App:
         langs = [l for l in ('uk', 'de') if l in self.install.locales()]
         for e in self.catalog.entries:
             e['names'] = {l: self._texts(l).name(e['key']) for l in langs}
+
+    def set_mod(self, mod):
+        """switch the mod configuration: everything is read again (model index order, tech tree, texts, maps)"""
+        inst = mods.ModInstall(self.settings['install'], mod=mod or '')
+        self.settings['mod'] = inst.mod
+        self.settings.save()
+        self.catalog = None
+        self.start_loading()
+        return {'ok': True, 'mod': inst.mod}
+
+    def mods_json(self):
+        """the "Mod" selector: [{'id', 'name', 'version', 'type', 'requires', 'folders'}], '' = the base game"""
+        inst = self.install or (mods.ModInstall(self.settings['install'], mod=self.settings.get('mod') or '')
+                                if self.settings.get('install') and Install.valid(self.settings['install']) else None)
+        return inst.configurations() if inst else []
 
     def set_lang(self, lang):
         self.settings['lang'] = lang
@@ -109,6 +133,8 @@ class App:
             inst = self.install or Install(self.settings['install'])
             langs = inst.locales()
         return {'version': VERSION, 'settings': dict(self.settings), 'progress': self.progress,
+                'mods': self.mods_json(), 'mod': self.install.mod if self.install else (self.settings.get('mod') or ''),
+                'mod_folders': list(self.install.mods) if self.install else [],
                 'configured': bool(self.settings.get('install') and self.settings.get('lang')),
                 'candidates': Install.find() if not self.settings.get('install') else [],
                 'langs': [{'id': l, 'name': LANGS.get(l, l)} for l in langs],
@@ -170,7 +196,7 @@ class App:
         specs = []
         for p in d['parts']:
             specs.append({'glb': self.index.convert(p['model'], archive=p.get('archive'), mod=p.get('mod')), 'parent': p.get('parent'),
-                          'link': p.get('link'), 'hide': p.get('hide') or [], 'anim': p.get('anim')})
+                          'link': p.get('link'), 'hide': p.get('hide') or [], 'anim': p.get('anim'), 'offset': p.get('offset')})
         mode = d.get('animations', 'all')
         names = None if mode == 'all' else ([d['anim']] if mode == 'selected' and d.get('anim') else [])
         sc = scene.compose(specs, animations=names, party=d.get('party'))
@@ -197,7 +223,9 @@ class Maps:
         self.lock = threading.Lock()
 
     def _list(self):
-        return self.app.install.maps() if self.app.install else []
+        # the maps of the loaded configuration (Base, plus the folders of the chosen mod and what it requires)
+        inst = self.app.install
+        return inst.maps(inst.mods) if inst else []
 
     def path(self, mid):
         for e in self._list():
@@ -256,9 +284,14 @@ class Maps:
                 models[k] = mapexport.model_name(o, idx) if idx else None
             return models[k]
         objs = [{'type': o['type'], 'name': o['name'], 'cls': o['cls'], 'model': model_of(o), 'x': round(o['x'], 2),
-                 'y': round(o['y'], 2), 'z': round(o['z'], 2), 'rot': round(o['rot'], 4), 'q': [round(v, 5) for v in o['quat']], 'owner': o['owner'],
+                 'y': round(o['y'], 2), 'z': round(mapexport.object_height(m, o, idx, model_of(o)), 2), 'z_map': round(o['z'], 2),
+                 'rot': round(o['rot'], 4), 'q': [round(v, 5) for v in o['quat']], 'owner': o['owner'],
                  'attr': {k: v for k, v in o['attr'].items() if k in ('hitpoints', 'spawn_type', 'spawn_max', 'tribe', 'skulls')}}
                 for o in m.objects]
+        # captains and fishing nets belong to the transport at their spot and are not drawn on their own
+        for i, owner in mapexport.hidden_parts(m).items():
+            objs[i]['model'] = None
+            objs[i]['part_of'] = owner
         if idx:
             # wall pieces: the arms towards their neighbours and one geometry variant per piece (pwexport/walls.py)
             for i, w in walls.arms(m, idx, model_of).items():
@@ -267,9 +300,31 @@ class Maps:
                'x': round(p['x'], 2), 'y': round(p['y'], 2), 'z': round(p['z'], 2), 'rot': round(p['rot'], 3),
                'q': [round(v, 4) for v in p['quat']]} for p in m.plants]
         s = m.summary()
+        s['forest'] = self.forest(m, model_of)
         return dict(s, id=mid, info=m.info, player_slots=m.players, desc=m.description, object_list=objs, plant_list=pl,
                     grid=[int(m.heights.shape[1]), int(m.heights.shape[0])], mgrid=[int(m.mats.shape[1]), int(m.mats.shape[0])],
                     preview=bool(m.preview))
+
+    def forest(self, m, model_of):
+        """the map's forest blocks for the viewer (pwexport/forest.py): {'blocks', 'patterns' (False = the game's program
+        file with the tree layouts was not found), 'tree_models' [5], 'deco_models' [8] (viewer model names or None),
+        'trees': flat [x, y, z, heading, kind, ...], 'deco': flat [x, y, z, kind, ...]}"""
+        inst = self.app.install
+        pat = forest.patterns(inst)
+        out = {'blocks': len(m.forest['blocks']), 'patterns': pat is not None, 'tree_models': [], 'deco_models': [], 'trees': [], 'deco': []}
+        if pat is None or not m.forest['blocks']:
+            return out
+        cfg = forest.config(inst, m.setting)
+        name = lambda c: model_of({'gfx': c['standard'], 'cls': c['standard'], 'name': c['standard']}) if c else None
+        out['tree_models'] = [name(c) for c in cfg['trees']]
+        out['deco_models'] = [name(c) for c in cfg['deco']]
+        it = forest.items(m, pat)
+        for t in it['trees']:
+            if not t['stump']:
+                out['trees'] += [round(t['x'], 2), round(t['y'], 2), round(t['z'], 2), round(t['rot'], 4), t['kind']]
+        for t in it['deco']:
+            out['deco'] += [round(t['x'], 2), round(t['y'], 2), round(t['z'], 2), t['kind']]
+        return out
 
     def heights(self, mid, step=1):
         m = self.load(mid)
@@ -293,17 +348,16 @@ class Maps:
         """the map's ground drawn with the game's transition tiles (scape.bake), cached as jpg"""
         import hashlib
         path = self.path(mid)
-        key = hashlib.sha1(('%s|%s|%s' % (path, os.path.getmtime(path), scape.VERSION)).encode()).hexdigest()[:16]
+        m = self.load(mid)
+        key = hashlib.sha1(('%s|%s|%s|%s' % (path, os.path.getmtime(path), scape.VERSION, mods.scape_pack(self.app.install, m.setting))).encode()).hexdigest()[:16]
         f = os.path.join(cache_dir('maps', 'ground'), key + '.jpg')
         if not os.path.exists(f):
-            m = self.load(mid)
             scape.bake(self.app.install, m.setting, m.mats, m.w, m.h, px_per_m=4.0, max_side=4096).save(f + '.tmp.jpg', quality=88)
             os.replace(f + '.tmp.jpg', f)
         return f
 
     def ground(self, setting, k):
-        scape.material_textures(self.app.install, setting)
-        return os.path.join(cache_dir('scape', scape.FOLDERS.get(setting, 'Jungle')), 'material%s_%d.jpg' % (scape.VERSION, k))
+        return mods.material_files(self.app.install, setting)[k]
 
     def export(self, d):
         m = self.load(d['id'])
@@ -316,6 +370,7 @@ class Maps:
         fmt = d.get('format') or 'glb'
         if fmt and fmt != 'none':
             sc = mapexport.build_scene(m, app.install, app.index, objects=bool(d.get('objects', True)), plants=bool(d.get('plants')),
+                                       forest=d.get('forest', True) is not False, undergrowth=bool(d.get('undergrowth')),
                                        step=int(d.get('step') or 2), px_per_m=float(d.get('px_per_m') or 2.0), water=d.get('water', True) is not False)
             files += writers.write(sc, base, fmt)
         ex = set(d.get('extras') or [])
@@ -324,9 +379,9 @@ class Maps:
         if 'materials' in ex:
             files.append(mapexport.materials_png(m, base + '_materials.png'))
         if 'csv' in ex:
-            files.append(mapexport.objects_csv(m, base + '_objects.csv'))
+            files.append(mapexport.objects_csv(m, base + '_objects.csv', app.install))
         if 'json' in ex:
-            files.append(mapexport.map_json(m, base + '.json'))
+            files.append(mapexport.map_json(m, base + '.json', app.install))
         if 'preview' in ex and m.preview:
             files.append(ula.preview_png(m, base + '_preview.png'))
         if 'surf' in ex:
@@ -443,8 +498,8 @@ def make_handler(app):
                 if p == '/api/map/preview':
                     data = app.maps.preview(q['id'])
                     return self.send_bytes(data, 'image/png', cache=True) if data else self.send_error(404)
-                if p == '/api/map/ground': return self.send_file(app.maps.ground_map(q['id']), cache=True)
-                if p == '/api/ground': return self.send_file(app.maps.ground(q.get('setting') or 'Jungle', int(q.get('k') or 0)), cache=True)
+                if p == '/api/map/ground': return self.send_file(app.maps.ground_map(q['id']))       # not cached by the browser: the picture depends on the chosen mod
+                if p == '/api/ground': return self.send_file(app.maps.ground(q.get('setting') or 'Jungle', int(q.get('k') or 0)))
                 if p.startswith('/cache/'):
                     root = os.path.realpath(cache_dir())
                     f = os.path.realpath(os.path.join(root, p[len('/cache/'):]))
@@ -468,6 +523,9 @@ def make_handler(app):
                         if k in d: app.settings[k] = d[k]
                     if app.index: app.index.quality = app.settings.get('tex_quality', 'max')
                     if 'lang' in d: app.set_lang(d['lang'])
+                    if 'mod' in d and (d['mod'] or '') != (app.settings.get('mod') or ''):
+                        app.settings.save()
+                        return self.send_json(app.set_mod(d['mod']))
                     if d.get('install') and Install.valid(d['install']) and d['install'] != app.settings.get('install'):
                         return self.send_json(app.setup({'install': d['install'], 'lang': app.settings.get('lang'), 'ui_lang': app.settings.get('ui_lang')}))
                     app.settings.save()

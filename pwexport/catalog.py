@@ -23,8 +23,9 @@ import re
 import threading
 import zlib
 
-from . import composites, gamedata, gsf, texts as texts_mod
+from . import composites, gamedata, gsf, modparts, texts as texts_mod
 from .config import cache_dir
+from .install import _ci_join
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TYPE_ORDER = {'CHTR': 0, 'ANML': 1, 'VHCL': 2, 'SHIP': 3, 'BLDG': 4}
@@ -40,6 +41,7 @@ class ModelIndex:
         # one index per installation (crc32 of the path: Python's hash() changes from run to run)
         self.cache_file = os.path.join(cache_dir(), 'index_%08x.json' % (zlib.crc32(install.data.lower().encode('utf-8')) & 0xffffffff))
         self._archives = {}             # path -> gsf.Archive (parsed, kept for re-use)
+        self._finders = {}              # (texture folders, quality) -> gsf.TextureFinder
         self._lock = threading.Lock()
         self.quality = 'max'            # texture quality of conversions (gsf.QUALITIES; the app's setting)
         self.models = {}                # lower name -> entry
@@ -79,7 +81,8 @@ class ModelIndex:
         except OSError:
             pass
         # Which copy a plain name means (units, add-ons, maps): main archives before campaign / sequence / test ones,
-        # the official game before the mods (BoosterPack1 over Base, as for the rules), then the mods in folder order.
+        # the loaded configuration before the other mods (its last folder first, as the game replaces files: MIRAGE
+        # over BoosterPack3 over Base), then the mods that are not loaded, in folder order.
         # Every other copy stays reachable: self.all lists all of them, copies(name) is what the viewer's
         # "Mod" selector offers, locate(name, archive, mod) finds one.
         mods = self.install.model_mods
@@ -134,21 +137,49 @@ class ModelIndex:
                     return e
         return self.get(name)
 
+    def texture_chain(self, mod):
+        """where a model of that Data folder takes its textures from: (folders, Texture paths), first match wins.
+        A model of the loaded configuration: the configuration's folders, the last one first (the game replaces
+        base files by the mod's). Another mod's copy (the viewer's "Mod" selector): that mod's own chain."""
+        inst = self.install
+        if not hasattr(inst, 'chain_of_folder'):          # a plain Install: the converter's own search order
+            return [], None
+        chain = inst.mods if (mod or '').lower() in [m.lower() for m in inst.mods] else inst.chain_of_folder(mod)
+        chain = list(reversed(chain))
+        roots = []
+        for m in chain:
+            t = _ci_join(os.path.join(inst.data, m), 'Texture')
+            if t and os.path.isdir(t):
+                roots.append(t)
+        return chain, roots
+
     def convert(self, name, out_dir=None, archive=None, embed_textures=False, fps=25.0, mod=None):
         """convert one model (all parts and levels of detail, all animations) -> path of the .glb. Results are cached on disk."""
         e = self.locate(name, archive, mod)
         if not e:
             raise KeyError('unknown model %s' % name)
         q = self.quality if self.quality in gsf.QUALITIES else 'max'
-        out_dir = out_dir or cache_dir('models', gsf.VERSION + ('' if q == 'max' else '-' + q), e['mod'], e['archive'])
+        # textures: from the folders of the mod configuration (mods.ModInstall), cached per configuration
+        chain, roots = self.texture_chain(e['mod'])
+        ver = gsf.VERSION + ('' if q == 'max' else '-' + q)
+        out_dir = out_dir or (cache_dir('models', ver, 'tex_' + '+'.join(chain), e['mod'], e['archive']) if roots is not None
+                              else cache_dir('models', ver, e['mod'], e['archive']))
         out = os.path.join(out_dir, '%s.glb' % gsf.safe(e['name']))
         stamp = os.path.getmtime(e['path'])
         if os.path.exists(out) and os.path.getmtime(out) >= stamp:
             return out
         a = self.archive(e['path'])
         tmp = out + '.part'
+        kw = {}
+        if roots is not None and gsf.Image is not None:
+            # hand the converter a texture finder for exactly these folders (it keys its finders by data folder,
+            # the archive's mod and the quality)
+            fk = (tuple(roots), q)
+            if fk not in self._finders:
+                self._finders[fk] = gsf.TextureFinder(list(roots), q)
+            kw['finders'] = {(self.install.data, a.mod, q): self._finders[fk]}
         res = a.export_index(e['index'], tmp, data_dir=self.install.data, all_parts=True, all_lods=True, embed_textures=embed_textures,
-                             tex_dir=os.path.join(out_dir, 'textures'), fps=fps, log=lambda *x: None, quality=q)
+                             tex_dir=os.path.join(out_dir, 'textures'), fps=fps, log=lambda *x: None, quality=q, **kw)
         if not res:
             if os.path.exists(tmp):
                 os.remove(tmp)
@@ -170,6 +201,15 @@ class Catalog:
         self.classes = gamedata.classes(install)
         with open(os.path.join(HERE, 'data', 'composites.json'), encoding='utf-8') as f:
             self.composites = json.load(f)
+        # add-ons of the objects the table does not know, read from the scripts of the loaded mod (modparts.py).
+        # The base game and Booster Pack 1 are what the table was written from: nothing is derived there.
+        self.derived = {}
+        if any(m.lower() not in ('base', 'boosterpack1') for m in getattr(install, 'mods', [])[1:]):
+            try:
+                raw = modparts.table(install, self.tt, self.classes, skip=self.composites, cache_dir=cache_dir('modparts'))
+                self.derived = {k: modparts.normalize(v) for k, v in raw.items()}
+            except Exception as ex:                          # never in the way of the catalog
+                print('! add-ons from the mod scripts: %s' % ex)
         self.entries = self._entries()
         self._by_id = {e['id']: e for e in self.entries}
 
@@ -219,7 +259,9 @@ class Catalog:
     def _addons(self, oid):
         """attached parts of an object (composites table), only those whose models exist in this installation.
         pi = index of the add-on it hangs on (-1 = the main model); by = 'level' / 'epoch' (which variant to show)"""
-        norm = composites.normalized().get(oid, [])
+        norm = composites.normalized().get(oid)
+        if norm is None:
+            norm = self.derived.get(oid, [])
         out, remap = [], {}
         for s in norm:
             variants = []
@@ -240,10 +282,17 @@ class Catalog:
                         'level': _level_of(s['when']), 'parent': out[remap[s['pi']]]['gfx'] if s['pi'] >= 0 else '',
                         # a part that only fits another look of the object (the ballista on hu_large_tower_upgrade)
                         'needs_model': (self._gfx(s['parent']) or s['parent']) if s['pi'] < 0 and s['parent'] else None})
+            for k in ('offset', 'derived', 'needs_link'):         # script-derived parts (modparts.py)
+                if s.get(k):
+                    out[-1][k] = s[k]
         # defaults: what an owned unit shows out of the box (no upgrades, level 1)
         first_weapon = {}
         for a in out:
             a['slot'] = '%d:%s' % (a['pi'], a['link'])
+            if a.get('derived') and a['kind'] not in ('weapon', 'tool', 'container'):
+                # what a script links stays together: several parts may share a link (the CBR titan's basket and
+                # machine gun nests all hang on "Ride", apart by their offsets), so each is its own slot
+                a['slot'] += ':%d' % a['id']
             a['default'] = a['cond'] in ('always', 'ready', 'unless')
             if a['kind'] == 'weapon' and 'wild' not in a['when'].lower():
                 first_weapon.setdefault(a['slot'], a)

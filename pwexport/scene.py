@@ -36,7 +36,7 @@ class Scene:
         self.part_roots = []           # per part: its root node
 
     # ------------------------------------------------------------------ building
-    def add_part(self, path, parent=None, link=None, hide=(), prefix=''):
+    def add_part(self, path, parent=None, link=None, hide=(), prefix='', offset=None):
         j, b = glbmod.load(path)
         base_dir = os.path.dirname(os.path.abspath(path))
         o = self.j
@@ -123,6 +123,8 @@ class Scene:
             if host is None:            # no such link: hang it on the parent's root (still exported)
                 host = self.part_roots[parent]
             o['nodes'][root].pop('rotation', None)        # link frames are the GSF Z-up frame already
+            if offset and len(offset) == 3 and any(offset):
+                o['nodes'][root]['translation'] = [float(v) for v in offset]    # MIRAGE's AddObjCustomized: metres in the link's frame
             o['nodes'][host].setdefault('children', []).append(root)
         return len(self.part_nodes) - 1
 
@@ -314,11 +316,12 @@ def _sample(T, V, t, rot):
 
 
 def compose(parts, animations=None, party=None):
-    """parts: [{'glb': path, 'parent': index or None, 'link': name, 'hide': [node names], 'anim': name}]"""
+    """parts: [{'glb': path, 'parent': index or None, 'link': name, 'hide': [node names], 'anim': name,
+    'offset': [x, y, z] from the link (optional)}]"""
     sc = Scene()
     for k, p in enumerate(parts):
         sc.add_part(p['glb'], parent=None if k == 0 else p.get('parent', 0), link=p.get('link'),
-                    hide=p.get('hide') or (), prefix='' if k == 0 else 'part%d:' % k)
+                    hide=p.get('hide') or (), prefix='' if k == 0 else 'part%d:' % k, offset=p.get('offset'))
     sc.set_animations(animations, {k: p['anim'] for k, p in enumerate(parts) if k and p.get('anim')})
     if party is not None:
         sc.tint_party(party)

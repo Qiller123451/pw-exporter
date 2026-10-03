@@ -12,7 +12,7 @@ import argparse
 import os
 import sys
 
-from . import parts, scene, writers, blender
+from . import mods, parts, scene, writers, blender
 from .catalog import Catalog, ModelIndex
 from .config import Settings
 from .install import Install
@@ -24,10 +24,10 @@ def load(a):
     path = a.install or s.get('install')
     if not path:
         sys.exit('No ParaWorld folder: run the app once or pass --install "C:/Games/ParaWorld"')
-    inst = Install(path)
+    inst = mods.ModInstall(path, mod=a.mod if a.mod is not None else (s.get('mod') or ''))
     idx = ModelIndex(inst, progress=lambda m, f: print('\r' + m.ljust(60), end='', file=sys.stderr))
     print(file=sys.stderr)
-    cat = Catalog(inst, idx, Texts(inst, a.lang or s.get('lang') or 'uk'))
+    cat = Catalog(inst, idx, mods.Texts(inst, a.lang or s.get('lang') or 'uk'))
     return inst, idx, cat
 
 
@@ -48,11 +48,12 @@ def entry_parts(idx, e, level=1, addons=True):
         return out
     placed = {}
     for ad in e['addons']:
-        if not ad['default'] or (ad['pi'] >= 0 and ad['pi'] not in placed):
+        if not ad['default'] or ad.get('needs_link') or (ad['pi'] >= 0 and ad['pi'] not in placed):
             continue
         if ad['kind'] == 'weapon' and ad['level'] and ad['level'] > level:
             continue
-        out.append({'model': pick_variant(ad, level), 'parent': placed.get(ad['pi'], 0), 'link': ad['link'], 'anim': ad.get('anim')})
+        out.append({'model': pick_variant(ad, level), 'parent': placed.get(ad['pi'], 0), 'link': ad['link'], 'anim': ad.get('anim'),
+                    'offset': ad.get('offset')})
         placed[ad['id']] = len(out) - 1
     return out
 
@@ -62,7 +63,8 @@ def do_export(idx, plist, fmt, out, name, anim=None, t=0.0, animations='all'):
     for p in plist:
         path = idx.convert(p['model'])
         j, _ = __import__('pwexport.glb', fromlist=['load']).load(path)
-        specs.append({'glb': path, 'parent': p['parent'], 'link': p['link'], 'anim': p['anim'], 'hide': parts.hidden_nodes(j)})
+        specs.append({'glb': path, 'parent': p['parent'], 'link': p['link'], 'anim': p['anim'], 'hide': parts.hidden_nodes(j),
+                      'offset': p.get('offset')})
     names = None if animations == 'all' else ([anim] if anim else [])
     sc = scene.compose(specs, animations=names)
     base = os.path.join(out, writers._safe(name))
@@ -78,6 +80,7 @@ def do_export(idx, plist, fmt, out, name, anim=None, t=0.0, animations='all'):
 def main():
     ap = argparse.ArgumentParser(prog='pwexport.cli', description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--install'); ap.add_argument('--lang')
+    ap.add_argument('--mod', help='mod configuration (id of a Data/Info/<id>.info, e.g. MIRAGE; "" = the base game); default: the app\'s setting')
     sub = ap.add_subparsers(dest='cmd', required=True)
     ls = sub.add_parser('list'); ls.add_argument('--type'); ls.add_argument('--tribe'); ls.add_argument('--search')
     for nm in ('export', 'export-model', 'export-all'):

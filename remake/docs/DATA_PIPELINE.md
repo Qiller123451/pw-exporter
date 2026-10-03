@@ -33,6 +33,7 @@ Cursors/*.cur                                    ──► cursors  build_cursor
 Texture/Scape/<Setting>/**                       ──► terrain  build_terrain.py   ──► assets/terrain/**
 Scripts/Server/init/*.txt                        ──► sounds   build_sounds.py    ──► assets/sounds.json
 Scripts/Ai/**, _AI_ObjectData.txt, 4 Server .usl ──► ai       build_ai.py        ──► ai.json
+vegetation/Forest_<Setting>.txt, bin/PWServer.exe ─► forest   build_forest.py    ──► forest.json
 Audio/Sound/**/*.wav, Audio/Music/*.mp3, Maps/** ──► read straight from the game folder by the server
 ```
 
@@ -131,6 +132,12 @@ source, walk speeds, walk set (`walk`), footprint, sound events, seamless walk l
   `classes/FightingObj/FightingObj.usl` (official mods). A data folder built before the step existed gets its
   `ai.json` on first request (`toolkit/remake.py`), and the game plays without the file on built-in fallbacks.
   Alone: `python -m remake.pipeline.build_ai <Data folder> <output folder>`.
+* `build_forest.py` (step `forest`, no dependencies) writes what the game needs to grow the forest blocks of
+  original maps (toolkit docs/MAP_FORMAT.md "Frst"): the engine's 32 tree layouts, copied out of the installation's
+  `bin/PWServer.exe` (or `PWClient.exe`) by `pwexport/forest.py`, and the tree and undergrowth kinds of every
+  setting from `Scripts/Server/classes/vegetation/Forest_<Setting>.txt` → `forest.json`. Like `ai.json` it is made
+  on first request for older data folders; without it (or without the program file) maps keep only their placed
+  trees. Alone: `python -m remake.pipeline.build_forest <Data folder> <output folder>`.
 * `build_ui.py` converts the HUD textures and the icon atlas; `build_menu.py` the menu art; `build_cursors.py` the
   cursors (ICO containers with an AND mask).
 * `build_terrain.py`: the 8 ground materials of every setting from `Texture/Scape/<Setting>/ScapeTexture<Q>.dat` +

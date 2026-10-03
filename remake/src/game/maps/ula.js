@@ -12,8 +12,11 @@
 //
 // parseUla(arrayBuffer) -> Promise<MapData>
 //   MapData = { info:{key:value}, name, w, h, setting, water, hx, hy, heights(Float32Array, metres),
-//               mx, my, mats(Uint8Array), objects:[{type,name,cls,x,y,z,rot,owner,attr}], plants:[{name,x,y,z,rot}] }
+//               mx, my, mats(Uint8Array), objects:[{type,name,cls,x,y,z,rot,owner,attr}], plants:[{name,x,y,z,rot}],
+//               forest:{w,h,blocks:[{x,y,b}]} (forest blocks, maps/forest.js) }
 // Coordinates are map coordinates: x east 0..w, y north 0..h, z up (metres).
+
+import { parseForest } from './forest.js';
 
 export const SETTINGS = ['Northland', 'Savanna', 'Jungle', 'Icewaste', 'Ashvalley', 'TestSet', 'Cave1', 'Cave2', 'Cave3'];
 // ground texture sets the remake has (tools/build_terrain.py); other settings fall back to the closest one
@@ -187,5 +190,8 @@ export async function parseUla(buf, fileName = '') {
     maxPlayers: +info.MaxPlayers || +info.StartLocations || 2,
     objects: c.Objs ? objects(c.Objs, t.w, t.h) : [],
     plants: plants(c.IOMG),
+    forest: parseForest(c.Frst),
+    // the setting by its own name (KNOWN_SETTINGS folds the caves into one texture set): forest kinds are per setting
+    settingName: SETTINGS.includes(info.Setting) ? info.Setting : t.setting,
   };
 }

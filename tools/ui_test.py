@@ -38,6 +38,10 @@ with sync_playwright() as p:
     shot('11_launcher.png')
     pg.click('#open-exporter')
     pg.wait_for_selector('#list li', timeout=120000)
+    if pg.evaluate('(async () => (await (await fetch("/api/state")).json()).mod)()'):      # a mod left selected: start from the base game
+        with pg.expect_navigation(timeout=900000):
+            pg.select_option('#mod-global', '')
+        pg.wait_for_selector('#list li', timeout=600000)
     n = pg.locator('#list li').count()
     check('catalog listed', n > 200, n)
     # search in both languages
@@ -161,6 +165,14 @@ with sync_playwright() as p:
         if i > 3 and pg.evaluate('(() => { const b = document.querySelector("#map-progress"); return !!b && b.classList.contains("hidden"); })()'): break
         time.sleep(1)
     time.sleep(2)
+    ships = pg.evaluate('''(async () => { const ms = await (await fetch("/api/maps")).json(); const m = ms.find(x => /anvil_jungle/i.test(x.rel)); if (!m) return null;
+      const i = await (await fetch("/api/map?id=" + encodeURIComponent(m.id))).json(); return [i.water, i.object_list.filter(o => o.type === "SHIP").map(o => [o.z, o.z_map])]; })()''')
+    caps = pg.evaluate('''(async () => { const ms = await (await fetch("/api/maps")).json(); const m = ms.find(x => /single_05/i.test(x.rel)); if (!m) return null;
+      const i = await (await fetch("/api/map?id=" + encodeURIComponent(m.id))).json(); return i.object_list.filter(o => o.cls === "universal_captain").map(o => [o.model, o.part_of]); })()''')
+    if caps:
+        check('captains of transports are not drawn as standalone figures', all(mo is None and po for mo, po in caps), caps[:3])
+    if ships and ships[1]:
+        check('ships of a map float at the water level', all(z == ships[0] for z, zm in ships[1]) and any(zm < ships[0] for z, zm in ships[1]), ships)
     check('map shown with its info', 'Dschungelkrater' in pg.inner_text('#d-head h2'), pg.inner_text('#d-head h2'))
     shot('12_map_viewer.png')
     labels = {'surf': '.surf', 'ksy': '.ksy'}
@@ -174,10 +186,89 @@ with sync_playwright() as p:
     check('map export (GLB + height map + CSV + SURF + KSY)', 'Saved' in r and '.ksy' in r and '.surf' in r and '.glb' in r, r[:300])
     pg.evaluate('document.querySelector("#details").scrollTop = 99999'); time.sleep(0.5)
     shot('13_map_export.png')
+    # forest blocks: the trees of a map's 32 m forest squares (the tutorial map has no placed tree at all)
+    fo = pg.evaluate('''(async () => { const ms = await (await fetch("/api/maps")).json(); const m = ms.find(x => /ausbildungslager/i.test(x.rel)); if (!m) return null;
+      const i = await (await fetch("/api/map?id=" + encodeURIComponent(m.id))).json(); const f = i.forest, t = f.trees; let low = 0, out = 0;
+      for (let k = 0; k < t.length; k += 5) { if (t[k + 2] <= 16) low++; if (t[k] < 0 || t[k] > i.w || t[k + 1] < 0 || t[k + 1] > i.h || t[k + 4] > 4) out++; }
+      return { blocks: f.blocks, patterns: f.patterns, trees: t.length / 5, deco: f.deco.length / 4, low, out, models: f.tree_models, deco_models: f.deco_models,
+        placed: i.object_list.filter(o => o.type === "TREE").length }; })()''')
+    if fo and fo['patterns']:
+        check('forest blocks: the tutorial map gets its trees', fo['blocks'] > 2000 and fo['trees'] > 30000 and fo['placed'] == 0, {k: fo[k] for k in ('blocks', 'trees', 'deco', 'placed')})
+        check('forest blocks: trees stand on land inside the map', fo['low'] == 0 and fo['out'] == 0, (fo['low'], fo['out']))
+        check('forest blocks: every tree and undergrowth kind has a model', all(fo['models']) and len(fo['models']) == 5 and all(fo['deco_models']), (fo['models'], fo['deco_models']))
+        pg.fill('#search', 'canyon'); time.sleep(0.4)
+        pg.click('#list li >> nth=0')
+        pg.wait_for_function('document.querySelector("#busy").classList.contains("hidden") && /canyon/i.test(PWX.cur.map && PWX.cur.map.id || "")', timeout=180000)
+        pg.wait_for_function('PWX.map && PWX.map.layers.forest.children.length > 0', timeout=240000)
+        for i in range(240):
+            if i > 3 and pg.evaluate('(() => { const b = document.querySelector("#map-progress"); return !!b && b.classList.contains("hidden"); })()'): break
+            time.sleep(1)
+        n = pg.evaluate('(() => { const m = new Map(); for (const c of PWX.map.layers.forest.children) m.set(c.name, c.count); return [...m.values()].reduce((a, b) => a + b, 0); })()')
+        check('forest blocks: drawn in the map viewer', n == pg.evaluate('PWX.cur.map.forest.trees.length / 5') and n > 1000, n)
+        check('forest blocks: layer switches', pg.locator('#s-parts label:has-text("Forest blocks: trees") input').count() == 1 and pg.locator('#s-parts label:has-text("undergrowth") input').count() == 1)
+        time.sleep(1); shot('17_forest_blocks.png')
+    elif fo:
+        check('forest blocks: note when the game program is missing', True, 'no PWServer.exe / PWClient.exe in this installation')
+    # ---- mod configurations (Data/Info/*.info): the base game by default, a mod with what it requires on request
+    st = pg.evaluate('(async () => (await fetch("/api/state")).json())()')
+    mods = st.get('mods') or []
+    check('mod selector: the base game is the default', st.get('mod') == '' and st.get('mod_folders') == ['Base'] and (not mods or mods[0]['id'] == ''), (st.get('mod'), st.get('mod_folders')))
+    pick = next((m for m in mods if m['id'].lower() == 'mirage'), None) or next((m for m in mods if len(m['folders']) > 2), None) or (mods[1] if len(mods) > 1 else None)
+    if pick:
+        pg.evaluate('PWX.map && PWX.map.dispose()')
+        n0 = pg.evaluate('(async () => (await (await fetch("/api/catalog")).json()).entries.length)()')
+        check('mod selector lists the mods of Data/Info', pg.locator('#mod-global option').count() == len(mods) and pg.is_visible('#mod-global'), [m['id'] for m in mods])
+        with pg.expect_navigation(timeout=900000):
+            pg.select_option('#mod-global', pick['id'])
+        pg.wait_for_selector('#list li', timeout=600000)
+        pg.fill('#search', 'babbage'); time.sleep(0.5)
+        if pg.locator('#list li').count() == 0: pg.fill('#search', ''); time.sleep(0.5)
+        pg.click('#list li >> nth=0')
+        pg.wait_for_function('document.querySelector("#busy").classList.contains("hidden") && document.querySelector("#d-head h2")', timeout=240000); time.sleep(1.5)
+        shot('18_mod_selector_global.png')
+        pg.fill('#search', ''); time.sleep(0.3)
+        st2 = pg.evaluate('(async () => (await fetch("/api/state")).json())()')
+        n1 = pg.evaluate('(async () => (await (await fetch("/api/catalog")).json()).entries.length)()')
+        check('mod selector: the mod loads with everything it requires', st2.get('mod') == pick['id'] and st2.get('mod_folders') == pick['folders'], st2.get('mod_folders'))
+        check('mod selector: the unit list follows the mod', n1 >= n0 and (n1 > n0 or pick['id'].lower() != 'mirage'), (n0, n1))
+        top = pick['folders'][-1]
+        cp = pg.evaluate('''(async (top) => { const ms = await (await fetch("/api/models")).json(); const m = ms.find(x => x.mods && x.mods.length > 1 && x.mods.includes(top) && x.anims > 0);
+          if (!m) return null; const i = await (await fetch("/api/model?name=" + encodeURIComponent(m.name))).json(); return [m.name, i.mod, i.url]; })''', top)
+        if cp:
+            check('mod selector: a model loads as the mod\'s copy, with the mod\'s texture chain', cp[1] == top and ('tex_' + '+'.join(reversed(pick['folders']))) in cp[2], cp)
+        # units of the mod get their add-ons from the mod's scripts (pwexport/modparts.py), offsets included
+        du = pg.evaluate('''(async () => { const c = await (await fetch("/api/catalog")).json(); const d = c.entries.filter(e => e.addons.some(a => a.derived));
+          const o = d.find(e => e.addons.some(a => a.derived && a.default && a.offset && a.pi < 0 && a.kind !== "rider")); return [d.length, o ? o.id : null]; })()''')
+        if du[0]:
+            check('mod units: add-ons read from the mod\'s scripts', du[0] > 0, du)
+        if du[1]:
+            pg.fill('#search', du[1]); time.sleep(0.6)
+            pg.click('#list li >> nth=0')
+            pg.wait_for_function('document.querySelector("#busy").classList.contains("hidden") && PWX.cur.entry && PWX.cur.entry.id === %s && PWX.cur.parts && PWX.cur.parts.length > 1' % json.dumps(du[1]), timeout=300000); time.sleep(2)
+            pos = pg.evaluate('PWX.cur.parts.map((p, i) => p.offset ? [p.offset, PWX.viewer.parts[i].obj.children[0].position.toArray()] : null).filter(Boolean)')
+            check('mod units: parts sit at the script\'s offset from their link', pos and all(max(abs(a - b) for a, b in zip(o, p)) < 1e-3 for o, p in pos), pos[:2])
+            shot('19_mod_unit_addons.png')
+            # parts a script links to the same point stay together: switching one off and on leaves the others on
+            boxes = pg.locator('#s-addons input[type=checkbox]:checked').count()
+            if boxes >= 2:
+                first = pg.locator('#s-addons input[type=checkbox]:checked').first
+                first.click(); time.sleep(1.5)           # (the panel is redrawn: click, not uncheck())
+                off = pg.locator('#s-addons input[type=checkbox]:checked').count()
+                pg.locator('#s-addons input[type=checkbox]:not(:checked)').first.click(); time.sleep(2.0)
+                check('mod units: add-ons on one link can be shown together', off == boxes - 1 and pg.locator('#s-addons input[type=checkbox]:checked').count() == boxes, (boxes, off))
+            pg.fill('#search', ''); time.sleep(0.3)
+        ml = pg.evaluate('(async () => (await (await fetch("/api/maps")).json()).map(m => m.pack))()')
+        check('mod selector: maps of the loaded folders only', ml and set(x.lower() for x in ml) <= set(f.lower() for f in pick['folders']), sorted(set(ml)))
+        with pg.expect_navigation(timeout=900000):
+            pg.select_option('#mod-global', '')
+        pg.wait_for_selector('#list li', timeout=600000)
+        st3 = pg.evaluate('(async () => (await fetch("/api/state")).json())()')
+        check('mod selector: back to the base game', st3.get('mod') == '' and st3.get('mod_folders') == ['Base'], st3.get('mod_folders'))
     # ---- remake
     if '--no-remake' not in sys.argv:
         t0 = time.time()
-        pg.click('#btn-home', no_wait_after=True); pg.wait_for_selector('#remake-card', timeout=120000)
+        pg.evaluate('PWX.map && PWX.map.dispose()')          # a map with its forests keeps a software renderer busy
+        pg.click('#btn-home', no_wait_after=True); pg.wait_for_selector('#remake-card', timeout=600000)
         check('back to the launcher', True, '%.1f s' % (time.time() - t0))
         if pg.locator('#play').count():
             pg.click('#play')

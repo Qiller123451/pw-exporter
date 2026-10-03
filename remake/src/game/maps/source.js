@@ -26,6 +26,7 @@
 // Game coordinates: x east, z south, y up, (0, 0) = centre of the world.
 import { MAP, heightFn, splatFn, generate } from '../mapgen.js';
 import { fbm } from '../../engine/terrain.js';
+import { forestItems, forestKinds } from './forest.js';
 
 // ---------------------------------------------------------------- the random jungle map
 export function generatedSource(cfg) {
@@ -159,6 +160,32 @@ export function originalSource(md, D, cfg, manifest) {
     if (!g || NO_PROP.test(g)) continue;
     const [x, z] = toGame(p.x, p.y);
     decor.push({ model: use(g), x, z, rot: p.rot, scale: 1, block: SOLID.test(g), y: p.z, sprites: true });
+  }
+  // forest blocks (maps/forest.js): the trees and undergrowth of the map's 32 m forest squares. A forest tree is a
+  // tree like the placed ones - the original turns it into a <Setting>_Tree_0N_Timber object when it is chopped.
+  const kinds = forestKinds(md.settingName || md.setting);
+  if (kinds && md.forest && md.forest.blocks.length && !(cfg && cfg.noForest)) {
+    const fi = forestItems(md, (mx_, my_) => height(mx_ - ox, oy - my_));
+    const tk = kinds.trees.map((k) => {
+      const g = k && gfxOf(k.standard);
+      if (!g) return null;
+      const stump = k.stump && gfxOf(k.stump), timber = k.timber && gfxOf(k.timber);
+      return { model: use(g), stump: use(stump || (has(g + '_stump') ? g + '_stump' : null)), timber: use(timber || (has(g + '_timber') ? g + '_timber' : null)),
+        wood: woodOf(g), big: !/_med_|bamboo|dead/.test(g) };
+    });
+    for (const t of fi.trees) {
+      const k = tk[t.kind];
+      if (!k) continue;
+      const [x, z] = toGame(t.x, t.y);
+      trees.push({ model: k.model, x, z, rot: t.rot, scale: 1, wood: k.wood, inside: inside(x, z, 2), stump: k.stump, timber: k.timber, big: k.big, forest: true });
+    }
+    const dk = kinds.deco.map((n) => { const g = n && gfxOf(n); return g && !NO_PROP.test(g) ? use(g) : null; });
+    for (const d of fi.deco) {
+      const g = dk[d.kind];
+      if (!g) continue;
+      const [x, z] = toGame(d.x, d.y);
+      decor.push({ model: g, x, z, rot: 0, scale: 1, block: false, sprites: true, forest: true });
+    }
   }
   // resources need their depleted look
   for (const s of [`product_stone_${settingKey}`]) if (has(s)) use(s);

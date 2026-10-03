@@ -19,6 +19,7 @@ const api = {
   raw: async (u) => { const r = await fetch(u); if (!r.ok) throw new Error(u + ': ' + r.status); return { data: await r.arrayBuffer(), grid: (r.headers.get('X-Grid') || '0 0').split(' ').map(Number) }; },
   post: async (u, d) => { const r = await fetch(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d || {}) }); return r.json(); },
 };
+api.toast = (msg) => toast(msg);          // for modules that only get the api (mapview.js)
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 // player colours of the game (Scripts/Game/misc/ACColors.txt, the "light" set)
@@ -43,8 +44,8 @@ const cur = {
   party: null, anim: null, partAnim: {}, seamless: true,
   exp: { format: 'glb', animations: 'all', name: '' },
   map: null,                    // /api/map result of the map shown
-  mapLayers: { objects: true, plants: false, water: true, markers: false, tiles: true },
-  mapExp: { format: 'glb', objects: true, plants: false, step: 2, extras: ['heightmap', 'csv'] },
+  mapLayers: { objects: true, forest: true, undergrowth: false, plants: false, water: true, markers: false, tiles: true },
+  mapExp: { format: 'glb', objects: true, forest: true, undergrowth: false, plants: false, step: 2, extras: ['heightmap', 'csv'] },
 };
 
 // ------------------------------------------------------------------ start
@@ -55,6 +56,7 @@ async function init() {
   viewer.onTime = onTime;
   window.PWX = { get viewer() { return viewer; }, get map() { return mapView; }, get cur() { return cur; } };   // for tests and the console
   wireStatic();
+  renderModSelect();
   if (!ST.configured) return showSetup();
   if (!ST.progress.ready) return showLoading();
   await loadCatalog();
@@ -80,6 +82,28 @@ function setUiLang(l) {
   for (const [id, name] of [['en', 'English'], ['de', 'Deutsch']]) q.append(el('option', { value: id, selected: id === l }, name));
 }
 
+// the global "Mod" selector: which of the game's mod configurations (Data/Info/*.info) the exporter shows -
+// '' = the base game alone. A mod brings the folders of everything it requires (MIRAGE: Base, BoosterPack3, MIRAGE).
+function renderModSelect() {
+  const w = $('#mod-global-w'), sel = $('#mod-global');
+  const mods = (ST && ST.mods) || [];
+  w.classList.toggle('hidden', mods.length < 2);
+  $('#mod-global-l').textContent = S.modGlobal;
+  sel.innerHTML = '';
+  const cur_ = (ST && ST.mod) || '';
+  for (const m of mods) {
+    const name = m.id ? (m.name || m.id) + (m.version ? ' ' + m.version : '') : S.modBase;
+    sel.append(el('option', { value: m.id, selected: m.id.toLowerCase() === cur_.toLowerCase(), title: m.folders.join(' → ') }, name));
+  }
+  const now = mods.find((m) => m.id.toLowerCase() === cur_.toLowerCase());
+  w.title = S.modGlobalTip + (now ? '\n' + S.modLoads + now.folders.join(' → ') : '');
+  sel.onchange = async () => {
+    sel.disabled = true;
+    await api.post('/api/settings', { mod: sel.value });
+    location.reload();               // everything is read again under the other configuration
+  };
+}
+
 function wireStatic() {
   $('#lang-quick').onchange = async (e) => {
     const l = e.target.value;
@@ -87,6 +111,7 @@ function wireStatic() {
     await api.post('/api/settings', { ui_lang: l, lang: ST.langs.some((x) => x.id === names) ? names : ST.settings.lang });
     ST = await api.get('/api/state');
     setUiLang(l);
+    renderModSelect();
     await loadCatalog(true);
   };
   for (const b of document.querySelectorAll('.tabs button')) b.onclick = async () => { cur.mode = b.dataset.tab; if (cur.mode === 'maps' && !MAPS) await loadMaps(); renderExplorer(); };
@@ -293,7 +318,7 @@ function wantedParts() {
     const st = cur.addons.get(a.id);
     if (!st || !st.on) continue;
     if (a.pi >= 0 && !placed.has(a.pi)) continue;
-    out.push({ model: addonGfx(a, st), mod: M ? M.mod : null, parent: a.pi >= 0 ? placed.get(a.pi) : 0, link: a.link, addon: a });
+    out.push({ model: addonGfx(a, st), mod: M ? M.mod : null, parent: a.pi >= 0 ? placed.get(a.pi) : 0, link: a.link, addon: a, offset: a.offset || null });
     placed.set(a.id, out.length - 1);
   }
   return out;
@@ -317,10 +342,18 @@ async function refresh(keepCamera = true) {
   }
   if (my !== refreshing) return;
   parts.forEach((p, i) => { p.info = infos[i]; p.url = infos[i].url; });
+  // script-derived parts that only show where the model has their link (the level flag of mounts): drop the others
+  for (let i = parts.length - 1; i > 0; i--) {
+    const p = parts[i], host = parts[p.parent || 0];
+    if (p.addon && p.addon.needs_link && host && host.info && !(host.info.links || []).includes(p.link)) {
+      parts.splice(i, 1);
+      for (const q of parts) if (q.parent > i) q.parent--;
+    }
+  }
   // keep the state of the main model's parts while only add-ons change
   const mainKey = parts[0].model + '|' + (parts[0].mod || '');
   const keepState = cur.state && cur.stateFor === mainKey;
-  await viewer.show(parts.map((p, i) => ({ url: p.url, parent: p.parent, link: p.link, state: i === 0 && keepState ? cur.state : null })), keepCamera && cur.lastMain === parts[0].model);
+  await viewer.show(parts.map((p, i) => ({ url: p.url, parent: p.parent, link: p.link, offset: p.offset, state: i === 0 && keepState ? cur.state : null })), keepCamera && cur.lastMain === parts[0].model);
   $('#busy').classList.add('hidden');
   cur.lastMain = parts[0].model;
   cur.parts = parts;
@@ -368,7 +401,8 @@ function renderDetails() {
 }
 
 // "Mod": which copy of the model is shown, when the game and its mods have several (the same archive name in
-// Data/Base, Data/BoosterPack3, Data/MIRAGE ... or another archive of a mod). The default is the official game's.
+// Data/Base, Data/BoosterPack3, Data/MIRAGE ... or another archive of a mod). The default is the copy the
+// configuration chosen in the top bar loads (renderModSelect); this row looks at any other.
 function modRow() {
   const inf = cur.parts && cur.parts[0].info;
   const copies = (inf && inf.copies) || [];
@@ -625,7 +659,7 @@ function renderExport() {
   const res = el('div', { class: 'result' });
   const go = el('button', { class: 'primary', id: 'exp-go', onclick: async () => {
     go.disabled = true; go.textContent = S.exporting; res.className = 'result'; res.textContent = '';
-    const parts = cur.parts.map((p, i) => ({ model: p.model, archive: p.info.archive, mod: p.info.mod, parent: p.parent, link: p.link,
+    const parts = cur.parts.map((p, i) => ({ model: p.model, archive: p.info.archive, mod: p.info.mod, parent: p.parent, link: p.link, offset: p.offset || null,
       hide: viewer.parts[i] ? viewer.parts[i].hidden : [], anim: i ? (viewer.parts[i] && viewer.parts[i].clipName) : null }));
     const inf = cur.parts[0].info;
     const r = await api.post('/api/export', { parts, format: X.format, animations: F.animated ? X.animations : 'selected', anim: cur.anim,
@@ -675,19 +709,28 @@ async function selectMap(m) {
   $('#busy').classList.add('hidden');
   renderMapDetails();
   if (cur.mapLayers.objects) loadMapModels('objects', my);
+  if (cur.mapLayers.forest) loadMapModels('forest', my);
+  if (cur.mapLayers.undergrowth) loadMapModels('undergrowth', my);
   if (cur.mapLayers.plants) loadMapModels('plants', my);
 }
 async function loadMapModels(which, my) {
   const mv = mapView;
   if (!mv || mv['loaded_' + which]) return;
   mv['loaded_' + which] = true;
-  const bar = $('#map-progress');
-  const r = await mv.models(which, (f, name) => {
-    if (my !== mapToken) return;
-    const b = $('#map-progress'); if (b) { b.classList.remove('hidden'); b.querySelector('i').style.width = Math.round(f * 100) + '%'; b.querySelector('span').textContent = S.loadingModels + ' ' + name; }
-  });
+  // the progress line shows from the first moment (the first model may take a while to convert) until every layer
+  // that is loading has finished
+  mv.loading = (mv.loading || 0) + 1;
+  const show = (f, name) => {
+    const b = $('#map-progress');
+    if (b) { b.classList.remove('hidden'); b.querySelector('i').style.width = Math.round(f * 100) + '%'; b.querySelector('span').textContent = S.loadingModels + ' ' + (name || '…'); }
+  };
+  show(0, '');
+  let r;
+  try {
+    r = await mv.models(which, (f, name) => { if (my === mapToken) show(f, name); });
+  } finally { mv.loading--; }
   if (my !== mapToken) return;
-  const b = $('#map-progress'); if (b) b.classList.add('hidden');
+  const b = $('#map-progress'); if (b && !mv.loading) b.classList.add('hidden');
   if (which === 'objects' && r.missing) toast(S.mapMissing(r.missing));
 }
 function applyMapLayers() {
@@ -695,6 +738,8 @@ function applyMapLayers() {
   const L = cur.mapLayers;
   mv.layers.objects.visible = L.objects;
   mv.layers.plants.visible = L.plants;
+  mv.layers.forest.visible = L.forest;
+  mv.layers.undergrowth.visible = L.undergrowth;
   mv.layers.markers.visible = L.markers || !L.objects;
   if (mv.layers.water) mv.layers.water.visible = L.water;
   mv.setTiles(L.tiles);
@@ -712,10 +757,13 @@ function renderMapDetails() {
   const fact = (k, v) => { if (v !== '' && v != null) facts.append(el('div', {}, el('span', { text: k }), el('b', { text: String(v) }))); };
   fact(S.mapSize, `${M.w} × ${M.h} m`); fact(S.mapSetting, M.setting); fact(S.mapPlayers, M.players); fact(S.mapWater, M.water + ' m');
   fact(S.mapAuthor, M.author); fact(S.mapGameType, M.game_type); fact(S.mapObjects, M.objects); fact(S.mapPlants, M.plants);
+  const F = M.forest || {};
+  if (F.blocks) fact(S.mapForest, F.patterns ? S.mapForestTrees(F.blocks, F.trees.length / 5) : S.mapForestBlocks(F.blocks));
   head.append(facts);
   if (M.description) head.append(el('p', { text: M.description }));
   const types = Object.entries(M.types || {}).sort((a, b) => b[1] - a[1]);
   if (types.length) head.append(el('div', { class: 'note', text: types.map(([t, n]) => `${S.objTypes[t] || t} ${n}`).join(' · ') }));
+  if (F.blocks && !F.patterns) head.append(el('div', { class: 'note warn', id: 'forest-note', text: S.mapForestNoExe }));
   // layers
   const s = $('#s-parts');
   s.append(el('h3', { text: S.mapShow }));
@@ -724,6 +772,10 @@ function renderMapDetails() {
     L[k] = ev.target.checked; applyMapLayers(); if (after) after(L[k]);
   } }), el('span', { text: label }));
   s.append(cb('objects', S.mapLayerObjects, (on) => { if (on) loadMapModels('objects', mapToken); }));
+  if (F.blocks && F.patterns) {
+    s.append(cb('forest', S.mapLayerForest, (on) => { if (on) loadMapModels('forest', mapToken); }));
+    s.append(cb('undergrowth', S.mapLayerUndergrowth, (on) => { if (on) loadMapModels('undergrowth', mapToken); }));
+  }
   s.append(cb('plants', S.mapLayerPlants, (on) => { if (on) loadMapModels('plants', mapToken); }));
   s.append(cb('water', S.mapLayerWater));
   s.append(cb('tiles', S.mapLayerTiles));
@@ -743,7 +795,9 @@ function renderMapExport() {
   for (const [v, l] of [[1, '2 m'], [2, '4 m'], [4, '8 m'], [8, '16 m']]) step.append(el('option', { value: v, selected: v === X.step }, l));
   s.append(el('div', { class: 'row' }, el('label', { text: S.mapDetail }), step));
   const ck = (k, label) => el('label', { class: 'chk' }, el('input', { type: 'checkbox', checked: X[k], onchange: (ev) => { X[k] = ev.target.checked; } }), el('span', { text: label }));
-  s.append(ck('objects', S.mapExpObjects), ck('plants', S.mapExpPlants));
+  s.append(ck('objects', S.mapExpObjects));
+  if ((cur.map.forest || {}).blocks && cur.map.forest.patterns) s.append(ck('forest', S.mapExpForest), ck('undergrowth', S.mapExpUndergrowth));
+  s.append(ck('plants', S.mapExpPlants));
   s.append(el('div', { class: 'grp', text: S.mapAlso }));
   for (const [k, l] of [['heightmap', S.mapExHeight], ['materials', S.mapExMats], ['csv', S.mapExCsv], ['json', S.mapExJson], ['preview', S.mapExPreview],
     ['surf', S.mapExSurf], ['ksy', S.mapExKsy], ['ula', S.mapExUla]]) {
@@ -760,7 +814,7 @@ function renderMapExport() {
   const res = el('div', { class: 'result' });
   const go = el('button', { class: 'primary', id: 'map-go', onclick: async () => {
     go.disabled = true; go.textContent = S.exporting; res.className = 'result'; res.textContent = '';
-    const r = await api.post('/api/map/export', { id: cur.map.id, format: X.format, objects: X.objects, plants: X.plants, step: X.step,
+    const r = await api.post('/api/map/export', { id: cur.map.id, format: X.format, objects: X.objects, plants: X.plants, forest: X.forest, undergrowth: X.undergrowth, step: X.step,
       extras: X.extras, folder: ST.settings.export_dir, name: X.name || 'map' });
     go.disabled = false; go.textContent = S.exportBtn;
     if (r.ok) {

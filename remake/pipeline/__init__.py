@@ -19,6 +19,8 @@ Steps (each module has run(log, progress) and a command line for running it alon
     cursors   build_cursors.py   mouse cursors -> assets/ui/cur
     terrain   build_terrain.py   ground textures of every setting -> assets/terrain
     sounds    build_sounds.py    sound events -> assets/sounds.json (the wavs stay in the game folder)
+    ai        build_ai.py        the computer player's tables -> ai.json
+    forest    build_forest.py    tree layouts of forest blocks + tree kinds per setting -> forest.json
 Music (Audio/Music/*.mp3) and the maps are read straight from the installation by the server.
 """
 import json
@@ -46,6 +48,8 @@ STEPS = [
     ('ai', 'build_ai', 0.01, [], ['Scripts/Ai', 'Scripts/Server/settings/Techtree/_AI_ObjectData.txt', 'Scripts/Server/misc',
                                  'Scripts/Server/classes/task/Action.usl', 'Scripts/Server/classes/FightingObj/FightingObj.usl'],
      ['ai.json']),
+    # forest blocks of the original maps (docs/MAP_FORMAT.md): the engine's tree layouts and the tree kinds per setting
+    ('forest', 'build_forest', 0.01, [], ['Scripts/Server/classes/vegetation'], ['forest.json']),
 ]
 HERE = os.path.dirname(os.path.abspath(__file__))
 

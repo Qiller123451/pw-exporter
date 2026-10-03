@@ -17,6 +17,10 @@ run pathing python3 tests/evaljs.py tests/pathing.js
 run rally python3 tests/evaljs.py tests/rally_task.js "&tribe=Hu&enemy=Aje&debug"
 run sle python3 tests/evaljs.py tests/sle.js "&tribe=Hu&enemy=Aje&debug"
 for t in "Hu&enemy=Aje" "SEAS&enemy=Ninigi" "Aje&enemy=Hu" "Ninigi&enemy=SEAS"; do run comp_${t%%&*} python3 tests/evaljs.py tests/composites.js "&tribe=$t"; done
+# forest blocks (docs/MAP_FORMAT.md "Frst"): the remake's reader against the toolkit's on real maps (needs PW_GAME = the
+# ParaWorld folder and PW_REMAKE_DATA = the built data), then the tutorial map, whose only wood is its forest blocks
+if [ -n "$PW_GAME" ]; then (cd .. && python3 -m pwexport.forest "$PW_GAME" $T/forest_expected.json > $T/regress_forest_py.log 2>&1); run forest_reader node tests/forest_blocks.mjs ${PW_REMAKE_DATA:-.}/forest.json $T/forest_expected.json; fi
+run forest python3 tests/evaljs.py tests/forest.js "&tribe=Hu&enemy=Aje&map=maps/Base/Multiplayer/ausbildungslager.ula"
 # campaign world setup: the arena (heroes only, 3 computer players) and mission 1 (villages, walls, 4 players)
 run campaign_11 python3 tests/evaljs.py tests/campaign_load.js "&campaign=11&notriggers&allmissions"
 run campaign_01 python3 tests/evaljs.py tests/campaign_load.js "&campaign=1&notriggers&allmissions"

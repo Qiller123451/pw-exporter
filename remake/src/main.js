@@ -13,6 +13,7 @@ import { World } from './game/world.js';
 import { Player } from './game/player.js';
 import { generatedSource, originalSource } from './game/maps/source.js';
 import { parseUla } from './game/maps/ula.js';
+import { setForestData } from './game/maps/forest.js';
 import { buildWater } from './engine/water.js';
 import { GrassLayer, GRASS_DENSITY } from './engine/grass.js';
 import { TribeAI } from './game/ai.js';
@@ -69,6 +70,8 @@ async function loadCore() {
     initAssets('assets/'), initAtlas('assets/ui/'), G.audio.load(),
     // the computer player's tables (pipeline step "ai"); a data folder without it: the AI uses its built-in fallbacks
     fetch('ai.json').then((r) => (r.ok ? r.json() : null)).then((j) => { G.aiData = j; }).catch(() => { G.aiData = null; }),
+    // tree layouts of forest blocks (pipeline step "forest"); without it original maps have only their placed trees
+    fetch('forest.json').then((r) => (r.ok ? r.json() : null)).then(setForestData).catch(() => setForestData(null)),
   ]);
   G.data = new Rules(tt, json);
   await preloadAtlasImages();

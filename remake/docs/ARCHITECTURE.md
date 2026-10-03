@@ -35,6 +35,7 @@ remake/                      (part of the ParaWorld Toolkit; the launcher serves
 │  │  ├─ mapgen.js           the random jungle skirmish map (trees, stones, bushes, animals, start positions)
 │  │  └─ maps/
 │  │     ├─ ula.js           reader for original .ula maps (see docs/MAP_FORMAT.md of the toolkit)
+│  │     ├─ forest.js        forest blocks of original maps: the trees of the 32 m forest squares (forest.json)
 │  │     └─ source.js        "map source" interface: generated map or original map -> what buildWorld needs
 │  └─ ui/                    everything the player sees and clicks
 │     ├─ hud.js              resource bar, info window, command bar, flyouts, army pyramid (drag & drop)

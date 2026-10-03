@@ -17,7 +17,7 @@ import tempfile
 
 import numpy as np
 
-from . import parts, scape, scene as scene_mod, walls, writers
+from . import forest as forest_mod, parts, scape, scene as scene_mod, walls, writers
 
 
 def to_world(m, x, y, z):
@@ -109,6 +109,42 @@ def model_name(m_obj, index):
     return None
 
 
+def object_height(m, o, index, model=None):
+    """the height a map object is shown at. Maps store ships at the height of the sea bed below them (or at 0); the
+    game puts them on the water when the map is loaded. So: objects of type SHIP, and objects whose model is a ship
+    (model type / FourCC "Ship": boats, wrecks, mines, water turrets), are lifted to the water level when they lie
+    below it. Ships standing above the water (a hovercraft on land) keep their height."""
+    z = o['z']
+    if m.water > 0 and z < m.water:
+        e = index.get(model or model_name(o, index)) if index else None
+        if o.get('type') == 'SHIP' or (e and e['fourcc'] == 'Ship'):
+            return float(m.water)
+    return z
+
+
+def hidden_parts(m):
+    """indices of placed objects the game does not draw where the map stores them: parts that belong to another object.
+      * `universal_captain`: every transport (ship, vehicle, ridden animal, some buildings) has one, stored at the
+        transport's own position. It is the driver / rider slot: TransportObj.usl LinkCaptainObj links it to the
+        transport's captain link point - and hides it (SetVisible(false)) when the class has none, which is the
+        case for all boats (only the Kronosaurus has a "Ride" link). On mounts the game shows the rider's own model
+        there, not this placeholder figure.
+      * `Hu_Fishnet`: the net of a fishing boat, linked to the boat and shown only while it is fishing.
+    Without this they stand as people and nets on the sea bed under the ships (and inside the animals).
+    -> {object index: name of the object it belongs to (or '')}"""
+    owners = {}
+    for i, o in enumerate(m.objects):
+        if o['type'] in ('SHIP', 'VHCL', 'ANML', 'CHTR', 'BLDG'):
+            owners.setdefault((round(o['x'], 2), round(o['y'], 2)), o['name'])
+    out = {}
+    for i, o in enumerate(m.objects):
+        cls = (o.get('cls') or '').lower()
+        at = owners.get((round(o['x'], 2), round(o['y'], 2)))
+        if cls == 'universal_captain' or (cls == 'hu_fishnet' and at):
+            out[i] = at or ''
+    return out
+
+
 def _static_model(sc, index, name, cache):
     """a model's default look baked into static meshes of the map scene -> [(mesh id, wall tag)]: one mesh per
     material; wall pieces one per material, arm and geometry variant (tag = (arm, variant, count), see walls.py)"""
@@ -155,7 +191,8 @@ def _static_model(sc, index, name, cache):
     return out
 
 
-def build_scene(m, install, index=None, objects=True, step=2, px_per_m=2.0, water=True, plants=False, progress=None):
+def build_scene(m, install, index=None, objects=True, step=2, px_per_m=2.0, water=True, plants=False, forest=True,
+                undergrowth=False, progress=None):
     """the map as a pwexport Scene (writers.write(scene, base, fmt) saves it in any format)"""
     sc = scene_mod.Scene()
     sc.j['asset']['generator'] = 'ParaWorld Toolkit map export (pwexport)'
@@ -184,11 +221,18 @@ def build_scene(m, install, index=None, objects=True, step=2, px_per_m=2.0, wate
             objs += [dict(type='PLNT', name=p['name'], cls=p['name'], gfx=p['name'], x=p['x'], y=p['y'], z=p['z'], rot=p['rot'],
                          quat=p.get('quat'))
                      for p in m.plants]
+        # forest blocks: their trees (and, on request, the undergrowth) stand where the game grows them (forest.py)
+        if forest:
+            objs += forest_mod.objects(m, install, deco=undergrowth)
         # wall pieces show only the arms towards their neighbours (walls.py)
         wall_of = {id(m.objects[i]): w for i, w in walls.arms(m, index, lambda o: model_name(o, index)).items()}
         groups = {}
         missing = {}
+        part = hidden_parts(m)                 # captains and fishing nets: not drawn where the map stores them
+        skip = {id(m.objects[i]) for i in part}
         for o in objs:
+            if id(o) in skip:
+                continue
             nm = model_name(o, index)
             if nm:
                 groups.setdefault(nm, []).append(o)
@@ -202,10 +246,13 @@ def build_scene(m, install, index=None, objects=True, step=2, px_per_m=2.0, wate
             except Exception:
                 continue
             for o in lst:
-                t = to_world(m, o['x'], o['y'], o['z'])
+                t = to_world(m, o['x'], o['y'], object_height(m, o, index, nm))
                 q = world_quat(o)
                 w = wall_of.get(id(o))
                 sel = [mi for mi, tag in meshes if not tag or walls.show(tag, w['mask'] if w else 0xff, w['pick'] if w else None)]
+                if o.get('forest') and len(sel) == 1:           # thousands of forest trees: one node each where possible
+                    kids.append(_node(sc, o['name'], sel[0], t=t, r=q))
+                    continue
                 inst = [_node(sc, o['name'] + ('_%d' % i if i else ''), mi) for i, mi in enumerate(sel)]
                 kids.append(_node(sc, o['name'], t=t, r=q, children=inst))
         if kids:
@@ -241,7 +288,8 @@ def materials_png(m, path):
     return path
 
 
-def objects_csv(m, path):
+def objects_csv(m, path, install=None):
+    """the placed objects as a table; with install also the trees of the forest blocks (type TREE, name forest_<n>)"""
     keys = sorted({k for o in m.objects for k in o.get('attr', {})})
     with open(path, 'w', newline='', encoding='utf-8') as f:
         w = csv.writer(f)
@@ -250,12 +298,26 @@ def objects_csv(m, path):
             w.writerow([o['type'], o['name'], o['cls'], o.get('gfx', ''), round(o['x'], 3), round(o['y'], 3), round(o['z'], 3),
                         round(math.degrees(o['rot']), 2), '' if o['owner'] is None else o['owner']] +
                        [o.get('attr', {}).get(k, '') for k in keys])
+        for o in (forest_mod.objects(m, install) if install else []):
+            w.writerow([o['type'], o['name'], o['cls'], o['gfx'], round(o['x'], 3), round(o['y'], 3), round(o['z'], 3),
+                        round(math.degrees(o['rot']), 2), ''] + ['' for _ in keys])
     return path
 
 
-def map_json(m, path):
+def map_json(m, path, install=None):
     d = {'summary': m.summary(), 'info': m.info, 'players': m.players, 'description': m.description,
          'objects': m.objects, 'plants': m.plants}
+    # forest blocks: the squares as stored (x, y in 32 m squares, 31 item bytes) and, with the game's tree layouts
+    # (install), every tree and undergrowth plant they grow (forest.py)
+    d['forest'] = {'squares_x': m.forest['w'], 'squares_y': m.forest['h'],
+                   'blocks': [{'x': x, 'y': y, 'items': list(b)} for x, y, b in m.forest['blocks']]}
+    if install:
+        pat = forest_mod.patterns(install)
+        cfg = forest_mod.config(install, m.setting)
+        it = forest_mod.items(m, pat)
+        d['forest']['tree_kinds'] = cfg['trees']; d['forest']['deco_kinds'] = cfg['deco']
+        d['forest']['trees'] = [{k: (round(v, 3) if isinstance(v, float) else v) for k, v in t.items() if k != 'block'} for t in it['trees']]
+        d['forest']['deco'] = [{k: (round(v, 3) if isinstance(v, float) else v) for k, v in t.items()} for t in it['deco']]
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(d, f, ensure_ascii=False, indent=1)
     return path

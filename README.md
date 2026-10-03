@@ -49,7 +49,8 @@ Settings, caches and the remake's game data are kept in `%APPDATA%\ParaWorldTool
 * Add-ons as the game scripts assemble them: riders and gunners, turrets, build-ups, drawbars and wagons, level flags,
   weapons per level, worker tools, carried goods. Visibility: the in-game look as presets (saddles, armour,
   wounds, construction and damage stages, epochs, night lights) and the 32 raw flag bits of the meshes as a filter;
-  player colour; the copy of a model from any mod of the installation. Every animation, add-on animations included.
+  player colour. Mods: the base game by default, or any installed mod loaded the way the game loads it (`Data/Info`);
+  the copy of a single model from any other mod. Every animation, add-on animations included.
 * Maps: terrain with the setting's ground materials, the sea, every placed object with its model; export as 3D file,
   height map, material map, object list (CSV), JSON, preview picture, unpacked map data plus Kaitai Struct
   descriptions (`pwexport/data/ksy/paraworld_ula.ksy`, `paraworld_surf.ksy`).

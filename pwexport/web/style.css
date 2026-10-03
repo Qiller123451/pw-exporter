@@ -23,6 +23,8 @@ input[type=checkbox] { accent-color: var(--accent); }
 .brand img { width: 26px; height: 26px; }
 .spacer { flex: 1; }
 #lang-quick { padding: 3px 6px; }
+#mod-global-w { display: flex; align-items: center; gap: 6px; color: var(--muted, #9aa3ad); font-size: 13px; }
+#mod-global { padding: 3px 6px; max-width: 260px; }
 
 #app { display: grid; grid-template-columns: 300px 1fr 360px; height: calc(100% - 46px); }
 #explorer, #details { background: var(--panel); overflow: hidden; display: flex; flex-direction: column; }
@@ -148,3 +150,4 @@ button.round { width: 34px; height: 34px; border-radius: 50%; padding: 0; backgr
 .mats .mat { display: grid; grid-template-columns: 1fr auto; gap: 0 8px; padding: 3px 0; font-size: 12px; border-top: 1px solid rgba(255,255,255,.06); }
 .mats .mat b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .mats .mat small { grid-column: 1 / 3; color: var(--dim); }
+.note.warn { color: #e0a040; }

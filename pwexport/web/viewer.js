@@ -68,7 +68,7 @@ export class Viewer {
     if (this.skel) { this.skel.removeFromParent(); this.skel = null; }
     this.clearOverlays();
   }
-  // parts: [{url, parent (index), link, anim, name}] -> loaded and attached; part 0 is the main model
+  // parts: [{url, parent (index), link, offset, anim, name}] -> loaded and attached; part 0 is the main model
   async show(parts, keepCamera = false) {
     const loaded = await Promise.all(parts.map((p) => loadGltf(p.url)));
     this.clear();
@@ -83,7 +83,11 @@ export class Viewer {
         let link = null;
         if (host) host.obj.traverse((o) => { if (!link && o.userData.nodeName === 'link_' + spec.link) link = o; });
         if (rootNode) rootNode.rotation.set(0, 0, 0);          // link frames are the GSF Z-up frame already
-        if (rootNode && rootNode.userData.restSrc) rootNode.userData.restSrc.q.identity();   // ... also for 'rest pose'
+        if (rootNode && rootNode.userData.restSrc) rootNode.userData.restSrc.q.identity();
+        if (rootNode && spec.offset) {                         // metres in the link's frame (GSF axes): MIRAGE's AddObjCustomized
+          rootNode.position.set(spec.offset[0], spec.offset[1], spec.offset[2]);
+          if (rootNode.userData.restSrc) rootNode.userData.restSrc.p.copy(rootNode.position);
+        }   // ... also for 'rest pose'
         (link || (host ? host.obj : this.root)).add(obj);
       }
       obj.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false; } });

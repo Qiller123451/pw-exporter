@@ -421,7 +421,11 @@ export class Campaign {
     const landscape = LANDSCAPE.has(o.type || '');
     const block = !NO_BLOCK.test(lc) && (o.type === 'DCCO' || o.type === 'BLDG' || SOLID.test(lc));
     const owner = o.owner != null ? this.players[o.owner] : null;
-    const prop = new Prop(W, { model: pl.model, x, z, y: landscape || o.type === 'BLDG' || !o.type ? o.z : null, rot: this.heading(o.rot), q: o.q, block, blockRadius: block ? Math.min(24, this.modelRadius(pl.model) * 0.7) : 0, party: owner ? owner.partyColor : null });
+    // scenery keeps its stored height; ship models (wrecks, moored boats, mines: model type "Ship") are stored at the
+    // sea bed and float at the water level, as the game puts them when it loads the map
+    let y = landscape || o.type === 'BLDG' || !o.type ? o.z : null;
+    if (W.templates(pl.model, true).fourcc === 'Ship' && W.waterLevel != null && (y != null ? y : W.height(x, z)) < W.waterLevel) y = W.waterLevel;
+    const prop = new Prop(W, { model: pl.model, x, z, y, rot: this.heading(o.rot), q: o.q, block, blockRadius: block ? Math.min(24, this.modelRadius(pl.model) * 0.7) : 0, party: owner ? owner.partyColor : null });
     prop.rec = pl.rec;
     pl.rec.prop = prop; pl.rec.placed = true;
     this.props.push(prop);

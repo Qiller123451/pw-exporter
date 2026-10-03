@@ -1,5 +1,6 @@
 // The map viewer: a ParaWorld map (.ula) as the game shows it - terrain textured with the setting's 8 ground
-// materials, the sea, and every placed object with its model (instanced: one draw per model part).
+// materials, the sea, every placed object with its model (instanced: one draw per model part) and the trees of the
+// forest blocks.
 // Coordinates: X east, Y up, -Z north, metres, origin at the map centre (the same as the map exports).
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -19,8 +20,9 @@ export class MapView {
     this.api = api;                   // {get, raw}
     this.group = new THREE.Group();
     this.group.name = 'map';
-    this.layers = { terrain: null, water: null, objects: new THREE.Group(), plants: new THREE.Group(), markers: new THREE.Group() };
-    this.group.add(this.layers.objects, this.layers.plants, this.layers.markers);
+    this.layers = { terrain: null, water: null, objects: new THREE.Group(), plants: new THREE.Group(), markers: new THREE.Group(),
+      forest: new THREE.Group(), undergrowth: new THREE.Group() };
+    this.group.add(this.layers.objects, this.layers.plants, this.layers.markers, this.layers.forest, this.layers.undergrowth);
     this.cancelled = false;
   }
   dispose() {
@@ -33,7 +35,7 @@ export class MapView {
   // ground drawn with the game's tiles (true) or the blended material textures (false)
   setTiles(on) {
     this.tiles = on;
-    if (this.layers.terrain && this.mats) this.layers.terrain.material = on ? this.mats.tiles : this.mats.blend;
+    if (this.layers.terrain && this.mats) this.layers.terrain.material = on && !this.groundFailed ? this.mats.tiles : this.mats.blend;
   }
   // ---------------------------------------------------------------- terrain
   async load(info, onProgress = () => {}) {
@@ -95,10 +97,21 @@ export class MapView {
     };
     mat.customProgramCacheKey = () => 'pw-map-terrain';
     // the game's look: every 4 m tile from the setting's pre-blended transition tiles (server side, scape.bake)
-    const gtex = texLoader.load('/api/map/ground?id=' + encodeURIComponent(info.id));
+    // The server draws that picture when a map is first opened (some seconds for a big map): wait for it, so the
+    // "loading" spinner stays up instead of a black map. A picture that cannot be made must not leave the map black
+    // either: then the blended materials are shown.
+    const gtex = await new Promise((done) => {
+      const t = texLoader.load('/api/map/ground?id=' + encodeURIComponent(info.id), () => done(t), undefined, () => {
+        console.warn('map ground texture failed to load');
+        this.groundFailed = true;
+        if (this.api.toast) this.api.toast('The ground picture of this map could not be made; showing the plain materials.');
+        done(t);
+      });
+    });
+    if (this.cancelled) return;
     gtex.colorSpace = THREE.SRGBColorSpace; gtex.anisotropy = 8;
     this.mats = { tiles: new THREE.MeshLambertMaterial({ map: gtex }), blend: mat };
-    const terrain = new THREE.Mesh(geo, this.tiles === false ? mat : this.mats.tiles);
+    const terrain = new THREE.Mesh(geo, this.tiles === false || this.groundFailed ? mat : this.mats.tiles);
     terrain.name = 'terrain'; terrain.receiveShadow = true; terrain.userData.own = true;
     this.layers.terrain = terrain;
     this.group.add(terrain);
@@ -155,13 +168,31 @@ export class MapView {
   }
 
   // ---------------------------------------------------------------- models
+  // the trees ('forest') or the undergrowth ('undergrowth') of the map's forest blocks as drawable objects
+  // (info.forest: flat lists, pwexport/forest.py)
+  forestList(which) {
+    const f = this.info.forest || {}, out = [];
+    if (which === 'forest') {
+      const t = f.trees || [];
+      for (let i = 0; i + 4 < t.length; i += 5) out.push({ model: f.tree_models[t[i + 4]], x: t[i], y: t[i + 1], z: t[i + 2], rot: t[i + 3], part_of: null });
+    } else {
+      const t = f.deco || [];
+      for (let i = 0; i + 3 < t.length; i += 4) out.push({ model: f.deco_models[t[i + 3]], x: t[i], y: t[i + 1], z: t[i + 2], rot: 0, part_of: null });
+    }
+    return out;
+  }
+
   async models(which = 'objects', onProgress = () => {}) {
-    const list = which === 'plants' ? this.info.plant_list : this.info.object_list.filter((o) => o.type !== 'SLOC');
+    const woods = which === 'forest' || which === 'undergrowth';
+    const list = woods ? this.forestList(which) : which === 'plants' ? this.info.plant_list : this.info.object_list.filter((o) => o.type !== 'SLOC');
+    // forests are thousands of trees: the game draws the far ones simpler, the viewer picks one level of detail
+    // for the whole forest by its size (0 = full detail)
+    const lod = !woods ? 0 : list.length > 12000 ? 4 : list.length > 5000 ? 3 : list.length > 2000 ? 2 : 0;
     const g = this.layers[which];
     const byModel = new Map();
     let missing = 0;
     for (const o of list) {
-      if (!o.model) { missing++; continue; }
+      if (!o.model) { if (o.part_of === undefined) missing++; continue; }     // part_of: a captain / net of the transport there, not drawn on its own
       if (!byModel.has(o.model)) byModel.set(o.model, []);
       byModel.get(o.model).push(o);
     }
@@ -169,7 +200,7 @@ export class MapView {
     let done = 0;
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), s1 = new THREE.Vector3(1, 1, 1), up = new THREE.Vector3(0, 1, 0);
     const work = async (name) => {
-      const parts = await staticModel(this.api, name);
+      const parts = await staticModel(this.api, name, lod);
       if (this.cancelled || !parts) return;
       const objs = byModel.get(name);
       for (const pt of parts) {
@@ -219,14 +250,18 @@ function numberTexture(text, color) {
 
 // a model's default look as static geometry in its own root frame (Y up): skinned parts baked in their rest pose,
 // helper / lod / effect parts left out (parts.js, the same rules as the model viewer)
-function staticModel(api, name) {
-  if (!modelCache.has(name)) modelCache.set(name, (async () => {
+function staticModel(api, name, lod = 0) {
+  const key = lod ? name + '|lod' + lod : name;
+  if (!modelCache.has(key)) modelCache.set(key, (async () => {
     const inf = await api.get('/api/model?name=' + encodeURIComponent(name));
     const gltf = await loader.loadAsync(inf.url);
     const root = gltf.scene;
     const top = root.children[0];
     const fourcc = (top && top.userData && top.userData.fourcc) || '';
-    const st = P.defaultState(P.describe(root, fourcc));
+    const desc = P.describe(root, fourcc);
+    const st = P.defaultState(desc);
+    // the wanted level of detail, or the nearest coarser / finer one the model has
+    if (lod && desc.lods.length) st.lod = desc.lods.filter((k) => k <= lod).pop() ?? desc.lods[0];
     P.apply(root, fourcc, st);
     root.updateMatrixWorld(true);
     // wall pieces: every part tagged with its arm and geometry variant, so each map piece shows only its own arms
@@ -262,7 +297,7 @@ function staticModel(api, name) {
     }
     return parts;
   })().catch((e) => { console.warn('model', name, e); return null; }));
-  return modelCache.get(name);
+  return modelCache.get(key);
 }
 
 // [arm, variant, count] of every mesh of a wall model (arm -1 = hub post, 0..7 = E, NE, N ... in GSF space):

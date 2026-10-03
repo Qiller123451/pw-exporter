@@ -104,3 +104,33 @@ Files:
 
   They appear only as `mask` or `note` text.
 - **Passengers of open transporters.** They are linked in order to the free `Dri0..Dri9` links of the primary build-up part, skipping the links reserved with `AddIgnoreLink`. They are dynamic, so they are given only as notes.
+
+## Objects outside the table: mod units (`pwexport/modparts.py`)
+
+The table covers the base game (Base + Booster Pack 1). Units a mod adds are read from the mod's scripts when the
+exporter loads that mod (EXPORTER.md, "Mods"): a small interpreter runs the object's script class far enough to see
+what it links.
+
+- **What it follows.** `OnInit(false)` through the class chain (`super` calls, the class's own procedures), with the
+  object's class name known (`GetClassName()`, `sClass == "..."`), loops over literal arrays, class constants,
+  member variables set by setters (`SetTurretLink("we")`, then `SetTurret("seas_turret")`).
+- **What it records.** `AddObj`, `AddObjFlex`, `AddObjCaptain`, MIRAGE's `AddObjCustomized`, `AddObjWithParent`,
+  `AddCustWithParent`, `AddCustDelayedObj(Anim)`, `AddObjWithOffset`, `AddObjCaptainCust`, and
+  `<object>^.LinkAction / FlexLinkAction(parent, link, ...)`: the created object's class (-> its gfx from the class
+  files), the link, the parent part, the offset. A link is a FourCC: `"Rider"` is the link `Ride`.
+- **Offsets** (`{x, y, z}`, metres) are applied in the link's frame, GSF axes - the engine call is
+  `LinkAction(parent, link, offset)`. Not checked against the running game.
+- **Conditions it cannot decide** (upgrades, game state) are followed both ways; what they attach is an optional
+  part (unticked). Other procedures of the class that create and link objects (`HandleAction`, `BuildEggs` ...)
+  give optional parts too.
+- **Riders.** The seat is `GetCaptainLink` of the class chain, evaluated with the build-ups `OnInit` made, and once
+  more per optional build-up (a rider that moves onto an upgrade's build-up). `universal_captain` objects the script
+  creates are gunners with the unit's captain class.
+- **Weapons** come from the tech tree as in the table; the level flag of mounts is added on `flag` and shown when
+  the model has that link.
+- **Self-check.** `python -m pwexport.modparts <game folder>` runs the reader on the base game and compares its
+  build-ups, turrets, wagons and riders with the table: 179 of 185 objects come out the same. The 6 others: a turret
+  on an upgrade model of `hu_large_tower`, the second seat of `aje_brachiosaurus`, the nested cannon of
+  `seas_hq_big_cannon`, and three parts the scripts create that the table leaves out (harbour crane of the carrier,
+  the rocket ramp's bird). `python -m pwexport.modparts <game folder> MIRAGE` lists what it finds for a mod.
+- **Not seen:** `SetLinkGFX` parts (construction cranes, tools and goods in a hand), anything a task script does.

@@ -7,6 +7,7 @@ URL layout below /remake/ (the game only uses relative URLs, so it runs from any
     gamedata.json, techtree.json  built data
     ai.json                       built data: the computer player's tables (remake/pipeline/build_ai.py; made on
                                   first use when the data was built before that step existed)
+    forest.json                   built data: tree layouts of forest blocks (remake/pipeline/build_forest.py; likewise)
     assets/snd/<path>             Data/<mod>/Audio/Sound/<path> of the installation (or built data)
     assets/music/<file>           Data/<mod>/Audio/Music/<file>
     assets/SeqSounds/<path>       Data/<mod>/Audio/SeqSounds/<path> (speech of dialogue scenes and sequences)
@@ -42,7 +43,7 @@ class Remake:
 
     # ---------------------------------------------------------------- where
     def out_dir(self):
-        inst = self.app.install
+        inst = self.inst
         if not inst:
             return None
         key = '%08x' % (zlib.crc32(inst.data.lower().encode('utf-8')) & 0xffffffff)
@@ -62,7 +63,7 @@ class Remake:
             st.update(ready=False, building=True, stage=job['stage'], frac=job['frac'], log=job['log'][-6:],
                       elapsed=round(time.time() - job['t0']))
             return st
-        s = pipeline.status(self.app.install.data, out)
+        s = pipeline.status(self.inst.data, out)
         st.update(ready=s['ready'], reason=s.get('reason'), built=s.get('built'), todo=s.get('todo'))
         if job and job.get('error'):
             st['error'] = job['error']; st['log'] = job['log'][-30:]
@@ -73,7 +74,7 @@ class Remake:
         with self.lock:
             if self.job and self.job.get('running'):
                 return False
-            if not self.app.install:
+            if not self.inst:
                 raise ValueError('no installation')
             self.job = {'stage': 'starting', 'frac': 0.0, 'log': [], 'running': True, 'error': None, 't0': time.time()}
         threading.Thread(target=self._run, args=(force,), daemon=True).start()
@@ -91,7 +92,7 @@ class Remake:
             if len(job['log']) > 400:
                 del job['log'][:100]
         try:
-            rec = pipeline.build(self.app.install.data, self.out_dir(), progress=prog, log=log, force=force)
+            rec = pipeline.build(self.inst.data, self.out_dir(), progress=prog, log=log, force=force)
             if not rec.get('ok'):
                 job['error'] = rec.get('error') or 'failed'
         except Exception as e:                  # noqa: BLE001
@@ -104,7 +105,7 @@ class Remake:
         rel = rel.lstrip('/') or 'index.html'
         if '..' in rel.replace('\\', '/').split('/'):
             return None
-        inst = self.app.install
+        inst = self.inst
         out = self.out_dir()
         if rel.startswith('maps/') and inst:
             parts = rel.split('/')
@@ -134,28 +135,35 @@ class Remake:
             return None
         if rel.startswith('campaign/') and inst and out:
             return self.campaign_file(rel[len('campaign/'):])
-        if rel in ('gamedata.json', 'techtree.json', 'ai.json') and out:
+        if rel in ('gamedata.json', 'techtree.json', 'ai.json', 'forest.json') and out:
             p = os.path.join(out, rel)
-            if rel == 'ai.json' and inst and not os.path.isfile(p):
-                self._build_ai(out)
+            if rel in ('ai.json', 'forest.json') and inst and not os.path.isfile(p):
+                self._build_small(out, rel)
             return p if os.path.isfile(p) else None
         p = os.path.join(GAME, rel)
         return p if os.path.isfile(p) else None
 
-    def _build_ai(self, out):
-        """ai.json for a data folder that predates the pipeline's 'ai' step (a second of work, no other step runs)"""
+    @property
+    def inst(self):
+        """the installation as the remake reads it: the official game (Base + BoosterPack1), whatever mod the
+        exporter is showing (pwexport.install: Install(root) without a mod)"""
+        return getattr(self.app, 'official', None) or self.app.install
+
+    def _build_small(self, out, rel):
+        """ai.json / forest.json for a data folder that predates the pipeline's 'ai' / 'forest' step (a second of
+        work, no other step runs)"""
         with self.lock:
-            if os.path.isfile(os.path.join(out, 'ai.json')) or (self.job and self.job.get('running')):
+            if os.path.isfile(os.path.join(out, rel)) or (self.job and self.job.get('running')):
                 return
             try:
-                from remake.pipeline import build_ai, paths
-                paths.configure(self.app.install.data, out)
-                build_ai.run(log=lambda *a: None)
-            except Exception as e:                  # noqa: BLE001  (the game falls back to its built-in tables)
-                sys.stderr.write('ai.json: %s\n' % e)
+                from remake.pipeline import build_ai, build_forest, paths
+                paths.configure(self.inst.data, out)
+                (build_ai if rel == 'ai.json' else build_forest).run(log=lambda *a: None)
+            except Exception as e:                  # noqa: BLE001  (the game falls back: built-in AI tables, no forest trees)
+                sys.stderr.write('%s: %s\n' % (rel, e))
 
     def maps_index(self):
-        inst = self.app.install
+        inst = self.inst
         if not inst:
             return []
         return [{'path': 'maps/%s/%s' % (e['pack'], e['rel']), 'size': e['size']} for e in inst.maps()]
@@ -165,7 +173,7 @@ class Remake:
         return (getattr(self.app, 'settings', None) or {}).get('lang') or 'uk'
 
     def _map_path(self, pack, sub):
-        d = _ci_join(self.app.install.data, pack)
+        d = _ci_join(self.inst.data, pack)
         p = _ci_join(d, 'Maps/' + sub) if d else None
         return p if p and os.path.isfile(p) else None
 
@@ -198,7 +206,7 @@ class Remake:
             newest = max(os.path.getmtime(src), os.path.getmtime(C.__file__))
             if not os.path.isfile(f) or os.path.getmtime(f) < newest:
                 os.makedirs(os.path.dirname(f), exist_ok=True)
-                data = C.campaign(src, self.app.install, lang)
+                data = C.campaign(src, self.inst, lang)
                 with open(f + '.tmp', 'w', encoding='utf-8') as fh:
                     json.dump(data, fh, ensure_ascii=False, separators=(',', ':'))
                 os.replace(f + '.tmp', f)
@@ -208,7 +216,7 @@ class Remake:
         """the single player campaign in playing order (pwexport.campaign.campaign_maps), with the localised mission
         titles and descriptions. Only each map's level info is read (0.3 s for the 17 missions), not the mission."""
         from pwexport import campaign as C, ula
-        inst = self.app.install
+        inst = self.inst
         tx = C.TextTable(inst, self._lang())
         res = []
         for e in C.campaign_maps(inst):
