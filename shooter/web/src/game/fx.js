@@ -192,8 +192,10 @@ export class FX {
     this.fire.add({ x: pos.x + dir.x * 1.2 * scale, y: pos.y + dir.y * 1.2 * scale, z: pos.z + dir.z * 1.2 * scale, life: 0.05, s0: 1.0 * scale, s1: 1.4 * scale, uv: pick(UV.flare), c0: [1, 0.9, 0.7, 1] });
     this.light(pos, 0xffc070, 3.5 * scale, 0.07, 40);
   }
+  // a spent case flicked out of the breech: small, dull and gone before it lands (big glowing ones that bounced
+  // looked like bullets glancing off whatever stood in front of the gun)
   shell(pos, right) {
-    this.fire.add({ x: pos.x, y: pos.y, z: pos.z, vx: right.x * rnd(3, 5), vy: rnd(3, 5), vz: right.z * rnd(3, 5), g: 30, life: 0.9, s0: 0.2, s1: 0.16, uv: UV.flare[0], c0: [1, 0.8, 0.3, 1], c1: [1, 0.7, 0.2, 0.6], floor: this.ground });
+    this.fire.add({ x: pos.x, y: pos.y, z: pos.z, vx: right.x * rnd(2, 3.5), vy: rnd(2, 3.5), vz: right.z * rnd(2, 3.5), g: 30, life: 0.38, s0: 0.09, s1: 0.06, uv: UV.flare[0], c0: [0.85, 0.6, 0.25, 0.55], c1: [0.6, 0.4, 0.15, 0] });
   }
   // a bullet striking something: kind 'stone' | 'flesh' | 'metal'
   impact(pos, n, kind = 'stone') {

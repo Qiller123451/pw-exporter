@@ -24,6 +24,7 @@ import { Projectiles } from './game/projectiles.js';
 import { Mission } from './game/mission.js';
 import { Hud } from './game/hud.js';
 import { Log } from './game/log.js';
+import { Zones } from './game/zones.js';
 
 const STEP = 1 / 60;
 const params = new URLSearchParams(location.search);
@@ -72,6 +73,9 @@ class Game {
     this.nav = new NavGrid(this.level.collision, this.level.size, { ...CFG.nav, water: this.level.water });
     this.nav.build([{ x: S.x, y: sy, z: S.z }], this.level.bounds);
     this.navBig = this.nav.wide(CFG.nav.wideCells);        // for the big dinosaurs: keeps clear of walls
+    this.zones = new Zones(this);
+    const zr = this.zones.build();
+    if (zr.leaks.length) console.error('zones: ' + zr.leaks.join('; '));
 
     this.fx = new FX(this.scene, this.engine.camera, 'data/assets/tex/', (x, z) => this.level.collision.groundAt(x, z, 1e9));
     this.projectiles = new Projectiles(this);
@@ -128,7 +132,7 @@ class Game {
   }
   applySettings() {
     const s = this.settings;
-    try { localStorage.setItem('pwshooter.settings', JSON.stringify({ quality: s.quality, difficulty: s.difficulty, sensitivity: s.sensitivity, invertY: s.invertY, volume: s.volume, blood: s.blood, showFps: s.showFps, music: s.music })); } catch (e) { /* private mode */ }
+    try { localStorage.setItem('pwshooter.settings', JSON.stringify({ quality: s.quality, difficulty: s.difficulty, sensitivity: s.sensitivity, invertY: s.invertY, volume: s.volume, blood: s.blood, numbers: s.numbers, showFps: s.showFps, music: s.music })); } catch (e) { /* private mode */ }
     if (this.engine && s.quality !== this._q) { this._q = s.quality; this.engine.applyQuality(); }
     if (this.audio) { this.audio.vol.master = s.volume; this.audio.applyVolumes(); }
     if (this.hud) this.hud.fps.style.display = s.showFps ? '' : 'none';
@@ -207,6 +211,7 @@ class Game {
     this.player.camera(real, this.fx);
     if (this.debugCam) this.debugCam(cam);                 // tests: look from somewhere else
     this.level.update(cam, this.time);
+    this.zones.update(real, performance.now() / 1000);
     this.engine.followSun(this.player.pos);
     this.audio.listener.copy(cam.position); this.audio.yaw = this.player.yaw;
     this.hud.update(real, this._fps);
@@ -216,6 +221,7 @@ class Game {
 
 const game = window.G = new Game();
 game.missionObjectives = CFG.mission.objectives;
+game.missionReserved = CFG.mission.reserved;
 let last = 0, fc = 0, ft = 0;
 function loop(now) {
   requestAnimationFrame(loop);

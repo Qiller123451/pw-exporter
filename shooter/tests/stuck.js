@@ -5,8 +5,9 @@
 (() => {
   const o = window.STUCK || {};
   const P = G.player, E = G.enemies, M = G.mission, col = G.level.collision;
-  const spots = o.spots || G.missionObjectives.map((q) => q.pos);
-  const mix = o.mix || { warrior: 3, spearman: 2, archer: 1, raptor: 2 };
+  if (G.zones) G.zones.setOpen(99, false);                    // every district open: this is about the streets
+  const spots = o.spots || G.missionObjectives.filter((q) => q.type === 'reach' || q.type === 'hold').map((q) => q.pos);
+  const mix = o.mix || { warrior: 3, spearman: 2, archer: 1, raptor: 2, assassin: 1, rammer: 1, thrower: 1, dilo: 1 };
   const out = [];
   M.step = () => {};                                         // no mission logic: only what this test spawns
   for (const [sx, sz] of spots) {

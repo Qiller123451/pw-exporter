@@ -4,10 +4,11 @@
 import * as THREE from 'three';
 import { CFG } from './config.js';
 
+const RANK = { '': 0, fire: 1, big: 2, head: 3 };          // which colour a damage number gets when hits of several kinds add up
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 const KEYS = [
   ['W A S D', 'move'], ['Mouse', 'aim'], ['Left button', 'Gunner: fire &nbsp; Executioner: claw combo'], ['Right button', 'Gunner: aim down the sights &nbsp; Executioner: raise the minigun (left button then fires)'], ['1 2 3 / wheel', 'change weapon (Gunner)'],
-  ['Tab', 'swap Gunner / Executioner'], ['Q', 'jetpack jump (F in the air: dive)'], ['Space', 'jump'], ['Shift', 'sprint'], ['C or Alt', 'dash'],
+  ['Tab', 'swap Gunner / Executioner'], ['Q', 'jetpack jump (F in the air: dive)'], ['Space', 'jump'], ['Shift', 'sprint'], ['Ctrl', 'dash (no damage taken; the Executioner rams what is in the way)'],
   ['F', 'knife (Gunner)'], ['E', 'execute a reeling enemy: restores armour'], ['R', 'reload'], ['V', 'first / third person'], ['X', 'camera over the other shoulder'], ['Esc', 'pause'],
 ];
 
@@ -27,6 +28,9 @@ export class Hud {
     this.weapon = root.appendChild(el('div', 'weapon'));
     this.abil = root.appendChild(el('div', 'abil'));
     this.notes = root.appendChild(el('div', 'notes'));
+    // damage numbers: a pool of labels that rise from where an enemy was hit
+    this.numsEl = root.appendChild(el('div', 'nums'));
+    this.nums = []; this.numOf = new Map(); this.numPool = [];
     this.bannerEl = root.appendChild(el('div', 'banner'));
     this.bossEl = root.appendChild(el('div', 'boss', '<span></span><div><i></i></div>'));
     this.prompt = root.appendChild(el('div', 'prompt'));
@@ -66,6 +70,38 @@ export class Hud {
     this.bannerT = 3.2;
   }
   boss(e) { this.bossRef = e; }
+  // Damage dealt to an enemy, shown as a number above it. Hits on the same enemy within a moment add up in one
+  // number (a machine gun would otherwise bury the screen); kind: 'head' | 'fire' | 'explosion' | ...
+  number(e, amount, kind) {
+    const G = this.g;
+    if (!(amount > 0) || !G.settings.numbers) return;
+    let n = this.numOf.get(e);
+    if (!n || n.age > 0.4) {
+      if (this.nums.length >= 60) return;
+      const div = this.numPool.pop() || this.numsEl.appendChild(el('div'));
+      n = { e, el: div, sum: 0, age: 0, life: 0.85, x: e.pos.x, y: e.pos.y + e.def.height * (e.def.structure ? 0.7 : 1) + 0.6, z: e.pos.z, dx: (Math.random() - 0.5) * 46, shown: -1, kind: '' };
+      this.nums.push(n); this.numOf.set(e, n);
+    } else { n.age = Math.min(n.age, 0.12); n.x = e.pos.x; n.z = e.pos.z; }       // still counting: stays put a little longer
+    n.sum += amount;
+    const k = kind === 'head' ? 'head' : kind === 'fire' ? 'fire' : kind === 'explosion' || kind === 'slam' || kind === 'claw' || kind === 'execute' || kind === 'melee' ? 'big' : '';
+    if (RANK[k] > RANK[n.kind]) n.kind = k;
+  }
+  _numbers(dt, cam) {
+    for (let i = this.nums.length - 1; i >= 0; i--) {
+      const n = this.nums[i];
+      n.age += dt;
+      if (n.age >= n.life) { n.el.style.display = 'none'; this.numPool.push(n.el); this.nums.splice(i, 1); if (this.numOf.get(n.e) === n) this.numOf.delete(n.e); continue; }
+      const v = this._v.set(n.x, n.y + n.age * 3.2, n.z).project(cam);
+      if (v.z > 1 || Math.abs(v.x) > 1.1 || Math.abs(v.y) > 1.1) { n.el.style.display = 'none'; continue; }
+      const val = Math.max(1, Math.round(n.sum));
+      if (val !== n.shown) { n.shown = val; n.el.textContent = val; n.el.className = n.kind || ''; n.el.style.fontSize = Math.round(15 + Math.min(17, Math.log10(val + 1) * 6.5)) + 'px'; }
+      const k = n.age / n.life;
+      n.el.style.display = '';
+      n.el.style.opacity = k < 0.6 ? 1 : (1 - k) / 0.4;
+      n.el.style.transform = `translate(${((v.x * 0.5 + 0.5) * innerWidth + n.dx).toFixed(0)}px, ${((-v.y * 0.5 + 0.5) * innerHeight).toFixed(0)}px) translate(-50%, -50%) scale(${(k < 0.12 ? 1.35 - k * 2.9 : 1).toFixed(2)})`;
+    }
+  }
+  target(e) { this.targetRef = e; this.targetT = 3; }
 
   // ---------------------------------------------------------------- every frame
   update(dt, fps) {
@@ -112,16 +148,16 @@ export class Hud {
     // abilities
     const jet = [];
     for (let i = 0; i < c.def.jet.charges; i++) jet.push(`<u class="${i < c.jet ? 'on' : ''}"></u>`);
-    const ah = `<div><em>Q</em> Jetpack ${jet.join('')}</div><div class="${c.dashCd > 0 ? 'cd' : ''}"><em>C</em> Dash</div>`;
+    const ah = `<div><em>Q</em> Jetpack ${jet.join('')}</div><div class="${c.dashCd > 0 ? 'cd' : ''}"><em>Ctrl</em> Dash</div>`;
     if (ah !== this._abil) { this.abil.innerHTML = ah; this._abil = ah; }
 
     // objective + marker
     if (M && M.obj) {
       const o = M.obj;
-      const d = Math.hypot(P.pos.x - o.pos[0], P.pos.z - o.pos[1]);
+      const d = Math.hypot(P.pos.x - M.goalPos[0], P.pos.z - M.goalPos[1]);
       const oh = `<small>OBJECTIVE</small><div>${o.text}</div><em>${M.progressText()}</em>`;
       if (oh !== this._obj) { this.objective.innerHTML = oh; this._obj = oh; }
-      const show = o.type === 'reach' || d > o.radius;
+      const show = o.type === 'reach' || o.type === 'destroy' || d > M.goalRadius;
       this.marker.style.display = show ? '' : 'none';
       if (show) {
         const v = this._v.copy(M.marker).project(cam);
@@ -139,8 +175,11 @@ export class Hud {
     const kh = `<b>${M ? M.totalKills : 0}</b><small>KILLS</small>${this.combo > 2 ? `<em>x${this.combo}</em>` : ''}`;
     if (kh !== this._kills) { this.kills.innerHTML = kh; this._kills = kh; }
 
+    this._numbers(dt, cam);
     // boss bar
-    const b = this.bossRef;
+    // (a boss, or else the tent / totem / boat that was hit last: so it shows that the damage counts)
+    if (this.targetT > 0) this.targetT -= dt;
+    const b = this.bossRef && this.bossRef.alive ? this.bossRef : this.targetT > 0 ? this.targetRef : null;
     if (b && b.alive) {
       this.bossEl.classList.add('on');
       this.bossEl.firstChild.textContent = b.def.name;
@@ -176,6 +215,7 @@ export class Hud {
       <label>Volume <input type="range" min="0" max="1" step="0.05" value="${s.volume}" data-k="volume"></label>
       <label><input type="checkbox" data-k="invertY"${s.invertY ? ' checked' : ''}> Invert mouse up / down</label>
       <label><input type="checkbox" data-k="blood"${s.blood ? ' checked' : ''}> Blood</label>
+      <label><input type="checkbox" data-k="numbers"${s.numbers ? ' checked' : ''}> Damage numbers</label>
       <label><input type="checkbox" data-k="showFps"${s.showFps ? ' checked' : ''}> Show frames per second</label>
     </div>`;
   }

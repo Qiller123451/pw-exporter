@@ -1,12 +1,14 @@
 # ParaWorld Toolkit
 
-Community tools for **ParaWorld** (SEK / Sunflowers, 2006) in one launcher:
+Community tools for **ParaWorld** (SEK / Sunflowers, 2006):
 
 * **Model & Map Exporter** – every unit, building, animal and map of the game in 3D, with animations, add-ons and
   player colours; export to GLB, glTF, OBJ, Collada, STL, PLY (FBX, .blend, USD and Alembic with Blender), maps to 3D
   files, height maps and raw data with [Kaitai Struct](https://kaitai.io) descriptions of the map format.
 * **ParaWorld Remake** – the game rebuilt for the web browser: skirmish against the computer with all four tribes on
   the original maps or random maps, with the rules, models, sounds and interface of your installation.
+* **ParaWorld Shooter** – a third-person action game made from the same data: the SEAS Gunner and the Executioner
+  MKII against swarms of Dustriders in the Holy City.
 
 ![The launcher](docs/screenshots/11_launcher.png)
 
@@ -85,15 +87,42 @@ How it is built: [remake/docs/ARCHITECTURE.md](remake/docs/ARCHITECTURE.md),
 [MODDING.md](remake/docs/MODDING.md) and the rules extracted from the original scripts in
 [remake/docs/spec](remake/docs/spec).
 
+## ParaWorld Shooter
+
+![The Gunner at the city gate](docs/screenshots/20_shooter.png)
+
+A fast third-person (or first-person) swarm shooter with the models, animations, map and sounds of your
+installation. You fight through the Holy City (campaign mission 5), district by district, against the Dustriders.
+
+* Two characters, swapped at any time with `Tab`: the **Gunner** (machine gun, flamethrower, rocket launcher, knife)
+  and the **Executioner MKII** (claw combo on the left mouse button, minigun while the right one is held, a ramming
+  dash). Both have jetpacks.
+* Seventeen objectives across the whole city: burn the war camp, sink the canoes at the pier, topple the totems, hold
+  the terrace, hunt down the Stegosaurus and Allosaurus riders, and at the end the T-Rex titan.
+* Districts that are not open yet are shut off by rubble and a faint energy wall; the rubble is blown away when the
+  next objective opens them.
+* Armour, executions that restore it, damage numbers, three difficulties, a session log for crash reports.
+
+| | |
+|---|---|
+| ![Executioner MKII](docs/screenshots/22_shooter_executioner.png) | ![T-Rex titan](docs/screenshots/23_shooter_boss.png) |
+
+**Start:** prepare the remake's game data once (launcher → *ParaWorld Remake → Prepare the game data*), then
+double-click **`Start ParaWorld Shooter.bat`** (or run `python -m shooter`). The game opens in the browser – use
+Chrome or Edge. Controls, the mission and how it is built: **[shooter/README.md](shooter/README.md)**,
+[shooter/docs/DESIGN.md](shooter/docs/DESIGN.md).
+
 ## What is in this repository
 
 ```
 Start ParaWorld Toolkit.bat, start.sh   start the launcher
+Start ParaWorld Shooter.bat             start the shooter
 toolkit/        the launcher: local web server (exporter + remake), first-start setup, remake data build
 pwexport/       the Model & Map Exporter and the game-file readers shared by everything
                 (GSF models, tech tree, texts, maps, ground textures, Kaitai descriptions in data/ksy)
 remake/         the remake: src/ (game code), game/ (bundled: index.html + game.js), pipeline/ (builds the game
                 data from an installation), tests/, docs/
+shooter/        the shooter: server.py (local web server), web/ (game code, no build step), tests/, docs/
 docs/           exporter guide, file format notes (GSF models, .ula maps, composites), screenshots
 tools/          development helpers: headless UI test, Kaitai description checker, script data mining
 ```

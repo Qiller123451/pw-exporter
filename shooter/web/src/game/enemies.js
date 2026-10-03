@@ -14,7 +14,7 @@ import * as THREE from 'three';
 import { CFG } from './config.js';
 import { Actor, AnimCtl, loadActor, yawTo, wrapPi } from './actors.js';
 
-const v1 = new THREE.Vector3(), v2 = new THREE.Vector3();
+const v1 = new THREE.Vector3(), v2 = new THREE.Vector3(), v3 = new THREE.Vector3();
 const rnd = (a, b) => a + Math.random() * (b - a);
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
 const GRAV = 40;
@@ -25,7 +25,7 @@ class Enemy {
     this.pos = new THREE.Vector3(); this.vel = new THREE.Vector3();
     this.yaw = 0; this.alive = false;
   }
-  init(actor, tpl, x, y, z) {
+  init(actor, tpl, x, y, z, yaw = null) {
     const d = this.def;
     this.actor = actor; this.tpl = tpl;
     this.anim = actor.animCtl || (actor.animCtl = new AnimCtl(actor.model, tpl.clips));
@@ -42,6 +42,12 @@ class Enemy {
     actor.obj.position.copy(this.pos); actor.obj.rotation.set(0, this.yaw, 0); actor.obj.visible = true;
     actor.model.rotation.set(0, 0, 0); actor.model.position.set(0, 0, 0); actor.model.scale.setScalar(d.scale || 1);
     this.setTint(null);
+    if (d.structure) {                       // a tent, a totem, a boat: stands where it is put and only takes damage
+      this.state = 'structure'; this.yaw = yaw || 0; this.smokeT = 0;
+      actor.obj.rotation.set(0, this.yaw, 0);
+      return;
+    }
+    if (yaw != null) this.yaw = yaw;
     this.run();
     this.ride('ride_idle_0', true);
   }
@@ -73,6 +79,19 @@ class Enemy {
   damage(amount, info = {}) {
     if (!this.alive) return false;
     const G = this.sw.g, d = this.def, fx = G.fx;
+    if (d.structure) {
+      // wood and cloth: splinters and dust instead of blood, fire keeps burning it, nothing moves it
+      const was = this.hp;
+      this.hp -= amount * (info.kind === 'fire' ? d.fire || 1 : 1);
+      G.hud.number(this, Math.min(was, was - this.hp), info.kind);
+      if (info.kind === 'fire') { this.burn = Math.max(this.burn, (info.burn || 2) * 2); this.burnDps = (info.burnDps || 20) * (d.fire || 1); }
+      else if (info.point && Math.random() < 0.5) fx.dust(info.point, 0.8, 1, [0.75, 0.62, 0.45, 0.5]);
+      G.hud.hit(this.hp <= 0, false);
+      G.hud.target(this);
+      if (this.hp <= 0) this.die(info, v2.set(0, 0, 0));
+      return this.hp <= 0;
+    }
+    G.hud.number(this, Math.min(this.hp, amount), info.head ? 'head' : info.kind);
     this.hp -= amount;
     this.stagger += amount;
     const mid = v1.copy(this.pos).setY(this.pos.y + d.height * 0.6);
@@ -104,6 +123,16 @@ class Enemy {
   }
   die(info, dir) {
     const G = this.sw.g, d = this.def, fx = G.fx, sw = this.sw;
+    if (d.structure) {
+      this.alive = false; this.state = 'dead'; this.t = 0.05; sw.alive--;
+      const p = v1.copy(this.pos).setY(this.pos.y + d.height * 0.4);
+      fx.explosion(p, d.radius * 1.6); fx.dust(p, d.radius * 1.5, 14); fx.shake(0.45);
+      for (let k = 0; k < 4; k++) fx.sparks(v3.copy(p).setY(p.y + k * d.height * 0.15), 10, 18, [1, 0.7, 0.3, 1]);
+      G.sfx('explode', 90, this.pos, 0.75 + Math.random() * 0.2);
+      this.actor.obj.visible = false;
+      G.onKill(this, info);
+      return;
+    }
     this.alive = false; this.state = 'dead'; this.t = CFG.swarm.corpseTime; this.struck = true;
     this.rideT = 0; this.ride('dying', false);
     sw.alive--; sw.killed++;
@@ -140,10 +169,19 @@ class Enemy {
     this.stagger = Math.max(0, this.stagger - d.staggerAt * 0.6 * dt);
     this.cool -= dt; this.shootCool -= dt; this.t -= dt;
     if (this.state === 'dead') return this.stepDead(dt);
+    if (d.structure) {
+      if (this.burn > 0) {
+        this.burn -= dt; G.hud.number(this, Math.min(this.hp, this.burnDps * dt), 'fire'); this.hp -= this.burnDps * dt;
+        if (Math.random() < dt * 20) G.fx.burn(v1.set(this.pos.x + rnd(-1, 1) * d.radius * 0.6, this.pos.y + rnd(0.2, 0.8) * d.height, this.pos.z + rnd(-1, 1) * d.radius * 0.6), 2.5);
+        if (this.hp <= 0) { this.die({ kind: 'fire' }, v2.set(0, 0, 0)); G.hud.hit(true, false); }
+      } else if (this.hp < this.maxHp * 0.5 && (this.smokeT -= dt) <= 0) { this.smokeT = 0.25; G.fx.dust(v1.copy(this.pos).setY(this.pos.y + d.height * 0.8), 2.5, 1, [0.25, 0.23, 0.22, 0.5]); }
+      return;
+    }
     // burning
     if (this.burn > 0) {
       this.burn -= dt;
       if (Math.random() < dt * 14) G.fx.burn(this.pos, d.radius);
+      G.hud.number(this, Math.min(this.hp, this.burnDps * dt), 'fire');
       this.hp -= this.burnDps * dt;
       if (this.hp <= 0) { this.setTint(0x1a1612); this.die({ kind: 'fire' }, v2.set(0, 0, 0)); G.hud.hit(true, false); return; }
       if (!d.heavy && this.state !== 'burning' && this.state !== 'down') {
@@ -180,6 +218,12 @@ class Enemy {
           let left = this.nav.dir(this.pos.x, this.pos.z, this.flowDir, this.recenter > 0 ? 1 : 3);
           if (left === Infinity && this.nav !== sw.nav) left = sw.nav.dir(this.pos.x, this.pos.z, this.flowDir, this.recenter > 0 ? 1 : 3);
           const none = left === Infinity || (this.flowDir.x === 0 && this.flowDir.z === 0);
+          // a barricade of a district that is still shut lies on the way: over it (the big ones push through)
+          const Z = G.zones;
+          if (Z && !none && this.onGround && this.vault <= 0 && !d.heavy) {
+            let c = sw.nav.index(this.pos.x, this.pos.z);
+            for (let k = 0; k < 3 && c >= 0; k++) { c = sw.nav._next(c); if (Z.closedAt(c)) { this.vaultOut(k + 4, 0.62); break; } }
+          }
           // left behind with no way to the player (too far, or cut off): give the place back to the swarm
           this.lostT = left === Infinity && dist > 60 ? (this.lostT || 0) + 0.3 : 0;
           if (this.lostT > 6 && !d.elite && !G.mission.seen(this.pos.x, this.pos.y, this.pos.z)) { sw.recycle(this); return; }
@@ -192,8 +236,8 @@ class Enemy {
         break;
       }
       case 'attack': {
-        face = yawTo(dx, dz);
         const A = d.attack;
+        face = A.back ? wrapPi(yawTo(dx, dz) + Math.PI) : yawTo(dx, dz);       // a tail strike: back to the player
         if (A.leap && this.t > this.atkT - 0.25) { mvx = dx / (dist || 1) * A.leap; mvz = dz / (dist || 1) * A.leap; }
         if (!this.struckP && this.atkT - this.t >= this.hitAt) {
           this.struckP = true;
@@ -276,13 +320,13 @@ class Enemy {
     if (face != null) this.yaw = wrapPi(this.yaw + Math.max(-9 * dt, Math.min(9 * dt, wrapPi(face - this.yaw))));
   }
   // jump onto the path: to the middle of the cell two steps further along it
-  vaultOut() {
+  vaultOut(hops = 2, T = 0.42) {
     let nav = this.nav;
     let c = nav.nearest(this.pos.x, this.pos.z, null, 4);
     if ((c < 0 || nav.distAt(c) === Infinity) && nav !== this.sw.nav) { nav = this.sw.nav; c = nav.nearest(this.pos.x, this.pos.z, null, 4); }
     if (c < 0 || nav.distAt(c) === Infinity) return;
-    for (let k = 0; k < 2; k++) { const nx = nav._next(c); if (nx < 0) break; c = nx; }
-    const T = 0.42, tx = nav.cx(c), tz = nav.cz(c), ty = nav.y[c];
+    for (let k = 0; k < hops; k++) { const nx = nav._next(c); if (nx < 0) break; c = nx; }
+    const tx = nav.cx(c), tz = nav.cz(c), ty = nav.y[c];
     this.vel.set((tx - this.pos.x) / T, (ty - this.pos.y) / T + 0.5 * GRAV * T, (tz - this.pos.z) / T);
     this.onGround = false; this.vault = T; this.stuckN = 0; this.sw.vaults = (this.sw.vaults || 0) + 1; if (this.sw.vaultLog) this.sw.vaultLog.push([Math.round(this.pos.x), Math.round(this.pos.z), this.def.name]);
   }
@@ -338,7 +382,15 @@ class Enemy {
     vel.x += rnd(-2, 2); vel.z += rnd(-2, 2);
     const tpl = this.sw.templates.get(R.projectile);
     G.projectiles.fire({ tpl, pos: from, vel, gravity: grav, life: 5, owner: 'enemy', radius: 0.4,
-      onHit: (hit) => { if (hit.kind === 'player') P.hurt(R.damage * (this.sw.damageScale || 1), this.pos); else G.fx.impact(hit, hit.n, 'stone'); } });
+      onHit: (hit) => {
+        if (R.splash) {
+          // a fire bottle: bursts where it lands and burns whoever stands there
+          const at = new THREE.Vector3(hit.x, hit.y, hit.z);
+          G.fx.explosion(at, R.splash * 0.7); G.sfx('explode', 55, at, 1.5);
+          const dd = Math.hypot(P.pos.x - hit.x, P.pos.z - hit.z);
+          if (dd < R.splash && Math.abs(P.pos.y - hit.y) < 6) P.hurt(R.damage * (this.sw.damageScale || 1) * (1 - 0.5 * dd / R.splash), at);
+        } else if (hit.kind === 'player') P.hurt(R.damage * (this.sw.damageScale || 1), this.pos); else G.fx.impact(hit, hit.n, 'stone');
+      } });
   }
   // model placement and animation (every rendered frame; `dt` already includes skipped frames for far enemies)
   animate(dt) {
@@ -347,6 +399,7 @@ class Enemy {
     o.rotation.y = this.yaw;
     if (this.tilt || this.actor.model.rotation.x) { this.actor.model.rotation.x = -this.tilt; this.actor.model.position.y = this.tilt ? 2 : 0; }
     this.anim.update(dt);
+    if (this.def.structure) return;
     const riders = this.actor.riders;
     if (riders && riders.length) {
       if (this.rideT > 0 && (this.rideT -= dt) <= 0 && this.alive) this.ride('ride_idle_0', true);
@@ -395,6 +448,7 @@ export class Enemies {
         const t = this.templates.get(m);
         if (!t) { out.push(`${type}: model ${m} missing`); continue; }
         const has = new Set(t.clips.map((c) => c.name.toLowerCase()));
+        if (d.structure) continue;
         const want = [d.run, d.idle, ...d.attack.clips, ...d.die, d.knock, d.up, d.flinch, d.taunt, d.ranged && d.ranged.clip].filter(Boolean);
         for (const w of want) if (!has.has(w.toLowerCase())) out.push(`${type}/${m}: no clip ${w}`);
       }
@@ -402,7 +456,7 @@ export class Enemies {
     return out;
   }
 
-  spawn(type, x, y, z) {
+  spawn(type, x, y, z, yaw = null) {
     const def = CFG.enemies[type];
     if (!def) return null;
     const model = pick(def.models);
@@ -424,7 +478,7 @@ export class Enemies {
       this.g.scene.add(actor.obj);
     }
     const e = new Enemy(this, type, def);
-    e.init(actor, tpl, x, y, z);
+    e.init(actor, tpl, x, y, z, yaw);
     this.list.push(e);
     this.alive++;
     return e;
@@ -457,7 +511,7 @@ export class Enemies {
       a.push(e);
     }
     this.big = 0;
-    for (const e of this.list) if (e.alive && e.nav === this.navBig) this.big++;
+    for (const e of this.list) if (e.alive && e.nav === this.navBig && !e.def.structure) this.big++;
     for (let i = this.list.length - 1; i >= 0; i--) this.list[i].step(dt);
   }
   separate(e, dt) {
@@ -528,6 +582,16 @@ export class Enemies {
       if (tin < bt) { bt = tin; best = { enemy: e, t: tin, head: Math.max(y, y2) > e.pos.y + h * 0.8 && Math.min(y, y2) > e.pos.y + h * 0.62 }; }
     }
     return best;
+  }
+  // the player against the structures (tents, totems): pushes p out of them
+  collide(p, r) {
+    for (const e of this.list) {
+      if (!e.alive || !e.def.structure || !e.def.solid) continue;
+      const dx = p.x - e.pos.x, dz = p.z - e.pos.z, rr = e.def.solid + r, d2 = dx * dx + dz * dz;
+      if (d2 >= rr * rr || d2 < 1e-6 || p.y > e.pos.y + e.def.height) continue;
+      const d = Math.sqrt(d2);
+      p.x += dx / d * (rr - d); p.z += dz / d * (rr - d);
+    }
   }
   inRadius(p, r) {
     const out = [];

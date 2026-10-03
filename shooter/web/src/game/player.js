@@ -103,7 +103,7 @@ export class Player {
     if (input.hit('Space')) I.jump = true;
     if (input.hit('KeyQ')) I.jet = true;
     // (not Ctrl: Ctrl+W closes the browser tab and no page can prevent that)
-    if (input.hit('KeyC') || input.hit('AltLeft')) I.dash = true;
+    if (input.hit('ControlLeft') || input.hit('ControlRight') || input.hit('KeyC')) I.dash = true;      // Ctrl (C still works)
     if (input.hit('KeyF') || input.click(1)) I.melee = true;
     if (input.hit('KeyE')) I.execute = true;
     if (input.hit('KeyR')) I.reload = true;
@@ -155,7 +155,7 @@ export class Player {
     if (I.dash && c.dashCd <= 0 && this.busy <= 0) {
       c.dashCd = def.dash.cooldown;
       const dx = wl > 0 ? wx : f.x, dz = wl > 0 ? wz : f.z;
-      this.dashT = def.dash.time; this.dashDir = [dx, dz];
+      this.dashT = def.dash.time; this.dashDir = [dx, dz]; this.dashHit = new Set();
       this.invulnerable = Math.max(this.invulnerable, def.dash.time + 0.08);
       G.fx.dust(this.pos, def.radius * 2, 4);
       G.sfx('swing', 40, this.pos);
@@ -182,6 +182,9 @@ export class Player {
 
   _regen(ch, dt) {
     const d = ch.def;
+    // the damage budget fills up again
+    const B = CFG.protect && CFG.protect.budget;
+    if (B && ch.budget !== undefined) ch.budget = Math.min(B.burst * d.health, ch.budget + B.perSecond * d.health * dt);
     // jetpack charges
     if (ch.jet < d.jet.charges) { ch.jetTimer += dt; if (ch.jetTimer >= d.jet.recharge) { ch.jetTimer = 0; ch.jet++; } }
     // armour: comes back by itself only slowly and only after a while without being hit
@@ -200,6 +203,25 @@ export class Player {
     if (this.dashT > 0) {
       this.dashT -= dt;
       v.x = this.dashDir[0] * def.dash.speed; v.z = this.dashDir[1] * def.dash.speed;
+      this.invulnerable = Math.max(this.invulnerable, 0.1);          // nothing hurts during a dash
+      // a ram: everyone the body runs into is hit once and thrown aside
+      const R = def.dash.ram;
+      if (R) {
+        const dir = v3.set(this.dashDir[0], 0, this.dashDir[1]);
+        let n = 0;
+        for (const e of G.enemies.inRadius(this.pos, def.radius + R.reach)) {
+          if (this.dashHit.has(e)) continue;
+          this.dashHit.add(e);
+          // thrown forwards and to the side it stands on
+          const sx = e.pos.x - this.pos.x, sz = e.pos.z - this.pos.z, side = Math.sign(sx * -dir.z + sz * dir.x) || 1;
+          const kd = new THREE.Vector3(dir.x - dir.z * 0.6 * side, 0, dir.z + dir.x * 0.6 * side).normalize();
+          e.damage(R.damage, { kind: 'slam', dir: kd, from: this.pos, knock: R.knock });
+          n++;
+        }
+        if (n) { G.fx.shake(0.18 + Math.min(0.2, n * 0.04)); G.sfx('melee', 70, this.pos, 0.8 + Math.random() * 0.2); if (!this.dashStop) { this.dashStop = true; G.hitStop(0.03); } }
+        if (this.onGround && Math.random() < dt * 30) G.fx.dust(this.pos, def.radius * 1.6, 2);
+      }
+      if (this.dashT <= 0) this.dashStop = false;
     } else if (this.onGround) {
       const acc = (moving ? P.groundAccel : P.friction * Math.hypot(v.x, v.z) + 6) * dt;
       v.x = approach(v.x, tx, acc * (Math.abs(tx - v.x) / (Math.hypot(tx - v.x, tz - v.z) || 1)));
@@ -215,9 +237,11 @@ export class Player {
     const speed = Math.hypot(v.x, v.z);
     const n = Math.max(1, Math.ceil(speed * dt / (def.radius * 0.6)));
     const h = dt / n;
-    const p = this.pos;
+    const p = this.pos, Z = G.zones, x0 = p.x, z0 = p.z;
     for (let i = 0; i < n; i++) {
       p.x += v.x * h; p.z += v.z * h;
+      if (Z) Z.collide(p, def.radius);
+      if (G.enemies) G.enemies.collide(p, def.radius);
       if (col.pushOut(p, def.radius, p.y + P.stepHeight, p.y + def.height)) {
         // slide: remove the part of the velocity that runs into the wall
         const d = v.x * col.pushNx + v.z * col.pushNz;
@@ -226,6 +250,12 @@ export class Player {
     }
     const b = G.level.bounds;
     p.x = Math.max(b.x0, Math.min(b.x1, p.x)); p.z = Math.max(b.z0, Math.min(b.z1, p.z));
+    // the border of the open districts holds at any height (a jetpack jump ends there too): slide along it
+    if (Z && !Z.allowedAt(p.x, p.z) && Z.allowedAt(x0, z0)) {
+      if (Z.allowedAt(x0, p.z)) { p.x = x0; v.x = 0; } else if (Z.allowedAt(p.x, z0)) { p.z = z0; v.z = 0; } else { p.x = x0; p.z = z0; v.x = v.z = 0; }
+      if (this.dashT > 0) this.dashT = 0;
+      Z.touch(p);
+    }
     const ground = col.groundAt(p.x, p.z, p.y + P.stepHeight);
     if (this.onGround) {
       if (ground >= p.y - 1.4) { p.y = ground; v.y = 0; } else { this.onGround = false; this.airTime = 0; }
@@ -331,7 +361,9 @@ export class Player {
     this.firing = false;
     if (wd.kind === 'melee') {
       this._upper(wd);
-      if ((I.fireEdge || (I.fire && c.comboT > 0 && this.busy <= 0)) && this.busy <= 0) this._claws();
+      // a click during a swing is kept for a moment, so tapping the button swings as steadily as holding it
+      if (I.fireEdge) this.clawBuf = wd.buffer || 0.4; else if (this.clawBuf > 0) this.clawBuf -= dt;
+      if ((this.clawBuf > 0 || (I.fire && c.comboT > 0)) && this.busy <= 0) { this.clawBuf = 0; this._claws(); }
       return;
     }
     const can = w.reload <= 0 && w.ammo >= 1;
@@ -402,7 +434,8 @@ export class Player {
     const endP = m.clone().addScaledVector(d, end);
     G.fx.tracer(m, endP, wd.tracer, wd.pierce ? 0.14 : 0.09);
     G.fx.muzzle(m, d, wd.pierce ? 1.6 : 1);
-    if (Math.random() < 0.5) G.fx.shell(m, v1.set(-d.z, 0, d.x));
+    // the case comes out at the breech (back at the hands), to the right and a little backwards - not at the muzzle
+    if (Math.random() < 0.5) G.fx.shell(v2.copy(m).addScaledVector(d, -(wd.barrelLen || 1.5) * 0.85), v1.set(-d.z - d.x * 0.5, 0, d.x - d.z * 0.5));
     if (!hitEnemy || (wd.pierce && end === reach)) { if (wall) G.fx.impact(wall, wall.n, 'stone'); }
     if (w.ammo <= 0 && wd.reload) this._reload(w);
   }
@@ -452,14 +485,14 @@ export class Player {
     c.comboT = s.time + wd.comboWindow;
     this.busy = s.time; this.lockMove = s.time * 0.8;
     this.bodyYaw = this.yaw;
-    c.anim.full(s.clip, { ts: s.ts, fade: 0.08, onDone: () => {} });
+    c.anim.full(s.clip, { ts: s.ts, at: s.at, fade: 0.08, onDone: () => {} });
     // step into the swing
     const f = forward(this.yaw, v1);
     this.vel.x = f.x * wd.lunge; this.vel.z = f.z * wd.lunge;
     G.sfx(wd.sounds[0], wd.volume, this.pos, 0.9 + Math.random() * 0.2);
     this.pending = { t: s.hitAt, fn: () => {
       const n = this._strike(s.range, s.arc, s.damage, s.knock, 'claw');
-      if (n) { G.hitStop(s.slam ? 0.09 : 0.05); G.fx.shake(s.slam ? 0.45 : 0.2); }
+      if (n) { G.hitStop(0.05); G.fx.shake(s.slam ? 0.45 : 0.2); }
       if (s.slam) { const p = this.pos.clone().addScaledVector(forward(this.yaw, v1), 5); G.fx.ring(p, 9); G.fx.dust(p, 5, 8); G.fx.shake(0.3); G.sfx('landBig', 70, p); }
     } };
   }
@@ -536,10 +569,36 @@ export class Player {
   hurt(amount, from = null, raw = false) {
     const G = this.g, c = this.ch;
     if (this.dead || (!raw && this.invulnerable > 0)) return;
+    const PR = raw ? null : CFG.protect, d = c.def;
+    // the damage budget: only so much per second gets through, whatever the number of attackers
+    if (PR && PR.budget) {
+      if (c.budget === undefined) c.budget = PR.budget.burst * d.health;
+      if (amount > c.budget) this.stats.absorbed = (this.stats.absorbed || 0) + amount - c.budget;
+      amount = Math.min(amount, c.budget);
+      c.budget -= amount;
+      if (amount <= 0.01) return;
+    }
     this.stats.damageTaken += amount;
     c.armorDelay = 5;
     let left = amount;
-    if (c.armor > 0) { const a = Math.min(c.armor, left); c.armor -= a; left -= a; if (c.armor <= 0) G.sfx('armorBreak', 70, null); else if (Math.random() < 0.5) G.sfx('hurt', 45, null); }
+    if (c.armor > 0) {
+      // armour: with the gate one hit takes at most one segment and none of it reaches the health
+      const gate = PR && PR.armourGate;
+      const a = Math.min(c.armor, left, gate ? d.armorPip : Infinity);
+      c.armor -= a; left = gate ? 0 : left - a;
+      if (c.armor <= 0.01) { c.armor = 0; G.sfx('armorBreak', 70, null); if (gate) { this.invulnerable = Math.max(this.invulnerable, gate.grace); G.hud.note('Armour broken'); } }
+      else if (Math.random() < 0.5) G.sfx('hurt', 45, null);
+    }
+    // last stand: not dead in one blow from a healthy state
+    const LS = PR && PR.lastStand;
+    if (LS && left >= c.health && c.health > d.health * LS.above) {
+      left = c.health - 1;
+      this.invulnerable = Math.max(this.invulnerable, LS.time);
+      G.hud.note('LAST STAND');
+      G.sfx('armorBreak', 80, null, 0.7);
+      G.slowMo(0.4, 0.5);
+      this.stats.lastStands = (this.stats.lastStands || 0) + 1;
+    }
     c.health -= left;
     G.hud.damage(from ? wrapPi(Math.atan2(-(from.x - this.pos.x), -(from.z - this.pos.z)) - this.yaw) : null, left > 0);
     G.fx.shake(Math.min(0.5, 0.12 + amount / 80));
@@ -559,9 +618,38 @@ export class Player {
     G.hud.note(other ? `${c.def.name} is down - ${other.def.name} takes over` : 'You are dead');
     this.pending = null;
     this.deathT = 2.2;
+    // a suit that blows up: when it has folded down (the end of the death clip)
+    if (c.def.deathBlast) {
+      this.blast = { t: Math.min(3, (c.anim.duration(c.def.death) || 1.6) * 0.92), ch: c, pos: this.pos.clone() };
+      this.deathT = Math.max(this.deathT, this.blast.t + 0.9);
+      G.hud.note(`${c.def.name} is going critical`);
+    }
+  }
+  // the wreck's explosion: huge damage to every enemy around, none to the player's side
+  _blast() {
+    const G = this.g, b = this.blast, B = b.ch.def.deathBlast;
+    this.blast = null;
+    const p = b.pos.clone().setY(b.pos.y + 2);
+    G.fx.explosion(p, B.radius * 0.8);
+    G.fx.explosion(p.clone().setY(p.y + 4), B.radius * 0.5);
+    G.fx.ring(b.pos, B.radius, [1, 0.7, 0.3, 0.9]);
+    G.fx.dust(b.pos, B.radius * 0.5, 20);
+    for (let k = 0; k < 6; k++) G.fx.sparks(p.clone().setY(p.y + k), 14, 26, [1, 0.75, 0.35, 1]);
+    G.fx.shake(0.9);
+    G.sfx('explode', 100, b.pos, 0.6);
+    let n = 0;
+    for (const e of G.enemies.inRadius(b.pos, B.radius)) {
+      const d = Math.hypot(e.pos.x - b.pos.x, e.pos.z - b.pos.z);
+      e.damage(B.damage * (1 - 0.5 * Math.min(1, d / B.radius)), { kind: 'explosion', from: b.pos, knock: B.knock });
+      n++;
+    }
+    b.ch.actor.obj.visible = false;                       // nothing is left of the suit
+    G.log.add('BLAST', `${b.ch.def.name} blew up: ${n} enemies caught`);
+    return n;
   }
   // called every step while dead: after a moment the other character takes over, or the game ends
   afterDeath(dt) {
+    if (this.blast && (this.blast.t -= dt) <= 0) this._blast();
     if (!this.dead) return;
     this.deathT -= dt;
     if (this.deathT > 0) return;

@@ -193,8 +193,8 @@ export class BodyAnim {
     if (!p) { if (o.onDone) o.onDone(); return false; }
     this.locked = false;
     this.up.own = false; this.up.onDone = null;
-    this._start(this.lo, p.lo, name, { loop: !!o.loop, restart: true, fade: o.fade ?? 0.1, ts: o.ts });
-    this._start(this.up, p.up, name, { loop: !!o.loop, restart: true, fade: o.fade ?? 0.1, ts: o.ts });
+    this._start(this.lo, p.lo, name, { loop: !!o.loop, restart: true, fade: o.fade ?? 0.1, ts: o.ts, at: o.at });
+    this._start(this.up, p.up, name, { loop: !!o.loop, restart: true, fade: o.fade ?? 0.1, ts: o.ts, at: o.at });
     this.locked = !o.loop && !o.free;
     this.onDone = o.onDone || null;
     return true;

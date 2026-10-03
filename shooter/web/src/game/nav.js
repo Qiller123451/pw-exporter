@@ -41,7 +41,8 @@ export class NavGrid {
   }
   cx(c) { return (c % this.n + 0.5) * this.cell - this.half; }
   cz(c) { return (Math.floor(c / this.n) + 0.5) * this.cell - this.half; }
-  walkable(c) { return c >= 0 && this.y[c] === this.y[c]; }
+  // mask (optional, Uint8Array): cells that are closed for path finding (tests: districts that are not open yet)
+  walkable(c) { return c >= 0 && this.y[c] === this.y[c] && !(this.mask && this.mask[c]); }
 
   // is there a floor to stand on at (x, z) for a walker coming from height y? returns its height or NaN
   _floor(x, z, y) {
@@ -178,7 +179,7 @@ export class NavGrid {
     const target = this.nearest(x, z, y, 8);
     if (target < 0) return false;
     this.target = target;
-    const n = this.n, D = this.dist, S = this.stamp, L = this.links, no = ++this.stampNo;
+    const n = this.n, D = this.dist, S = this.stamp, L = this.links, no = ++this.stampNo, M = this.mask || null;
     // binary heap of [dist, cell]
     const hd = this._hd || (this._hd = new Float32Array(1 << 17)), hc = this._hc || (this._hc = new Int32Array(1 << 17));
     let size = 0;
@@ -215,6 +216,7 @@ export class NavGrid {
         const pi = i - DX[d], pj = j - DZ[d];
         if (pi < 0 || pj < 0 || pi >= n || pj >= n) continue;
         const p = pj * n + pi;
+        if (M && M[p]) continue;
         if (L[p] & (1 << d)) {
           const nd = d0 + cell;
           if (S[p] !== no || nd < D[p]) { D[p] = nd; S[p] = no; push(nd, p); }
@@ -224,6 +226,7 @@ export class NavGrid {
         const qi = pi - DX[d2], qj = pj - DZ[d2];
         if (qi < 0 || qj < 0 || qi >= n || qj >= n) continue;
         const q = qj * n + qi;                       // q -> c is the diagonal
+        if (M && M[q]) continue;
         const qa = q + DX[d] + DZ[d] * n, qb = q + DX[d2] + DZ[d2] * n;
         if (!(L[q] & (1 << d)) || !(L[q] & (1 << d2)) || !(L[qa] & (1 << d2)) || !(L[qb] & (1 << d))) continue;
         const ndd = d0 + diag;

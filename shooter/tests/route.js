@@ -4,6 +4,7 @@
   const P = G.player, M = G.mission, out = [];
   const cfgObjs = (window.ROUTE && window.ROUTE.objectives) || G.missionObjectives || [];
   G.mission.obj = null;                                   // no waves
+  if (G.zones) G.zones.setOpen(99, false);                // every district open: this test is about the streets
   const cls = (window.ROUTE && window.ROUTE.class) || 'gunner';
   if (P.active !== cls) { P.swapCd = 0; P.swap(); }
   const dir = { x: 0, z: 0 };

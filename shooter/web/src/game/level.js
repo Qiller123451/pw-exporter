@@ -15,7 +15,7 @@ import { parseUla } from '../pw/game/maps/ula.js';
 import { HeightField, buildTerrain, fowUniforms, fbm } from '../pw/engine/terrain.js';
 import { PropField, FoliageField, treeSprites, spriteLight } from '../pw/engine/props.js';
 import { buildWater } from '../pw/engine/water.js';
-import { Assets, loadModel } from '../pw/engine/assets.js';
+import { Assets, loadModel, cloneModel } from '../pw/engine/assets.js';
 import { CollisionWorld } from './collision.js';
 import { glowSprites } from './fx.js';
 import { CFG } from './config.js';
@@ -126,6 +126,8 @@ export async function loadLevel(scene, cfg, progress = () => {}) {
     }
   };
   await Promise.all([worker(), worker(), worker(), worker(), worker(), worker()]);
+  // the city gate once more with every part on its own (the static version above merges the doors into the walls)
+  const doorTpl = CFG.zones && CFG.zones.door && templates.has(CFG.zones.door.model) ? await loadModel(CFG.zones.door.model) : null;
 
   progress(0.6, 'Placing the city');
   const props = new PropField(scene);
@@ -140,6 +142,19 @@ export async function loadLevel(scene, cfg, progress = () => {}) {
     if (!boxes.has(name)) boxes.set(name, new THREE.Box3().setFromObject(templates.get(name).scene).getSize(new THREE.Vector3()));
     return boxes.get(name);
   };
+  // barricades near a zone border are not part of the static city: zones.js keeps them and blows them away later
+  const cuts = (CFG.zones ? CFG.zones.cuts : []).map((c, k) => ({ k, x1: c[0], z1: c[1], x2: c[2], z2: c[3], perm: c[4] === 'P' })).filter((c) => !c.perm);
+  const nearCut = (x, z) => {
+    let best = -1, bd = CFG.zones ? CFG.zones.gateRange : 0;
+    for (const c of cuts) {
+      const dx = c.x2 - c.x1, dz = c.z2 - c.z1, t = Math.max(0, Math.min(1, ((x - c.x1) * dx + (z - c.z1) * dz) / (dx * dx + dz * dz || 1)));
+      const d = Math.hypot(x - c.x1 - dx * t, z - c.z1 - dz * t);
+      if (d < bd) { bd = d; best = c.k; }
+    }
+    return best;
+  };
+  const gateProps = [], mapTargets = [];
+  let doorGate = null;
   for (const o of objects) {
     if (!o.model || !templates.has(o.model)) { o.model = null; continue; }
     const tpl = templates.get(o.model);
@@ -148,7 +163,34 @@ export async function loadLevel(scene, cfg, progress = () => {}) {
     // trees stand on the ground, everything else at its stored height (bridges, roofs, things on tables)
     const y = o.type === 'TREE' ? height(o.x, o.z) : o.y;
     o.y = y;
+    // things the mission lets the player destroy are not scenery: the mission puts them up itself (as targets), or
+    // they would stand there looking the same and take no damage
+    const RS = CFG.mission.reserved;
+    // the map's boats: the game floats them, the map file stores them on the sea bed - placed like scenery they are
+    // wrecks with only the sails out of the water, right beside the boats the mission wants sunk. Left out.
+    if (o.type === 'SHIP' && !(RS && RS.test(o.model))) { o.model = null; o.solid = null; continue; }
+    if (RS && RS.test(o.model)) { mapTargets.push({ model: o.model, x: o.x, y, z: o.z, rot: o.rot }); o.solid = 'target'; continue; }
     props.addKind(o.model, tpl, { castShadow: !veg || tree });
+    if (/barricade/.test(o.model)) {
+      const cut = nearCut(o.x, o.z);
+      if (cut >= 0) { gateProps.push({ model: o.model, x: o.x, y, z: o.z, rot: o.rot, q: o.q, cut }); o.solid = 'gate'; continue; }
+    }
+    // the city gate stands on its own (not instanced), so that its doors can be taken away when it is forced open
+    const D = CFG.zones && CFG.zones.door;
+    if (D && o.model === D.model && doorTpl) {
+      const g = cloneModel(doorTpl);
+      g.position.set(o.x, y, o.z);
+      if (o.q) g.quaternion.set(-o.q[0], -o.q[2], o.q[1], o.q[3]).normalize(); else g.rotation.y = o.rot;
+      g.updateMatrixWorld(true);
+      const doors = [];
+      g.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; m.frustumCulled = false; if (D.closed.test(m.name) || (m.parent && D.closed.test(m.parent.name))) doors.push(m); } });
+      scene.add(g);
+      doorGate = { obj: g, doors, x: o.x, y, z: o.z };
+      const isDoor = (m) => D.closed.test(m.name) || !!(m.parent && D.closed.test(m.parent.name));
+      collision.addModel(doorTpl.scene, g.matrix, isDoor);  // (the doors: zones.js keeps everybody out while they are shut)
+      o.solid = 'mesh';
+      continue;
+    }
     const h = props.add(o.model, o.x, y, o.z, o.rot, 1, o.q);
     for (const [uri, list] of treeSprites(tpl.extras, o.x, y, o.z, o.rot, 1, { ground: !tree && !/deco/.test(o.model) })) {
       // the lights of lanterns and towers are glow sprites (drawn additively), everything else is leaves and flowers
@@ -171,6 +213,7 @@ export async function loadLevel(scene, cfg, progress = () => {}) {
   collision.build();
 
   return {
+    gateProps, doorGate, mapTargets,
     md, size, origin: [ox, oy], toGame, height, hf, water: md.water, terrain, waterMesh: water, objects, templates, props, foliage, collision,
     bounds: { x0: -ox + 8, x1: ox - 8, z0: -oy + 8, z1: oy - 8 },
     find: (re) => objects.filter((o) => re.test(o.cls) || re.test(o.name)),

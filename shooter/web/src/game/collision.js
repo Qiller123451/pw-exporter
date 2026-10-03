@@ -33,13 +33,15 @@ export class CollisionWorld {
   }
 
   // every visible mesh below `root`, moved by `matrix` (the instance's place in the world)
-  addModel(root, matrix) {
+  // skip(mesh): leave these meshes out (the doors of the city gate, which open later)
+  addModel(root, matrix, skip = null) {
     const m = new THREE.Matrix4(), v = new THREE.Vector3();
     root.updateMatrixWorld(true);
     root.traverse((o) => {
       if (!o.isMesh || !o.visible || o.userData.sprite || !o.geometry || !o.geometry.attributes.position) return;
       const mat = Array.isArray(o.material) ? o.material[0] : o.material;
       if (mat && mat.userData && mat.userData.noCollide) return;
+      if (skip && skip(o)) return;
       m.multiplyMatrices(matrix, o.matrixWorld);
       const pos = o.geometry.attributes.position, idx = o.geometry.index;
       const n = idx ? idx.count : pos.count;

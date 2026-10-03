@@ -9,6 +9,9 @@
   const P = G.player, M = G.mission, E = G.enemies;
   const nav = new NavGrid(G.level.collision, G.level.size, { cell: G.nav.cell });
   nav.y = G.nav.y; nav.links = G.nav.links;                // same streets, own distance field
+  nav.mask = new Uint8Array(nav.y.length);                 // ... and only through the districts that are open
+  let maskFor = -1, outside = 0;
+  const remask = () => { if (!G.zones || maskFor === G.zones.open) return; maskFor = G.zones.open; for (let c = 0; c < nav.mask.length; c++) nav.mask[c] = G.zones.zone[c] > maskFor ? 1 : 0; flowFor = -1; };
   const dir = { x: 0, z: 0 };
   let flowFor = -1, stuck = 0, last = P.pos.clone(), lastT = 0;
   const times = [], log = [];
@@ -16,15 +19,19 @@
   const bot = (g, t) => {
     if (o.god) { for (const c of Object.values(P.chars)) { c.health = c.def.health; c.alive = true; } }
     if (M.index !== objIndex) { times.push({ objective: objIndex, seconds: +(g.time - objStart).toFixed(0), kills: M.totalKills }); objIndex = M.index; objStart = g.time; }
+    if (G.zones && !G.zones.allowedAt(P.pos.x, P.pos.z)) outside++;        // must never happen: the border holds
     const ob = M.obj;
     if (!ob || P.dead) return;
+    remask();
     const I = g.input;
+    const goal = M.goalPos, goalR = ob.type === 'hold' ? ob.radius * 0.5 : ob.type === 'reach' ? 0 : M.goalRadius * 0.6;
     // nearest enemy (the boss first when it is close)
     let best = null, bd = 1e9, near = 0;
     for (const e of E.list) {
       if (!e.alive) continue;
-      const d = e.pos.distanceTo(P.pos) - (e.def.elite ? 20 : 0);
-      if (d < 18) near++;
+      // the bosses first, and the things to destroy when nobody is at the bot's throat
+      const d = e.pos.distanceTo(P.pos) - e.def.radius - (e.def.elite ? 20 : 0) + (e.def.structure ? 8 : 0);
+      if (d < 18 && !e.def.structure) near++;
       if (d < bd) { bd = d; best = e; }
     }
     const c = P.ch;
@@ -38,19 +45,21 @@
       if (c.def.aimToShoot) { if (w === 1) I.mouseDown(2); else I.mouseUp(2); }      // minigun = hold the aim button
       else if (w !== c.wi) I.press('Digit' + (w + 1));
       const cp = g.engine.camera.position;
-      const dx = best.pos.x - cp.x, dz = best.pos.z - cp.z, dy = best.pos.y + best.def.height * 0.6 - cp.y;
+      const dx = best.pos.x - cp.x, dz = best.pos.z - cp.z, dy = best.pos.y + best.def.height * (best.def.structure ? 0.3 : 0.6) - cp.y;
       P.yaw = Math.atan2(-dx, -dz); P.pitch = Math.atan2(dy, Math.hypot(dx, dz));
-      if (d < 110 && (d < 30 || best.los())) I.mouseDown(0); else I.mouseUp(0);
+      if (d < 110 && (d < 30 || best.def.structure || best.los())) I.mouseDown(0); else I.mouseUp(0);
       if (E.executable(P.pos, { x: -Math.sin(P.yaw), z: -Math.cos(P.yaw) }, 9)) I.press('KeyE');
       if (P.active === 'gunner' && d < 4.5 && near > 2 && Math.random() < 0.05) I.press('KeyF');
     } else I.mouseUp(0);
     // movement
     I.release('KeyW'); I.release('KeyS');
-    const far = Math.hypot(P.pos.x - ob.pos[0], P.pos.z - ob.pos[1]);
-    if (ob.type === 'reach' || far > ob.radius * 0.6 || (best && bd > 60)) {
-      const tx = ob.type === 'reach' || far > ob.radius * 0.6 || !best ? ob.pos[0] : best.pos.x, tz = ob.type === 'reach' || far > ob.radius * 0.6 || !best ? ob.pos[1] : best.pos.z;
-      if (flowFor !== M.index * 1000 + (best && bd > 60 && ob.type !== 'reach' && far <= ob.radius * 0.6 ? 1 : 0) || g.time - lastT > 2) {
-        flowFor = M.index * 1000 + (best && bd > 60 && ob.type !== 'reach' && far <= ob.radius * 0.6 ? 1 : 0); lastT = g.time;
+    const far = Math.hypot(P.pos.x - goal[0], P.pos.z - goal[1]);
+    const toGoal = ob.type === 'reach' || far > goalR;
+    if (toGoal || (best && bd > 60 && ob.type !== 'hold')) {
+      const tx = toGoal || !best ? goal[0] : best.pos.x, tz = toGoal || !best ? goal[1] : best.pos.z;
+      const key = M.index * 1000 + (toGoal ? 0 : 1);
+      if (flowFor !== key || g.time - lastT > 2) {
+        flowFor = key; lastT = g.time;
         nav.flowTo(tx, null, tz, 3000);
       }
       nav.dir(P.pos.x, P.pos.z, dir);
@@ -75,5 +84,5 @@
     if (s.error || s.state !== 'play') break;
     await new Promise((r) => setTimeout(r, 0));
   }
-  return { log, times, stats: P.stats, final: G.test.state(), mission: { done: M.done, kills: M.totalKills, time: Math.round(M.time) }, error: G.error || null };
+  return { log, times, stats: P.stats, final: G.test.state(), mission: { done: M.done, kills: M.totalKills, time: Math.round(M.time), stepsOutsideTheOpenZones: outside }, error: G.error || null };
 })()

@@ -73,6 +73,19 @@ NODE_PATH=<node_modules with playwright> node tests/shot.mjs "http://127.0.0.1:8
   (`window.STUCK = {spots, seconds, mix, max, group}`)
 * `spin.js` - the aim twist of the spine must not build up from frame to frame
 * `loop.js` - the legs play the cycle part of the walk clip, no standstill while running
+* `blast.js` - the destroyed Executioner blows up after its death clip: enemies in the radius hit, the Gunner not
+* `protect.js` - the damage limiters (budget, armour gate, last stand) and how long standing still in a swarm of 60 lasts with and without them
+* `targets.js` - every target of every destroy objective can be hit and destroyed; no look-alike of a target is left as scenery
+* `claws.js` - the Executioner's claw swings follow each other without a pause, held or tapped at any rhythm
+  (the swing is only half of it: what the player sees is when the claws come down. Measured as the forward reach of
+  the claw tips over the clip: `attack_front_s_0` strikes at 0.6 s, `_s_2` at 0.9 s, `_s_3` winds back until 0.8 s and
+  strikes at 1.3 s, `attack_front` never reaches forward at all - which is why the third swing uses `_s_3` started
+  at 0.5 s (`at` in the combo) and all three now strike 0.3-0.45 s after the click)
+* `dash.js` - dash length per character, no damage during it, the Executioner's ram hits everyone in the path once
+* `numbers.js` - damage numbers: hits on one enemy in quick succession add up to one number, a kill shows the health
+  that was left (not the overkill), head shots / fire / big hits have their own colour, the setting switches them off
+* `wall.js` - the border of the open districts and the rubble hold the player; the gate lets him through once open
+* `zones.js` + `zones_map.py` - the districts as computed, drawn as a map
 * `aim.js` - every weapon's barrel points where the camera looks; the Executioner's button scheme
 
 ## How the swarm finds its way (and does not get stuck)
@@ -105,6 +118,43 @@ NODE_PATH=<node_modules with playwright> node tests/shot.mjs "http://127.0.0.1:8
 * First person: the Gunner's eye is placed relative to the gun grip (`fpGun`), so the weapon is always in the lower
   right corner; the Executioner keeps his body (`fpBody`), the eye rides on the head bone, the head is shrunk
   away and, without the gun up, the shoulders are turned so both arms are in the picture (`fpArms`).
+
+## Districts (zones)
+
+`zones.js`, `CFG.zones`. The city is cut into districts by lines across the streets ("cuts"). Every cell of the
+nav grid gets its zone by flooding the streets from the zones' seed points up to the cut lines; a cell on a cut
+belongs to the later of the two zones, everything that is not street to the nearest street's zone. Zones open in
+the order of the list (`mission.objectives[].zone`).
+
+* **The player** may only stand in cells of open zones (`Zones.allowedAt`, asked in `Player._physics` after every
+  move, at any height - so the jetpack cannot leave either). Where a street crosses the border a lattice wall is
+  drawn (one mesh of quads along the cell edges, shader fades it in near the player and rings where it is touched).
+* **Rubble**: where a cut crosses a street ("gap") barricades are heaped along it; the map's own barricades within
+  `gateRange` of a cut are handed over by `level.js` instead of going into the static city, so they can be removed.
+  They are circles the player collides with. When both zones of a gap are open the rubble is blown away.
+* **The city gate** is a cut of kind `'D'` (door): the gate model is placed on its own (not instanced, and from the
+  unmerged model, because the static version merges the door wings into the walls), its door meshes are left out
+  of the collision and hidden when the gate opens; while shut, the door cells are masked in the nav grid.
+* **The Dustriders** are not bound by zones: their paths lead over the rubble and they vault it
+  (`Zones.closedAt` -> `Enemy.vaultOut`), the big ones walk through. That keeps a large area for spawning out of
+  sight even while the player is in a small district.
+* Cuts marked `'P'` are the edge of the playing field and never open.
+* Designing: `tests/zones.js` + `tests/zones_map.py` draw the result and list every gap with the zones on its two
+  sides; `Zones.report.leaks` (also an error in the console and the log) names zones that are not separated. A
+  leak is closed by extending a cut or adding one across the street that goes round it. `tests/wall.js` checks
+  that the border and the rubble hold on foot, dashing and with the jetpack.
+* The nav grid's `meshNy` had to go from 0.62 to 0.5: the ramps into the eastern quarter are steeper built
+  surfaces, with 0.62 that whole quarter was unreachable.
+
+## Objectives and targets
+
+`mission.js`: `reach`, `kill`, `hold` (a clock that runs while the player is inside the marked band), `destroy`
+(structures: tents, totems, canoes - enemies of kind `structure` that stand still and only take damage, so every
+weapon works on them without special cases; the flamethrower does extra; the one hit last shows its health in the
+bar at the top. The map's own tents and boats of those models are never placed as scenery - `mission.reserved`,
+`level.mapTargets` - because a tent that looks like a target and takes no damage reads as a bug; objectives take
+them over with `{type, map: true}`), `boss` (one or several). The marker and
+`Mission.goalPos` follow the nearest target / boss.
 
 ## The log
 
