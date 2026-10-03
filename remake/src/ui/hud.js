@@ -170,7 +170,8 @@ export class HUD {
     const ic = iconFor(e.name);
     const f = Math.max(0, e.hp / e.maxHp);
     const lvl = e.level && e.kind === 'unit' ? `Level ${e.level}` : e.kind === 'building' ? 'Building' : '';
-    const owner = e.owner ? (e.owner === G.me ? '' : ' · enemy') : (e.kind === 'unit' ? ' · wild' : '');
+    const rel = e.owner && e.owner !== G.me ? G.me.relation(e.owner) : 2;
+    const owner = e.owner ? (e.owner === G.me ? '' : ` · ${G.campaign ? e.owner.name + ' (' : ''}${rel === 2 ? 'ally' : rel === 1 ? 'neutral' : 'enemy'}${G.campaign ? ')' : ''}`) : (e.kind === 'unit' && e.wild ? ' · wild' : '');
     let h = `<div class="por" style="${ic ? spriteCss(ic, 4, 64, 61) : ''}"></div>
       <div class="nm">${t.name}</div><div class="lv">${lvl}${owner}</div>
       <div class="hp"><i style="width:${Math.round(f * 100)}%"></i><span>${Math.ceil(e.hp)} / ${Math.round(e.maxHp)}</span></div>`;

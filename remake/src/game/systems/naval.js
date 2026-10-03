@@ -76,7 +76,7 @@ export const Naval = {
         return;
       }
       u.vel.set(0, 0, 0);
-      const left = u.owner.deliver('food', carried, this.time);
+      const left = this.gain(u.owner, 'food', carried);
       if (left >= carried - 1e-6 && carried > 0) { t.fullT = (t.fullT || 0) + dt; return; }   // storage full: retry
       u.carry = left > 0 ? { res: 'food', amount: left, look: null } : null;
       t.lastDrop = [u.pos.x, u.pos.z];
@@ -167,7 +167,7 @@ export const Naval = {
     const n = this.nearestResource(b.pos.x, b.pos.z, 'food', b.radius + 40, null, Object.assign(() => true, { water: true }));
     if (!n) return;
     const got = Math.min(10, n.amount);
-    const left = b.owner.deliver('food', got, this.time);
+    const left = this.gain(b.owner, 'food', got);
     n.amount -= got - left;
     if (n.amount <= 0.5) this.depleteNode(n);
   },

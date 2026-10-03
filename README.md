@@ -47,8 +47,9 @@ Settings, caches and the remake's game data are kept in `%APPDATA%\ParaWorldTool
 * Explorer for every unit, animal, vehicle, ship, hero and building of the four tribes and the wildlife (search in
   English, German and every language your game has), plus all ~4000 models of every archive.
 * Add-ons as the game scripts assemble them: riders and gunners, turrets, build-ups, drawbars and wagons, level flags,
-  weapons per level, worker tools, carried goods. Model parts: saddles, armour, wounds, construction and damage
-  stages, epochs, night lights, player colour. Every animation, add-on animations included.
+  weapons per level, worker tools, carried goods. Visibility: the in-game look as presets (saddles, armour,
+  wounds, construction and damage stages, epochs, night lights) and the 32 raw flag bits of the meshes as a filter;
+  player colour; the copy of a model from any mod of the installation. Every animation, add-on animations included.
 * Maps: terrain with the setting's ground materials, the sea, every placed object with its model; export as 3D file,
   height map, material map, object list (CSV), JSON, preview picture, unpacked map data plus Kaitai Struct
   descriptions (`pwexport/data/ksy/paraworld_ula.ksy`, `paraworld_surf.ksy`).
@@ -69,6 +70,14 @@ nests), the computer opponent for every tribe, the original maps, sounds, music,
 * **Debug mode** (skirmish option): everything is free and instant for you, building requirements included.
 * Controls follow the original: left click selects, right click orders, drag to box-select, `Ctrl+1–9` groups,
   the mouse wheel zooms, `Esc` opens the menu.
+
+**Computer player.** The opponent is a port of the original's script AI (behaviours, attack plans per epoch,
+difficulty handicaps, defence): [remake/docs/COMPUTER_PLAYER.md](remake/docs/COMPUTER_PLAYER.md).
+
+**Campaign (work in progress).** The original single player missions are read from the installation and run by a
+trigger engine written after the original scripts. Mission 11 (Arena) plays to the end, mission 1 (Stranded) part of
+the way; the others are greyed out in the menu until they are adapted. See
+[remake/docs/CAMPAIGN_RUNTIME.md](remake/docs/CAMPAIGN_RUNTIME.md) §13 and [docs/CAMPAIGN_FORMAT.md](docs/CAMPAIGN_FORMAT.md).
 
 How it is built: [remake/docs/ARCHITECTURE.md](remake/docs/ARCHITECTURE.md),
 [DATA_PIPELINE.md](remake/docs/DATA_PIPELINE.md), [GAMEPLAY_RULES.md](remake/docs/GAMEPLAY_RULES.md),

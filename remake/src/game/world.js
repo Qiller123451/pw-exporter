@@ -14,6 +14,8 @@ import { WallMap } from './wallmap.js';
 //   systems/buildings.js     behaviour by building script class (gates, traps, nests, warp gate ...)
 //   systems/animals.js       wild animals
 //   systems/transport.js     bunkers and transports
+//   scripting.js             what missions do to the world: diplomacy, owner changes, spawning by class name,
+//                            deleting, teleporting, resources, tech filters, fog reveals (docs/CAMPAIGN_RUNTIME.md)
 //
 // Every step: timers -> units -> buildings -> projectiles -> collision -> cleanup. Things the player should
 // hear or see are reported as events (world.events, consumed by ui/feedback.js).
@@ -33,6 +35,7 @@ import { BuildingBehaviours } from './systems/buildings.js';
 import { Animals } from './systems/animals.js';
 import { Naval } from './systems/naval.js';
 import { Transport } from './systems/transport.js';
+import { Scripting } from './scripting.js';
 
 export class World {
   // opts: scene, data (Rules), templates(name, soft), height(x, z), size, playHalf, fx, audio, props, foliage, fow,
@@ -56,6 +59,9 @@ export class World {
     this.effects = [];             // periodicEffect()
     this.spirits = [];             // souls of fallen units (Aje shaman: Resurrect)
     this.wildNests = [];           // nests of original maps: respawn wild animals (systems/animals.js)
+    this.reveals = [];             // revealArea(): fog of war circles given to players (scripting.js)
+    this.standIns = new Map();     // class (lower case) -> model used when the class's own model does not exist
+    this.onEntity = null;          // hook(entity): called for every unit / building created (campaign registry)
     this.wallMap = new WallMap(...(opts.wallGrid || [4, 4]));   // the 8 m wall grid (game/wallmap.js)
     this.playHalf = opts.playHalf || this.size / 2;
     const h = this.playHalf;
@@ -136,6 +142,8 @@ export class World {
     const def = this.data.def(name, owner);
     // unique heroes: a second one of the same class is not created (NPCMgr.AddNPC)
     if (owner && def.unique && owner.heroes.has(name)) return null;
+    // a class whose model is not loaded (campaign maps load other tribes' classes on demand) is not created
+    if (!this.unitModel(name, level, owner)) { if (!this._noModel) this._noModel = new Set(); if (!this._noModel.has(name)) { this._noModel.add(name); console.warn('no model for unit', name); } return null; }
     const nv = this.navFor({ naval: !!opts.swim || (this.data.info(name)?.type === 'SHIP' && !AMPHIBIOUS.test(name)), amphib: AMPHIBIOUS.test(name) });
     if (!nv.isFree(x, z)) { const c = nv.nearestFree(nv.idx(x, z)); [x, z] = nv.center(c); }
     const u = new Unit(this, name, owner, x, z, level || this.defaultLevel(name, owner), heading, opts);
@@ -153,6 +161,7 @@ export class World {
         this.later(180, () => { if (u.alive) this.kill(u, null); });
       }
     }
+    if (this.onEntity) this.onEntity(u);
     return u;
   }
   defaultLevel(name, owner) { return this.data.minLevel(name, owner); }
@@ -178,6 +187,7 @@ export class World {
     }
   }
   placeBuilding(name, owner, x, z, rot = 0, built = true) {
+    if (!this.data.exists(name) || !this.templates((this.data.stats(name, 1, owner) || {}).gfx, true)) { console.warn('no model for building', name); return null; }
     const b = new Building(this, name, owner, x, z, rot, built);
     this.buildings.push(b);
     this.bHash.insert(b);
@@ -188,6 +198,7 @@ export class World {
       this.recomputeCaps(owner);
       if (b.behaviour && b.behaviour.built) b.behaviour.built(b, this);
     }
+    if (this.onEntity) this.onEntity(b);
     return b;
   }
   addResource(type, res, x, z, amount, opts) {
@@ -204,7 +215,7 @@ export class World {
   // o.type: move | attackmove | attack | stop | hold | gather | build | repair | deliver | heal | board | unload
   order(units, o) {
     for (const u of units) {
-      if (!u.alive || u.kind !== 'unit' || u.autonomous) continue;
+      if (!u.alive || u.kind !== 'unit' || u.autonomous || u.parked) continue;
       if (u.stationary && /move|gather|build|board|trade|repair|deliver/.test(o.type)) continue;   // mines / water turrets
       if (u.name === 'aje_torpedo_turtle' && o.type !== 'kill') continue;                          // obeys nothing but Kill
       if (u.inside) { if (o.type === 'unload') this.leaveTransport(u); continue; }
@@ -216,12 +227,18 @@ export class World {
       const user = o.auto ? false : true;
       switch (o.type) {
         case 'move': case 'attackmove':
-          u.task = { type: o.type, x: o.x, z: o.z, user, then: o.then || null };   // then: next order on arrival
+          u.task = { type: o.type, x: o.x, z: o.z, user, then: o.then || null, slow: !!o.slow };   // then: next order on arrival; slow: at walking pace (mission scripts)
           u.setPath(o.x, o.z);
           u.anchor.set(o.x, o.z);
           break;
         case 'attack':
           if (o.target && o.target.kind === 'res') { this.startGather(u, o.target); break; }
+          // an order to attack a neutral player's object makes both players hostile; a friend's object is never
+          // attacked (FightingObj.usl:6594-6617). Automatic fights never get here with a non-hostile target.
+          if (o.target && o.target.owner && u.owner && o.target.owner !== u.owner && !u.owner.isEnemy(o.target.owner)) {
+            if (!this.attackAllowed(u, o.target)) break;
+            this.declareWar(u.owner, o.target.owner);
+          }
           u.task = { type: 'attack', target: o.target, user, forceAttack: !!o.force }; u.repathT = 0;
           break;
         case 'stop': u.task = { type: 'idle' }; u.path = []; u.anchor.set(u.pos.x, u.pos.z); break;
@@ -249,6 +266,7 @@ export class World {
   // ------------------------------------------------------------------ per-unit update
   unitUpdate(u, dt) {
     if (!u.alive) return this.deadUnitUpdate(u, dt);
+    if (u.parked) return;                          // taken out of the world by a mission (scripting.js setParked)
     if (u.inside) { this.passengerUpdate(u, dt); return; }
     if (u.invulnT > 0) u.invulnT -= dt;
     if (u.st.poison) this.poisonUpdate(u);
@@ -274,8 +292,8 @@ export class World {
           u.scanT = (u.scanT || 0) - dt;
           if (u.scanT <= 0) { u.scanT = 0.4; const e = this.findTarget(u, Math.max(30, this.alarmRange(u))); if (e) { u.task = { type: 'attack', target: e, amove: [t.x, t.z], user: false, auto: true }; break; } }
         }
-        const sp = u.steer(dt, u.task.user && !t.back ? u.runSpeed : u.speed, 0.8);
-        u.moveAnim(sp, u.task.user && u.runSpeed > u.speed * 1.2);
+        const sp = u.steer(dt, u.task.user && !t.back && !t.slow ? u.runSpeed : u.speed, 0.8);
+        u.moveAnim(sp, u.task.user && !t.slow && u.runSpeed > u.speed * 1.2);
         if (!u.path.length) { const next = t.then; u.task = { type: 'idle' }; if (next) this.order([u], next); }
         break;
       }
@@ -312,8 +330,16 @@ export class World {
       const o = this.healScan(u);
       if (o && (t.type === 'idle' || u.distTo(o) - o.radius <= u.stats.heal.radius)) { u.task = { type: 'heal', target: o, hold: t.type === 'hold' }; return; }
     }
-    if (!u.weapons.long || u.cannotFight || u.stance === 3 || u.stance === 1) return;
+    if (!u.weapons.long || u.cannotFight || u.stance === 3 || u.stance === -1) return;
     const cs = u.cs(u.weapons.long);
+    if (u.stance === 1) {
+      // defensive: fights back only - except units set to it by setAggro (AIAM state 1): they take on enemies
+      // that come within 20 m of their post and return to it afterwards
+      if (!u.guard20) return;
+      const e1 = this.findTarget(u, 20 + u.radius, { filter: (x) => Math.hypot(x.pos.x - u.anchor.x, x.pos.z - u.anchor.y) <= 20 + (x.radius || 0) });
+      if (e1) this.engage(u, e1, {});
+      return;
+    }
     const hold = t.type === 'hold' || u.stance === 0;
     const r = hold ? this.attackRangeOf(u, cs) + u.radius + 2 : Math.max(this.attackRangeOf(u, cs), 30);
     const e = this.findTarget(u, r, { leash: !hold, filter: hold ? (x) => this.rangeZone(u, x).zone > 0 : null });
@@ -338,6 +364,7 @@ export class World {
       else { b.obj.position.y -= dt * b.ht * 0.25; if (b.deadT > 5) { this.scene.remove(b.obj); b.removed = true; } }
       return;
     }
+    if (b.parked) return;
     b.updateAnim(dt, this.time);
     b.updateVisual();
     this.damageFx(b, dt);
@@ -420,7 +447,7 @@ export class World {
     for (const p of this.projectiles) this.projectileUpdate(p, dt);
     this.projectiles = this.projectiles.filter((p) => p.alive);
     this.separation(dt);
-    for (const u of this.units) if (u.alive && !u.inside) { u.pos.y = this.groundY(u) + (u.jumpH || 0); u.syncObj(); this.uHash.move(u); }
+    for (const u of this.units) if (u.alive && !u.inside && !u.parked) { u.pos.y = this.groundY(u) + (u.jumpH || 0); u.syncObj(); this.uHash.move(u); }
     if (this.units.some((u) => u.removed)) this.units = this.units.filter((u) => !u.removed);
     if (this.buildings.some((b) => b.removed)) this.buildings = this.buildings.filter((b) => !b.removed);
     if (this.resources.length > 50 && this.resources.some((r) => !r.alive)) this.resources = this.resources.filter((r) => r.alive);
@@ -436,7 +463,7 @@ export class World {
       else if (u.canWalkInto(nav, u.pos.x, z)) u.pos.z = z;
     };
     for (const a of us) {
-      if (!a.alive || a.inside) continue;
+      if (!a.alive || a.inside || a.parked) continue;
       this.uHash.query(a.pos.x, a.pos.z, a.radius + 6, (b) => {
         if (b === a || !b.alive || b.inside || b.id < a.id || !!b.naval !== !!a.naval) return;
         const dx = b.pos.x - a.pos.x, dz = b.pos.z - a.pos.z;
@@ -467,4 +494,4 @@ export class World {
   }
 }
 // install the systems
-Object.assign(World.prototype, Effects, Combat, Economy, Construction, Production, Healing, Moves, BuildingBehaviours, Animals, Transport, Naval);
+Object.assign(World.prototype, Effects, Combat, Economy, Construction, Production, Healing, Moves, BuildingBehaviours, Animals, Transport, Naval, Scripting);

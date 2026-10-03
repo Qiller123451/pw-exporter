@@ -2,21 +2,22 @@
 // tribe icons, victory/defeat pictures) with the original font and colours (UI/VisDef_GAM2.vis: Trebuchet MS bold,
 // button text 224,185,120; title bar text 60,21,0).
 //
-// Screens: title -> skirmish setup -> (game) -> pause menu -> settings / controls -> end of game.
+// Screens: title -> skirmish setup | campaign (mission list) -> (game) -> pause menu -> settings / controls -> end of game.
 // The menu never touches game state directly; it calls the hooks it was given (start, restart, quit, apply).
 
 import { PLAYER_COLORS } from '../game/colors.js';
 import { listMaps, loadMapInfo, drawPreview } from './mappreview.js';
 
 export const DEFAULT_SETTINGS = {
-  showIncome: false, shadows: 'on', grass: 'on', fpsCap: 60, resScale: 1, uiScale: 0, perf: false, edgeScroll: true, autoMenu: true, antialias: true, speed: 1,
+  showIncome: false, mentor: true, shadows: 'on', grass: 'on', fpsCap: 60, resScale: 1, uiScale: 0, perf: false, edgeScroll: true, autoMenu: true, antialias: true, speed: 1,
   sound: true, volMaster: 0.8, volSfx: 0.9, volVoice: 1, volMusic: 0.45,
   skirmish: { me: 'SEAS', ai: 'Aje', aiLevel: 'normal', seed: 1234, warpgate: true, debug: false, meColor: 'blue', aiColor: 'red' },
+  campaign: { mission: 1, difficulty: 1 },      // last mission chosen in the campaign menu; difficulty 0 easy, 1 medium, 2 hard
 };
 export function loadSettings() {
   let s = {};
   try { s = JSON.parse(localStorage.getItem('pwr.settings') || '{}'); } catch (e) { s = {}; }
-  return { ...DEFAULT_SETTINGS, ...s, skirmish: { ...DEFAULT_SETTINGS.skirmish, ...(s.skirmish || {}) } };
+  return { ...DEFAULT_SETTINGS, ...s, skirmish: { ...DEFAULT_SETTINGS.skirmish, ...(s.skirmish || {}) }, campaign: { ...DEFAULT_SETTINGS.campaign, ...(s.campaign || {}) } };
 }
 export function saveSettings(s) { try { localStorage.setItem('pwr.settings', JSON.stringify(s)); } catch (e) { /* private mode */ } }
 
@@ -35,7 +36,7 @@ function el(tag, cls, parent, html) {
 }
 
 export class Menu {
-  // hooks: { start(config), restart(), quit(), exit(), applySettings(s), sound(name) }
+  // hooks: { start(config), startCampaign(config) (from a running game: reloads), restart(), quit(), exit(), applySettings(s), sound(name) }
   constructor(G, hooks = {}) {
     this.G = G;
     this.hooks = hooks;
@@ -67,9 +68,61 @@ export class Menu {
   title() {
     this.inGame = false;
     this.open('ParaWorld', `<h3>ParaWorld</h3><p>Remake</p><div class="btns">
-      ${this.btn('skirmish', 'Skirmish')}${this.btn('settings', 'Options')}${this.btn('help', 'Controls')}${this.btn('exit', 'Exit game')}</div>`, { title: true });
-    this.bind({ skirmish: () => this.skirmish(), settings: () => this.settings(() => this.title()), help: () => this.help(() => this.title()),
+      ${this.btn('campaign', 'Campaign')}${this.btn('skirmish', 'Skirmish')}${this.btn('settings', 'Options')}${this.btn('help', 'Controls')}${this.btn('exit', 'Exit game')}</div>`, { title: true });
+    this.bind({ campaign: () => this.campaign(), skirmish: () => this.skirmish(), settings: () => this.settings(() => this.title()), help: () => this.help(() => this.title()),
       exit: () => this.hooks.exit && this.hooks.exit() });
+  }
+  // Which campaign missions the menu offers. The trigger engine runs every mission, but only those listed here have
+  // been played through and checked (docs/CAMPAIGN_RUNTIME.md "Mission status"); the others are greyed out.
+  // 'ready' = played to the end by the scripted test; 'preview' = starts and plays part of the way. `?allmissions` in the address unlocks everything.
+  static MISSIONS = { 1: 'preview', 11: 'ready' };
+  static missionOpen(id) { return !!Menu.MISSIONS[id] || new URLSearchParams(location.search).has('allmissions'); }
+  // the original single player campaign: the missions of the installation (campaign/index.json: id, title,
+  // description, tribe), a difficulty, start. The config of a mission is { campaign: id, difficulty: 0 | 1 | 2 }.
+  async campaign() {
+    const s = this.G.settings, k = s.campaign;
+    const esc = (t) => String(t || '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' })[c]);
+    this.open('Campaign', `<div class="pwgrp"><b>Mission</b><div class="missions"><div class="mlist" id="c_list"><div>Reading the missions…</div></div><div class="mtext" id="c_text"></div></div></div>
+      <div class="pwgrp"><b>Difficulty</b><div class="set"><span>How strong the opponents are</span><select class="pwsel" id="c_diff">
+        ${['Easy', 'Medium', 'Hard'].map((v, i) => `<option value="${i}" ${+k.difficulty === i ? 'selected' : ''}>${v}</option>`).join('')}</select></div></div>
+      <div class="btns row">${this.btn('back', 'Back', 'small')}${this.btn('start', 'Start mission', 'small')}</div>`, { title: true });
+    const list = this.win.querySelector('#c_list'), text = this.win.querySelector('#c_text');
+    let missions = [], shown = null;
+    const show = (id) => {
+      const m = missions.find((x) => x.id === id) || missions.find((x) => Menu.missionOpen(x.id)) || missions[0];
+      if (!m) return;
+      const open = Menu.missionOpen(m.id);
+      if (open) k.mission = m.id;
+      const start = this.win.querySelector('[data-a="start"]');
+      if (start) start.classList.toggle('off', !open);
+      list.querySelectorAll('div').forEach((d) => d.classList.toggle('on', +d.dataset.id === m.id));
+      const tribe = TRIBE_INFO[m.tribe] ? `You play the ${TRIBE_INFO[m.tribe].name}.` : '';
+      const note = !open ? 'This mission is not adapted for the remake yet.' : Menu.MISSIONS[m.id] === 'preview' ? 'Preview: the first part of this mission plays; it cannot be finished yet.' : '';
+      text.innerHTML = `<b>${esc(m.title || m.name)}</b>${esc(m.description).replace(/\n/g, '<br>')}<small>${tribe}</small>${note ? `<small class="mnote">${note}</small>` : ''}`;
+      shown = m;
+    };
+    this.bind({
+      back: () => this.title(),
+      start: () => {
+        if (!missions.length || !shown || !Menu.missionOpen(shown.id)) return;
+        k.mission = shown.id;
+        k.difficulty = +this.win.querySelector('#c_diff').value;
+        saveSettings(s);
+        this.close();
+        if (this.hooks.start) this.hooks.start({ campaign: k.mission, difficulty: k.difficulty });
+      },
+    });
+    try {
+      const r = await fetch('campaign/index.json');
+      if (!r.ok) throw new Error('not found');
+      missions = await r.json();
+    } catch (e) { missions = []; }
+    if (this.win.querySelector('#c_list') !== list) return;           // the player went elsewhere meanwhile
+    if (!missions.length) { list.innerHTML = '<div>No campaign missions were found in the game installation.</div>'; return; }
+    list.innerHTML = missions.map((m) => `<div data-id="${m.id}"${Menu.missionOpen(m.id) ? '' : ' class="na" title="Not adapted for the remake yet"'}>${esc(m.title || m.name)}</div>`).join('');
+    list.querySelectorAll('div').forEach((d) => { d.onclick = () => { show(+d.dataset.id); this.click(); }; d.ondblclick = () => this.win.querySelector('[data-a="start"]').click(); });
+    show(+k.mission);
+    const on = list.querySelector('.on'); if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest' });
   }
   skirmish() {
     const s = this.G.settings, k = s.skirmish;
@@ -183,10 +236,10 @@ export class Menu {
   main() {
     this.inGame = true;
     this.open('Menu', `<div class="btns">${this.btn('resume', 'Resume game')}${this.btn('settings', 'Options')}${this.btn('help', 'Controls')}
-      ${this.btn('restart', 'Restart skirmish')}${this.btn('quit', 'Quit to main menu')}${this.btn('exit', 'Exit game')}</div>`);
+      ${this.btn('restart', this.G.campaign ? 'Restart mission' : 'Restart skirmish')}${this.btn('quit', 'Quit to main menu')}${this.btn('exit', 'Exit game')}</div>`);
     this.bind({
       resume: () => this.close(), settings: () => this.settings(() => this.main()), help: () => this.help(() => this.main()),
-      restart: () => this.confirm('Restart the skirmish?', () => this.hooks.restart && this.hooks.restart(), () => this.main()),
+      restart: () => this.confirm(this.G.campaign ? 'Restart the mission?' : 'Restart the skirmish?', () => this.hooks.restart && this.hooks.restart(), () => this.main()),
       quit: () => this.confirm('Quit to the main menu?', () => this.hooks.quit && this.hooks.quit(), () => this.main()),
       exit: () => this.confirm('Exit the game?', () => this.hooks.exit && this.hooks.exit(), () => this.main()),
     });
@@ -204,6 +257,7 @@ export class Menu {
         ${chk('s_income', s.showIncome, 'Show resource income per minute')}
         ${chk('s_edge', s.edgeScroll, 'Scroll at screen edges')}
         ${chk('s_automenu', s.autoMenu !== false, 'Open the build / produce menu when selecting workers or buildings')}
+        ${chk('s_mentor', s.mentor !== false, 'Show the mentor\'s hints in campaign missions')}
         <span>Game speed</span><select class="pwsel" id="s_speed">${opt(0.5, s.speed, 'Slow')}${opt(1, s.speed, 'Normal')}${opt(1.5, s.speed, 'Fast')}${opt(2, s.speed, 'Very fast')}</select>
         <span>Interface size</span><select class="pwsel" id="s_ui">${opt(0, s.uiScale, 'Automatic')}${opt(1, s.uiScale, '100 %')}${opt(1.25, s.uiScale, '125 %')}${opt(1.5, s.uiScale, '150 %')}${opt(1.75, s.uiScale, '175 %')}</select>
       </div></div>
@@ -225,7 +279,7 @@ export class Menu {
       <div class="btns">${this.btn('ok', 'OK')}</div>`, { title: !this.inGame });
     const $ = (id) => this.win.querySelector('#' + id);
     const apply = () => {
-      s.showIncome = $('s_income').checked; s.edgeScroll = $('s_edge').checked; s.autoMenu = $('s_automenu').checked; s.speed = +$('s_speed').value; s.uiScale = +$('s_ui').value;
+      s.showIncome = $('s_income').checked; s.edgeScroll = $('s_edge').checked; s.autoMenu = $('s_automenu').checked; s.mentor = $('s_mentor').checked; s.speed = +$('s_speed').value; s.uiScale = +$('s_ui').value;
       s.shadows = $('s_shadows').value; s.grass = $('s_grass').value; s.fpsCap = +$('s_fps').value; s.resScale = +$('s_res').value; s.antialias = $('s_aa').checked; s.perf = $('s_perf').checked;
       s.sound = $('s_sound').checked; s.volMaster = $('s_vm').value / 100; s.volSfx = $('s_vs').value / 100; s.volVoice = $('s_vv').value / 100; s.volMusic = $('s_vmu').value / 100;
       saveSettings(s);
@@ -249,18 +303,42 @@ export class Menu {
       <tr><td>. (period) · Space</td><td>Next idle worker · centre on selection</td></tr>
       <tr><td>R · Del</td><td>Rally point · destroy selected</td></tr>
       <tr><td>Alt (hold)</td><td>Show all health bars</td></tr>
+      <tr><td>L</td><td>Quest log (campaign) · cutscenes: click or Space = next line, Esc = skip</td></tr>
       <tr><td>P · F9 · Esc/F10</td><td>Pause · performance overlay · menu</td></tr>
       </table><div class="btns">${this.btn('back', 'Back')}</div>`, { title: !this.inGame });
     this.bind({ back: () => (back ? back() : this.close()) });
   }
+  // stats: { time, kills, lost, epoch, enemy (skirmish) | mission: { title, text (reason line of a defeat), points (bonus
+  // points, optional), next (index entry | null), difficulty } }
   end(won, stats) {
     this.inGame = true;
+    const m = stats.mission, C = this.G.campaign;
+    const esc = (t) => String(t || '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' })[c]);
+    const tx = (k, d) => (C && C.data && C.data.texts && C.data.texts[k]) || d;
+    let body;
+    if (m) {
+      // a mission: its name, the result (the game's own "_GAOV_" lines), why it was lost, what the quests came to
+      const quests = (C && C.data && C.data.quests || []).filter((q) => q.visible);
+      const key = ['easy', 'medium', 'hard'][m.difficulty] || 'medium', pts = (q) => +((q.bonus || {})[key] || 0);
+      const earned = quests.reduce((a, q) => a + (q.accomplished ? pts(q) : 0), 0), max = quests.reduce((a, q) => a + pts(q), 0);
+      const st = (q) => (q.accomplished ? 'done' : q.unaccomplishable ? 'failed' : 'open');
+      const mark = { done: '✔', failed: '✘', open: '•' };
+      body = `<h3 class="${won ? 'won' : 'lost'}">${esc(won ? tx('_GAOV_Accomplished', 'Mission successful!') : tx('_GAOV_Failed', 'Mission has failed.'))}</h3>
+        <p>${esc(m.title)}</p>${m.text ? `<p class="${won ? 'points' : 'reason'}">${esc(m.text)}</p>` : ''}
+        ${quests.length ? `<div class="endq">${quests.map((q) => `<div class="q ${st(q)}"><i>${mark[st(q)]}</i><span>${esc(q.headline || q.name)}</span><em>${q.accomplished && pts(q) ? '+' + pts(q) : ''}</em></div>`).join('')}</div>` : ''}
+        ${m.points != null || max ? `<p class="points">Bonus points: ${m.points != null ? m.points : earned}${m.points == null && max ? ' of ' + max : ''}</p>` : ''}`;
+    } else {
+      body = `<h3 class="${won ? 'won' : 'lost'}">${won ? 'Victory!' : 'Defeat'}</h3>
+      <p>${won ? `The ${stats.enemy} have been defeated.` : 'Your settlement has fallen.'}</p>`;
+    }
     this.open(won ? 'Victory' : 'Defeat', `<img class="gameover" src="assets/ui/menu/menue__decoration__gameover_${won ? 'victory' : 'defeat'}.png" alt="">
-      <h3 class="${won ? 'won' : 'lost'}">${won ? 'Victory!' : 'Defeat'}</h3>
-      <p>${won ? `The ${stats.enemy} have been defeated.` : 'Your settlement has fallen.'}</p>
+      ${body}
       <table class="keys"><tr><td>Time</td><td>${stats.time}</td></tr><tr><td>Enemies killed</td><td>${stats.kills}</td></tr>
-      <tr><td>Units lost</td><td>${stats.lost}</td></tr><tr><td>Epoch reached</td><td>${stats.epoch}</td></tr></table>
-      <div class="btns row">${this.btn('watch', 'Keep playing', 'small')}${this.btn('restart', 'Play again', 'small')}${this.btn('quit', 'Main menu', 'small')}</div>`);
-    this.bind({ watch: () => this.close(), restart: () => this.hooks.restart && this.hooks.restart(), quit: () => this.hooks.quit && this.hooks.quit() });
+      <tr><td>Units lost</td><td>${stats.lost}</td></tr>${m ? '' : `<tr><td>Epoch reached</td><td>${stats.epoch}</td></tr>`}</table>
+      <div class="btns row">${m && m.next && Menu.missionOpen(m.next.id) ? this.btn("next", "Next mission", "small") : m ? '' : this.btn('watch', 'Keep playing', 'small')}${this.btn('restart', m && !won ? 'Try again' : 'Play again', 'small')}${this.btn('quit', 'Main menu', 'small')}</div>`);
+    this.bind({
+      watch: () => this.close(), restart: () => this.hooks.restart && this.hooks.restart(), quit: () => this.hooks.quit && this.hooks.quit(),
+      next: () => { const s = this.G.settings; s.campaign.mission = m.next.id; saveSettings(s); if (this.hooks.startCampaign) this.hooks.startCampaign({ campaign: m.next.id, difficulty: m.difficulty }); },
+    });
   }
 }

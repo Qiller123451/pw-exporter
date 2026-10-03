@@ -11,8 +11,9 @@ or **FBX, .blend, USD and Alembic** when Blender is installed.
   names (and every other language your game has).
 * **Add-ons** the way the game puts them together: riders and gunners, turrets, build-ups, drawbars and wagons,
   level flags, weapons by unit level, worker tools, carried goods – each one can be switched on and off.
-* **Model parts**: saddles, armour, helmets, wounds, construction stages, damage stages, epoch variants, night
-  lights – and the player colour.
+* **Visibility**: the in-game look as presets (saddles, armour, helmets, wounds, construction stages, damage
+  stages, epoch variants, night lights) and the raw 32 flag bits of the meshes as a filter – plus the player colour.
+* **Mods**: every copy of a model in the game and its mods (Base, BoosterPack, MIRAGE, Wintermod …), chosen per model.
 * **Animations** play on the model, add-ons included (the rider keeps riding while the mount walks).
 * **Exports** keep textures, skeletons and animations (GLB/glTF/FBX), or a posed static mesh (OBJ/STL/PLY/DAE).
 * **Map viewer**: every map of your installation in 3D – terrain with the original ground textures, the sea, every
@@ -99,15 +100,12 @@ attachment point it hangs on (`@Ride`, `@HndR` = right hand, `@we` = weapon moun
 
 ![Ballista tower](screenshots/08_ballista_tower.png)
 
-### Step 4 – Model parts and player colour
+### Step 4 – Mod, player colour
 
-Every model also carries parts that the game switches on and off:
-
-| Object | Toggles |
-|---|---|
-| Animals and vehicles | saddle / harness, armour, helmet, standard, party-colour cloth, wounds |
-| Buildings | construction stage (foundation → finished), condition (intact / damaged / badly damaged), epoch I–V, night lights |
-| Everything | helper meshes (shadow and selection volumes – hidden by default), effect sprites (smoke, dust) |
+**Mod** (in the *Model* section, shown when there is a choice): the same model often exists in several places –
+`all_characters.gsf` of `Data/Base`, `Data/BoosterPack3`, `Data/MIRAGE`, `Data/Wintermod` … Units and buildings start
+with the copy of the official game (BoosterPack1 over Base); the selector switches the model – and its add-ons, where
+the mod has them – to another mod's copy. Textures follow: a mod's own texture folder first, then the official ones.
 
 **Player colour** tints the party-colour parts (banners, cloth, shields) with one of the eight colours of the game.
 The grey swatch shows the untinted texture.
@@ -123,17 +121,32 @@ yellow, the selection volumes in orange), **Normals** (the vertex normals), **Tu
 
 ### Visibility
 
-Under **Model parts** the **Visibility** section shows the model's raw part flags – the bits every mesh of a
-ParaWorld model carries – named as the game's model type (FourCC: Bldg, Anim, Char, Wall, Ress …) defines them:
+![Visibility: flag bits](screenshots/15_visibility_bits.png)
 
-* **Level of detail 0–4**: the game draws simpler versions of a model from farther away. 0 is full detail.
-* One line per flag the model uses, with its bit number and how many parts carry it. A ticked box means parts with
-  that flag are shown now (a dash: some of them). Untick to hide every part with the flag; tick to force them on,
-  even the ones *Model parts* hides (selection volumes, shadow models, construction scaffolds …). Forced lines are
-  highlighted; **Reset** goes back to the game's rules.
+Every mesh of a ParaWorld model has a 32-bit flag field. What a bit means depends on the model type (FourCC: Bldg,
+Anim, Char, Wall, Ress …); bits 0–4 are the levels of detail in every type. The section has two blocks:
 
-*Model parts* is the game's logic (one switch such as "Construction: stage 2" sets several flags at once, the way
-the game does); *Visibility* is the raw flags underneath it. Exports keep what you see in both.
+**In-game look** – presets that apply the game's rules. They decide what is shown as long as no flag bit is ticked.
+
+| Object | Presets |
+|---|---|
+| Everything | level of detail 0–4 (0 = full detail), helper meshes (shadow and selection volumes – hidden by default), effect sprites (smoke, dust) |
+| Animals and vehicles | saddle / harness, armour, helmet, standard, party-colour cloth, wounds |
+| Buildings | construction stage (foundation → finished), condition (intact / damaged / badly damaged), epoch I–V, night lights |
+| Resources | how much is left |
+
+**Flag bits** – all 32 bits as independent checkboxes, named for the model type where the name is known (`bit N`
+otherwise), each with the number of meshes that have it. Tick bits to see **only the meshes that have every ticked
+bit set**: `LOD0` + `Con 0` shows the meshes of construction stage 0 at full detail, bit 4 alone shows what is drawn
+at the lowest level of detail, `SelVol` the selection volume. The line below says how many meshes match and the mask.
+**Clear** unticks everything and returns to the in-game look.
+
+A preset cannot be written as ticked bits: parts that are always visible carry no state bits at all, so the game's
+"finished building" is "meshes with `Con 4` *or without any construction bit*". That is why the presets are a
+block of their own. Exports keep what you see in either case.
+
+**Materials** (below, click to open) lists the materials of the model as the archive stores them: texture,
+MaterialAttributes 1 / 2, how the texture's alpha is used (none / hard / soft), normal and environment map.
 
 ### Step 5 – Animations
 
@@ -168,14 +181,18 @@ are all part of the exported file.
 
 The **All models** tab lists every one of the ~4000 models in every archive – decorations, trees, rocks, ruins,
 effects, campaign buildings, single weapons and tools. Filter by archive and search by file name. Selecting one shows
-it on its own, with its parts, animations and the same export options.
+it on its own, with its parts, animations and the same export options. A row names the mods that have the model;
+the **Mod** selector of the model switches between the copies.
 
 ### Settings
 
 ![Settings](screenshots/07_settings.png)
 
-**⚙** in the top right: the game folder, the language of the unit names (every language your game has), and the
-path to Blender. The language drop-down next to it switches the tool between English and German.
+**⚙** in the top right: the game folder, the language of the unit names (every language your game has), the
+path to Blender, and the **texture quality**. Models name `.tga` textures; the game loads `<name>_(<size>).dds` in
+one of the sizes its `Texture/detailtable.txt` lists for that texture (`All_Trex  dxt5  64 128 256 512`), chosen by
+the game's texture detail setting. *Maximum* (the default) takes the largest listed size, each lower step the next
+smaller one; `-dontchange` textures always use their largest size. The language drop-down next to it switches the tool between English and German.
 
 ## 3. Maps
 
@@ -365,6 +382,10 @@ writers.write(sc, 'out/black_widow', 'glb')
 ```
 
 The format of the GSF files is described in [GSF_FORMAT.md](GSF_FORMAT.md), the maps in [MAP_FORMAT.md](MAP_FORMAT.md).
+
+The mission scripting of a campaign map (triggers, quests, regions, players, dialogue and cutscene texts) can be
+written as one JSON document or as a readable text: `python -m pwexport.campaign <map.ula> --json out.json --text
+out.txt` (all missions: `--install <game folder> --all <dir>`). Format: [CAMPAIGN_FORMAT.md](CAMPAIGN_FORMAT.md).
 `tools/ui_test.py` runs the toolkit headless through a full session (launcher, add-ons, animations, exports, maps)
 and takes the screenshots of this guide.
 

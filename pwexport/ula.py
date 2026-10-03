@@ -16,6 +16,10 @@
                       (Checked on the maps: harbours face the water, gates lie along their walls, plateau cliffs
                       reach into the ground only this way.)
     m.plants          [{'name', 'x', 'y', 'z', 'rot', 'quat'}]   landscape decoration instances (grass, ferns)
+    m.details         per object, aligned with m.objects: index, guid, handle, flags, visible, links, group members,
+                      question mark state (object_details(); used by campaign.py - m.objects itself stays as it is)
+    m.info_tree       the level info's description tree as a tree {'name', 'value', 'children'} (player settings,
+                      variables, AI options of campaign maps live there)
     m.surf            the unpacked SURF data (bytes);  m.chunks  {tag: Chunk}
 
 The format (see docs/MAP_FORMAT.md and the Kaitai Struct descriptions pwexport/data/ksy/ula.ksy, surf.ksy):
@@ -170,7 +174,7 @@ def level_info(b):
     """LInf: key/values, 8 slot numbers, 8 player slots, the 200 x 200 preview picture, the description tree"""
     r = _R(b)
     info = _kvlist(r)
-    res = {'info': info, 'players': [], 'preview': None, 'description': {}}
+    res = {'info': info, 'players': [], 'preview': None, 'description': {}, 'tree': None}
     try:
         slots = [r.i32() for _ in range(8)]
         for i in range(8):
@@ -187,10 +191,12 @@ def level_info(b):
             key = (prefix + '/' + name) if prefix else name
             if value:
                 desc[key] = value
+            node = {'name': name, 'value': value, 'children': []}
             for _ in range(n):
-                tree(key)
+                node['children'].append(tree(key))
+            return node
         if r.o + 12 <= len(b):
-            tree('')
+            res['tree'] = tree('')
         # "Root/Base/LevelName" -> also plain "LevelName" for the first occurrence
         for k, v in list(desc.items()):
             desc.setdefault(k.split('/')[-1], v)
@@ -245,14 +251,14 @@ def plants(b):
     return out
 
 
-def objects(b):
-    """Objs: u32 size + UOF2 tree; one OBJS/obj per placed object"""
+def _objects(b):
+    """Objs: u32 size + UOF2 tree; one OBJS/obj per placed object -> [(object, details)]"""
     if not b or len(b) < 24 or b[4:8] != b'UOF2':
         return []
     root = read_tree(b, 4)
     lst = root.child('OBJS')
     out = []
-    for ob in (lst.children if lst else []):
+    for index, ob in enumerate(lst.children if lst else []):
         if ob.tag != 'obj':
             continue
         cl, base = ob.child('clss'), ob.child('base')
@@ -267,6 +273,20 @@ def objects(b):
         o = {'type': d[:4].decode('latin1'), 'name': name, 'cls': _R(cl.data).s() if cl is not None and cl.data else name,
              'gfx': '', 'x': x, 'y': y, 'z': z, 'rot': float(-2 * np.arctan2(qz, qw)), 'quat': [qx, qy, qz, qw],
              'owner': None if owner == 0xff else owner, 'attr': {}}
+        # what missions need on top (campaign.py): kept apart so that the map exports stay as they are
+        e = {'index': index, 'guid': None, 'handle': None, 'flags': struct.unpack_from('<I', d, 4)[0], 'visible': True,
+             'flags2': 0, 'links': [], 'members': None, 'qmark': None, 'chunks': []}
+        t = d[r.o:]
+        if len(t) >= 25:
+            # guid[16], handle (u16 index, u16 serial - the slot in HMGR), u8 visible (0xff / 0), u32 flags2,
+            # then 17 x { guid[16], u8 kind }: linked objects (a wall piece and its tower, a transport and its build-ups)
+            e['guid'] = _guid_letters(t[:16])
+            e['handle'] = list(struct.unpack_from('<HH', t, 16))
+            e['visible'] = t[20] != 0
+            e['flags2'] = struct.unpack_from('<I', t, 21)[0]
+            for k in range(25, len(t) - 16, 17):
+                if t[k + 16] == 1:
+                    e['links'].append(_guid_letters(t[k:k + 16]))
         data = ob.child('data')
         gobj = data.child('gobj') if data else None
         if gobj is not None:
@@ -280,8 +300,35 @@ def objects(b):
                     o['attr'] = _kvlist(_R(at.data))
                 except (struct.error, IndexError):
                     pass
-        out.append(o)
+        if data is not None:
+            e['chunks'] = [c.tag for c in data.children]
+            g = data.child('GROU')              # a group object: u32 n + n member handles
+            if g is not None and g.data and len(g.data) >= 4:
+                n = struct.unpack_from('<I', g.data, 0)[0]
+                if 4 + 4 * n <= len(g.data):
+                    e['members'] = [list(struct.unpack_from('<HH', g.data, 4 + 4 * i)) for i in range(n)]
+            q = data.child('qmrk')              # a question mark: u32 state (0 = invisible)
+            if q is not None and q.data and len(q.data) >= 4:
+                e['qmark'] = struct.unpack_from('<I', q.data, 0)[0]
+        out.append((o, e))
     return out
+
+
+def _guid_letters(b):
+    """a GUID as the level editor writes it in trigger parameters: 32 letters a..p, one per nibble, low nibble first"""
+    return ''.join(chr(97 + (c & 15)) + chr(97 + (c >> 4)) for c in b)
+
+
+def objects(b):
+    """the placed objects (see the module header)"""
+    return [o for o, _ in _objects(b)]
+
+
+def object_details(b):
+    """per placed object, in the order of objects(): {'index' (position in OBJS), 'guid', 'handle' [index, serial],
+    'flags', 'flags2', 'visible', 'links' [guid], 'members' [[index, serial]] (groups), 'qmark' (question marks),
+    'chunks' (tags of the object's data chunks: 'Hero', 'TOba' ...)} - what campaign.py adds to an object"""
+    return [e for _, e in _objects(b)]
 
 
 class Map:
@@ -298,8 +345,10 @@ class Map:
                     self.chunks.setdefault(ch.tag, ch)
                 collect(ch)
         collect(self.root)
-        li = level_info(self.chunks['LInf'].data) if 'LInf' in self.chunks else {'info': {}, 'players': [], 'preview': None, 'description': {}}
+        li = level_info(self.chunks['LInf'].data) if 'LInf' in self.chunks else {'info': {}, 'players': [], 'preview': None, 'description': {}, 'tree': None}
         self.info, self.players, self.preview, self.description = li['info'], li['players'], li['preview'], li['description']
+        self.info_tree = li.get('tree')         # the description tree unflattened: {'name', 'value', 'children': [...]}
+        self._details = None
         t = terrain(self.chunks['Terr'].data)
         self.w, self.h, self.water = t['w'], t['h'], t['water']
         self.heights, self.mats = t['heights'], t['mats']
@@ -309,6 +358,13 @@ class Map:
         base = os.path.splitext(os.path.basename(path))[0]
         self.name = self.description.get('LevelName') or self.info.get('LevelName') or self.info.get('MapName') or base
         self.max_players = sum(1 for o in self.objects if o['type'] == 'SLOC') or int(self.info.get('MaxPlayers') or 0) or 2
+
+    @property
+    def details(self):
+        """object_details() of the map, aligned with self.objects (read on first use)"""
+        if self._details is None:
+            self._details = object_details(self.chunks['Objs'].data) if 'Objs' in self.chunks else []
+        return self._details
 
     @classmethod
     def load(cls, path):

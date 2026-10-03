@@ -102,7 +102,7 @@ export class Input {
     let best = null, ba = 1e12;
     const pad = 4;
     for (const u of G.world.units) {
-      if (!u.alive || !u.obj || u.inside || !u.obj.visible || (u.owner !== G.me && (!G.fow.visible(u.pos.x, u.pos.z) || G.world.hiddenFrom(u, G.me)))) continue;
+      if (!u.alive || !u.obj || u.inside || !u.obj.visible || u.unselectable || (u.owner !== G.me && (!G.fow.visible(u.pos.x, u.pos.z) || G.world.hiddenFrom(u, G.me)))) continue;
       const r = this.pickRect(u);
       if (!r) continue;
       // tiny rectangles (far zoom) get a minimum click size
@@ -116,7 +116,7 @@ export class Input {
     const g = this.groundPoint(mx, my);
     let bb = null, bbd = 1e12;
     for (const b of G.world.buildings) {
-      if (!b.alive || (b.owner !== G.me && (!G.fow.explored_(b.pos.x, b.pos.z) || G.world.hiddenFrom(b, G.me)))) continue;
+      if (!b.alive || b.parked || b.unselectable || (b.owner !== G.me && (!G.fow.explored_(b.pos.x, b.pos.z) || G.world.hiddenFrom(b, G.me)))) continue;
       if (g && b.surfDist(g.x, g.z) < 0.5) return b.parentGate && b.parentGate.alive ? b.parentGate : b;   // a gate's wing selects the gate
       const r = this.pickRect(b);
       if (r && mx >= r.x0 && mx <= r.x1 && my >= r.y0 && my <= r.y1 && r.area < bbd) { bbd = r.area; bb = b; }
@@ -183,7 +183,7 @@ export class Input {
       const list = [];
       const c = new THREE.Vector3();
       for (const u of G.world.units) {
-        if (!u.alive || u.owner !== G.me || u.inside || u.autonomous) continue;
+        if (!u.alive || u.owner !== G.me || u.inside || u.autonomous || u.parked || u.unselectable) continue;
         const r = this.pickRect(u);
         let sx, sy;
         if (r) { sx = (r.x0 + r.x1) / 2; sy = (r.y0 + r.y1) / 2; } else { c.copy(u.pos); c.y += u.height * 0.4; const s = this.toScreen(c); if (s.z > 1) continue; sx = s.x; sy = s.y; }
@@ -412,7 +412,9 @@ export class Input {
       if (G.world.hostileTo(G.me, t) && G.world.aimTowers(towers, t)) G.overlay.marker(t.pos.x, t.pos.z, 0xff3a2a);
       else { G.hud.message('Choose an enemy for the tower to shoot at', 'bad'); G.feedback.error(); }
     } else if (units.length) {
-      if (mode === 'attack' && t && units[0].isEnemy(t)) { G.world.aimTowers([...G.sel], t); G.order(units, { type: 'attack', target: t }); G.overlay.marker(t.pos.x, t.pos.z, 0xff3a2a); }
+      // the Attack command also takes a neutral player's object (that means war, world.order); never a friend's
+      if (mode === 'attack' && t && t.kind !== 'res' && t.owner && t.owner !== G.me && !units[0].isEnemy(t) && !G.world.attackAllowed(units[0], t)) { G.hud.message(`The ${t.owner.name} are your allies - you cannot attack them`, 'bad'); G.feedback.error(); }
+      else if (mode === 'attack' && t && (units[0].isEnemy(t) || (t.kind !== 'res' && G.world.attackAllowed(units[0], t)))) { G.world.aimTowers([...G.sel], t); G.order(units, { type: 'attack', target: t }); G.overlay.marker(t.pos.x, t.pos.z, 0xff3a2a); }
       else if (g) { this.moveGroup(units, g.x, g.z, mode === 'move' ? 'move' : 'attackmove'); G.overlay.marker(g.x, g.z, mode === 'move' ? 0x7dff6a : 0xff3a2a); }
       G.feedback.ordered(mode === 'move' ? 'move' : mode === 'attack' ? 'attack' : 'amove', units);
     }
@@ -525,6 +527,7 @@ export class Input {
     const G = this.G;
     if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
     this.keys[e.code] = true;
+    if (G.mission && G.mission.key(e)) return;        // campaign: cutscene keys, L = quest log (ui/mission.js)
     if (G.menuOpen) { if (e.code === 'Escape' || e.code === 'F10') G.closeMenu(); return; }
     const units = this.myUnits();
     const digit = /^Digit(\d)$/.exec(e.code);
@@ -596,6 +599,7 @@ export class Input {
   // ------------------------------------------------------------------ per frame
   update(dt) {
     const G = this.G, cam = G.rtscam, k = this.keys, m = this.mouse;
+    if (G.mission && G.mission.cine) { this.hover = null; return; }      // a cutscene: the player has no input (no scrolling)
     const sp = cam.dist * 1.1 * dt;
     let dx = 0, dz = 0;
     if (k.ArrowLeft) dx -= 1;

@@ -28,6 +28,13 @@ function typeRank(u, e) {
   return r === 0 ? 3 : r - 1;
 }
 
+// SNFA (ActionFactory.usl:5520-5592): player.animalsNeutral bit 1 = wild animals do not pick this player's objects
+// (Animal.usl:361), bit 2 = the player's units do not attack wild animals on their own. Whoever was attacked fights back.
+const wildTruce = (u, e) => {
+  if (u.owner && !e.owner) return !!(u.owner.animalsNeutral & 2) && !(u.attackers && u.attackers.has(e));
+  if (!u.owner && e.owner) return !!(e.owner.animalsNeutral & 1) && !(u.attackers && u.attackers.has(e));
+  return false;
+};
 export const Combat = {
   // ------------------------------------------------------------------ ranges (FightingObj.IsInCombatRange / GetAttackRange)
   // distance from u's centre to v's surface
@@ -77,7 +84,8 @@ export const Combat = {
     return Math.max(1, this.attackRangeOf(u, cs) - 2);
   },
   // seconds between attacks (Duration, x1.2 in Lovelace's aura)
-  attackDuration(u, cs) { return (cs ? cs.dur : 2) * (u.st && u.st.aura.slowhand ? 1.2 : 1); },
+  // a computer player's units strike a little faster at difficulty 8 / 9 (FightingObj.GetAICheatModifier)
+  attackDuration(u, cs) { return (cs ? cs.dur : 2) * (u.st && u.st.aura.slowhand ? 1.2 : 1) * (u.owner && u.owner.aiMods ? u.owner.aiMods.weaponTime || 1 : 1); },
 
   // ------------------------------------------------------------------ targets
   canTarget(u, e) {
@@ -99,6 +107,8 @@ export const Combat = {
       if (opts.filter && !opts.filter(e)) return;
       // wild animals: only aggressive ones or those that attacked us
       if (!e.owner && e.def && e.def.aggressive !== 1 && !(u.attackers && u.attackers.has(e)) && !opts.animals) return;
+      if (wildTruce(u, e)) return;                 // missions: a player the wildlife leaves alone / who leaves it alone (SNFA)
+      if (e.isNest && e !== cur) return;           // a nest of a campaign map (campaign/setup.js) is only attacked on an order
       if (isWall(e) && e !== cur && !opts.walls) return;
       // the human player's units don't see through the fog of war
       if (u.owner && u.owner.id === 0 && this.fow && e.kind === 'unit' && !this.fow.visible(e.pos.x, e.pos.z)) return;
@@ -125,7 +135,7 @@ export const Combat = {
   engage(u, target, opts = {}) {
     if (!u.alive || u.inside || !target) return false;
     if (u.task.user && !opts.user && u.task.type !== 'idle' && u.task.type !== 'hold') return false;
-    if (u.stance === 3 && !opts.user) return false;
+    if ((u.stance === 3 || u.stance === -1) && !opts.user) return false;
     if (!u.weapons.long) return false;
     if (u.cannotFight && !u.isWorker && !opts.user) return false;     // transports, hovercraft, carts ... don't pick fights
     if (u.isWorker && !opts.user && !opts.defend && u.task.type !== 'idle') { u.prevTask = u.task; }
@@ -134,6 +144,17 @@ export const Combat = {
     u.repathT = 0;
     if (!opts.user) this.shout(u, target, false, true);
     return true;
+  },
+  // SetAggressionState of the campaign action AIAM and of the computer player (FightingObj.usl:1058, 7094, 8696):
+  // 0 stand ground, 1 defensive (follows an enemy inside a 20 m circle around its post, then returns), 2 aggressive,
+  // -1 passive (never fights). Berserkers ignore it and state 3 (never fights on its own: poisoner) is frozen.
+  setAggro(units, state) {
+    for (const u of units) {
+      if (!u || !u.alive || u.kind !== 'unit' || u.stance === 3 || /berserker/.test(u.name)) continue;
+      u.stance = state;
+      u.guard20 = state === 1;
+      if (u.anchor && (u.task.type === 'idle' || u.task.type === 'hold')) u.anchor.set(u.pos.x, u.pos.z);
+    }
   },
   // ShoutForHelp (FO:6641): own fighters within 1.1 x AlarmRange join (7 s throttle, 3 s when hurt)
   shout(u, enemy, defend, forced) {
@@ -372,7 +393,10 @@ export const Combat = {
       const db = vw && vw.defBonus ? (vw.defBonus[A.cls] || 0) + (vw.defBonus[A.name] || 0) : 0;
       pct = tempDef(V, Math.max(0, (vcs ? vcs.prot : 0) - cs.ap)) + db * vm.rel + (db ? vm.abs : 0);
     } else pct = tempRangedDef(V, Math.max(0, (vcs ? vcs.rprot : 0) - cs.ap));
-    const dmg = raw - raw * clamp(pct * 0.01, 0, 0.99);
+    let dmg = raw - raw * clamp(pct * 0.01, 0, 0.99);
+    // AttackFactor / DefenseFactor of computer players (CAiCheatMgr.UpdateFightFactors; docs/spec/ai.md §3)
+    if (A.owner && A.owner.aiMods) dmg *= A.owner.aiMods.attack || 1;
+    if (V.owner && V.owner.aiMods) dmg *= V.owner.aiMods.defense || 1;
     // the ice spearman freezes its victims for 2.5 s (SetIced)
     if (A.name === 'ninigi_icespearman' && V.kind === 'unit') this.trap(V, 2.5, 'iced');
     const go = () => this.provideDmg(dmg, A, V, !!w.projectile, cs.poison, cs.poisonTicks, w);
@@ -457,7 +481,7 @@ export const Combat = {
     const victims = [];
     const test = (V) => {
       if (!V.alive || V.inside || V === A) return;
-      if (owner && V.owner && owner.isFriend(V.owner)) return;
+      if (owner && V.owner && !owner.isEnemy(V.owner)) return;      // hostile players and ownerless objects only (FO:9443)
       if (!owner && !V.owner) return;
       const d = V.kind === 'building' ? Math.max(0, V.surfDist(center.x, center.z)) : Math.max(0, Math.hypot(V.pos.x - center.x, V.pos.z - center.z) - V.radius);
       if (d >= R) return;

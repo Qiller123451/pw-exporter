@@ -21,6 +21,8 @@ import { HUD } from './ui/hud.js';
 import { Input } from './ui/input.js';
 import { Overlay, Minimap } from './ui/overlay.js';
 import { Menu, loadSettings, saveSettings, TRIBE_INFO } from './ui/menu.js';
+import { Campaign, loadCampaign } from './game/campaign/setup.js';
+import { MissionUI } from './ui/mission.js';
 
 const params = new URLSearchParams(location.search);
 const MANUAL = params.has('manual');
@@ -29,7 +31,7 @@ const BUILD = typeof __BUILD__ !== 'undefined' ? __BUILD__ : 'dev';
 setReportContext(() => {
   const c = G.config || {};
   return [`build ${BUILD}`, `browser ${navigator.userAgent}`, `gpu ${G.gpu || '?'}`,
-    `game: ${c.me || '?'} vs ${c.ai || '?'}, map ${c.map || 'random jungle'}${c.map ? '' : ', seed ' + c.seed}, ` +
+    (c.campaign != null ? `campaign mission ${c.campaign}, difficulty ${c.difficulty}, ` : `game: ${c.me || '?'} vs ${c.ai || '?'}, map ${c.map || 'random jungle'}${c.map ? '' : ', seed ' + c.seed}, `) +
     `time ${G.world ? G.world.time.toFixed(1) + ' s' : '-'}, units ${G.world ? G.world.units.length : '-'}`].join('\n');
 });
 if (!MANUAL) watchGlobalErrors();
@@ -65,6 +67,8 @@ async function loadCore() {
   const [json, tt] = await Promise.all([
     fetch('gamedata.json').then((r) => r.json()), fetch('techtree.json').then((r) => r.json()),
     initAssets('assets/'), initAtlas('assets/ui/'), G.audio.load(),
+    // the computer player's tables (pipeline step "ai"); a data folder without it: the AI uses its built-in fallbacks
+    fetch('ai.json').then((r) => (r.ok ? r.json() : null)).then((j) => { G.aiData = j; }).catch(() => { G.aiData = null; }),
   ]);
   G.data = new Rules(tt, json);
   await preloadAtlasImages();
@@ -194,7 +198,8 @@ async function buildWorld(cfg, S) {
     scene, data: G.data, templates: tpl, height, size: S.size, play: P, wallGrid: S.wallGrid,
     playHalf: Math.min(P.x1 - P.x0, P.z1 - P.z0) / 2, water: S.water, setting: S.setting,
     fx: G.fx, audio: G.audio, props: G.props, foliage: G.foliage, fow: G.fow,
-    rules: { warpgate: cfg.warpgate !== false, warpgateMinutes: cfg.warpgateMinutes || 10 },
+    // campaign missions have no built-in victory: no warp gate rule either (GameOverMgr.usl:95-103, multiplayer only)
+    rules: { warpgate: !G.campaign && cfg.warpgate !== false, warpgateMinutes: cfg.warpgateMinutes || 10 },
   });
   // keep units inside the playable area and out of the water (ships use their own grid, see nav.water)
   const nav = W.nav;
@@ -326,13 +331,18 @@ async function buildWorld(cfg, S) {
   // Start as in the original multiplayer default (StartLocation.usl + Game/misc/DefPresets.txt "_pb_locked"):
   // the tribe's base (fireplace / headquarters / resource collector), three workers, 200 food, 150 wood, 100 stone.
   const D = G.data;
+  const homes = [];
+  if (G.campaign) {
+    // a campaign mission: the players, objects, groups and start locations of the mission data (game/campaign/setup.js)
+    G.me = G.campaign.build(W, S);
+    G.ai = null;                                  // there is no single opponent: W.players, diplomacy per pair
+  } else {
   // party colours: chosen in the skirmish menu (or "none" = untinted models); the minimap uses the dark variant
   const pc = (id, fallback) => { const c = colorById(id); return { color: c ? hex(c.dark) : fallback, partyColor: c ? hex(c.light) : null }; };
   const me = G.me = new Player(0, cfg.me, { ...pc(cfg.meColor, NEUTRAL_UI.me), name: TRIBE_INFO[cfg.me].name, rules: D });
   const ai = G.ai = new Player(1, cfg.ai, { ai: true, ...pc(cfg.aiColor, NEUTRAL_UI.ai), name: TRIBE_INFO[cfg.ai].name, rules: D });
   W.players = [me, ai];
   me.debug = !!cfg.debug;                         // debug mode: free and instant (game/player.js)
-  const homes = [];
   S.bases.forEach(([bx, bz], i) => {
     const p = W.players[i];
     const st = D.start(p.tribe);
@@ -349,6 +359,7 @@ async function buildWorld(cfg, S) {
     });
     W.recomputeCaps(p);
   });
+  }
   const wildAt = (a) => {
     if (a.swim && !W.waterNav) return null;
     const u = W.spawnUnit(a.species, null, a.x, a.z, undefined, Math.random() * 6.28, a.swim ? { swim: true } : {});
@@ -361,10 +372,8 @@ async function buildWorld(cfg, S) {
     if (n.swim && !W.waterNav) continue;
     W.addWildNest({ ...n, members: n.start.map(wildAt).filter(Boolean) });
   }
-  G.aiBrain = new TribeAI(G, ai, me, cfg.aiLevel);
-  // test mode: the computer plays both sides (?aivai)
-  if (params.has('aivai')) G.meBrain = new TribeAI(G, me, ai, cfg.aiLevel);
-  const hq = homes[0];
+  if (G.campaign) G.campaign.wildlifeReady();
+  createBrains(cfg);
 
   // ---------------------------------------------------------------- ground grass (engine/grass.js)
   // density per ground material x the map's material weights; none inside buildings, on blocked cells or cliffs
@@ -390,7 +399,13 @@ async function buildWorld(cfg, S) {
 
   // ---------------------------------------------------------------- camera, UI
   G.rtscam = new RTSCamera(G.camera, height, S.size / 2 - 8);
-  G.rtscam.x = hq.pos.x + 12; G.rtscam.z = hq.pos.z - 10; G.rtscam.yaw = 0;
+  if (G.campaign) {
+    // the camera starts at the human player's start location, looking along the level's default camera angle
+    // (StartLocation.usl:352-361 "start_pos"; the angle's zero direction is a guess, see docs/CAMPAIGN_RUNTIME.md)
+    const sl = G.campaign.startLocations[G.me.id], own = G.homeEntity();
+    G.rtscam.x = sl ? sl.x : own ? own.pos.x : 0; G.rtscam.z = sl ? sl.z : own ? own.pos.z : 0;
+    G.rtscam.yaw = (G.campaign.map.default_camera || 0.785) + Math.PI / 2;
+  } else { const hq = homes[0]; G.rtscam.x = hq.pos.x + 12; G.rtscam.z = hq.pos.z - 10; G.rtscam.yaw = 0; }
   G.rtscam.update(0.016);
   G.overlay = new Overlay(G);
   G.input = new Input(G);
@@ -400,6 +415,35 @@ async function buildWorld(cfg, S) {
   G.hud.perfEl.classList.toggle('hidden', !G.settings.perf);
   updateFow(true);
 }
+
+// The computer players' brains: G.brains = Map<player id, brain>, each updated once per simulation slice.
+// Skirmish: one TribeAI for the opponent (G.aiBrain; with ?aivai a second one plays the human side, G.meBrain).
+function createBrains(cfg) {
+  G.brains = new Map();
+  G.aiBrain = null; G.meBrain = null;
+  if (G.campaign) {
+    // every AI slot of a campaign map sleeps ('ai_Mikrobe') until a trigger wakes it (AIBV); its difficulty is the
+    // map's AI_Difficulty_Easy|Medium|Hard for the chosen campaign difficulty (CampaignMgr.usl:132-139).
+    // Classes a brain will produce must be announced with G.campaign.needClass(cls) before the models load
+    // (or the tribe added to G.campaign.fullTribes), see docs/CAMPAIGN_RUNTIME.md "Models".
+    const C = G.campaign, key = ['easy', 'medium', 'hard'][C.difficulty] || 'medium';
+    const levelName = 'Single ' + String(C.id).padStart(2, '0');
+    for (const pl of C.players) {
+      const d = pl && pl.data;
+      if (!pl || pl === G.me || !d || !/^ai_/.test(d.control || '')) continue;
+      const diff = d.ai_difficulty && d.ai_difficulty[key] != null ? d.ai_difficulty[key] : [1, 4, 8][C.difficulty] ?? 4;
+      G.brains.set(pl.id, new TribeAI(G, pl, { difficulty: diff, behaviour: d.control.slice(3) || 'Mikrobe', mapOptions: (C.data.map && C.data.map.ai_options) || {}, multimap: false, levelName }));
+    }
+    return;
+  }
+  G.aiBrain = new TribeAI(G, G.ai, G.me, cfg.aiLevel);
+  G.brains.set(G.ai.id, G.aiBrain);
+  // test mode: the computer plays both sides (?aivai)
+  if (params.has('aivai')) { G.meBrain = new TribeAI(G, G.me, G.ai, cfg.aiLevel); G.brains.set(G.me.id, G.meBrain); }
+}
+// does the human player see what player p sees? Own things always; in a campaign also those of players who are
+// friends in both directions (shared vision of allies: a guess, the fog of war is the engine's)
+G.sees = (p) => !!p && (p === G.me || (!!G.campaign && G.me.isFriend(p) && p.isFriend(G.me)));
 
 // ---------------------------------------------------------------------------- game API used by the HUD / input
 // actions offered by an entity (tech tree /Actions/<tribe>/.../locations); hidden ones (visibility 0) are left out
@@ -549,18 +593,20 @@ G.selectIdleWorker = () => {
 function updateFow(force) {
   const viewers = [];
   if (G.reveals) G.reveals = G.reveals.filter((r) => r.until > G.world.time);
-  for (const u of G.world.units) if (u.alive && u.owner === G.me) viewers.push([u.pos.x, u.pos.z, u.fow]);
-  for (const b of G.world.buildings) if (b.alive && b.owner === G.me) viewers.push([b.pos.x, b.pos.z, b.built ? b.fow : 12]);
+  const sees = G.sees;
+  for (const u of G.world.units) if (u.alive && !u.parked && sees(u.owner)) viewers.push([u.pos.x, u.pos.z, u.fow]);
+  for (const b of G.world.buildings) if (b.alive && !b.parked && sees(b.owner)) viewers.push([b.pos.x, b.pos.z, b.built ? b.fow : 12]);
   for (const r of G.reveals || []) viewers.push([r.x, r.z, r.r]);        // oracle / fireworks
+  if (G.world.reveals.length) for (const r of G.world.revealsFor(sees)) viewers.push(r);     // missions (world.revealArea)
   G.fow.update(viewers);
   // hide what the player can't see
   for (const u of G.world.units) {
     if (!u.obj) continue;
-    if (u.inside) { u.obj.visible = false; continue; }
-    if (u.owner === G.me) { u.obj.visible = true; continue; }
+    if (u.inside || u.parked) { u.obj.visible = false; continue; }
+    if (sees(u.owner)) { u.obj.visible = true; continue; }
     u.obj.visible = !u.alive ? u.obj.visible && G.fow.visible(u.pos.x, u.pos.z) || u.deadT > 0 && G.fow.explored_(u.pos.x, u.pos.z) : G.fow.visible(u.pos.x, u.pos.z) && !G.world.hiddenFrom(u, G.me);
   }
-  for (const b of G.world.buildings) if (b.owner !== G.me) { const v = G.fow.explored_(b.pos.x, b.pos.z) && !(b.alive && G.world.hiddenFrom(b, G.me)); b.obj.visible = v; if (b.ruin) b.ruin.visible = v; }
+  for (const b of G.world.buildings) if (b.owner !== G.me) { const v = !b.parked && G.fow.explored_(b.pos.x, b.pos.z) && !(b.alive && G.world.hiddenFrom(b, G.me)); b.obj.visible = v; if (b.ruin) b.ruin.visible = v; }
   for (const p of G.world.projectiles) if (p.obj) p.obj.visible = G.fow.visible(p.pos.x, p.pos.z);
 }
 
@@ -597,6 +643,7 @@ function handleEvents() {
   if (G.grass) for (const e of G.world.events) if (e.type === 'ground') G.grass.invalidate(e.x, e.z, e.r);
   G.feedback.handle(G.world.events);
   G.world.events.length = 0;
+  if (G.campaign) G.campaign.evAt = 0;     // its read position in the list (game/campaign/setup.js update): the list starts again
 }
 
 let endT = 0;
@@ -604,7 +651,9 @@ let endT = 0;
 // the warp gate countdown (systems/buildings.js) ends the game directly
 function checkEnd(dt) {
   endT -= dt;
-  if (endT > 0 || G.over) return;
+  // a campaign mission ends only when its triggers say so (G.endMission): no built-in victory or defeat
+  // (GameOverMgr.usl:95-103 enables the rule for multiplayer maps only)
+  if (endT > 0 || G.over || G.campaign) return;
   endT = 1;
   const W = G.world;
   for (const p of W.players) {
@@ -627,8 +676,9 @@ function simulate(dt) {
   while (left > 1e-4) {
     const s = Math.min(0.05, left);
     W.update(s);
-    G.aiBrain.update(s);
-    if (G.meBrain) G.meBrain.update(s);
+    for (const b of G.brains.values()) b.update(s);
+    if (G.campaign) G.campaign.update(s);
+    if (G.mission) G.mission.tick(s);
     left -= s;
   }
   handleEvents();
@@ -650,6 +700,7 @@ const DRAW_STEPS = [
   ['overlay', (dt) => G.overlay.update(dt)],
   ['hud', (dt) => G.hud.update(dt)],
   ['minimap', (dt) => G.minimap.update(dt)],
+  ['mission', (dt) => { if (G.mission) G.mission.update(dt); }],
 ];
 function draw(dt, now) {
   for (const [name, fn] of DRAW_STEPS) { try { fn(dt); } catch (e) { loopError(name, e); } }
@@ -683,11 +734,14 @@ function frame(now) {
 // test harness (headless screenshots): ?manual
 G.step = (n = 1, dt = 0.05) => { for (let i = 0; i < n; i++) simulate(dt); };
 G.renderOnce = () => { draw(0.016, performance.now()); };
+G.updateFow = () => updateFow(true);      // the mission UI refreshes the fog when a cutscene starts (the game stands still then)
 
 // ---------------------------------------------------------------------------- start-up
 // ?manual / ?quick start straight into a skirmish (tests); ?tribe=Hu&enemy=Ninigi pick the tribes.
 // "Restart" and "Play again" reload the page with the skirmish stored in sessionStorage.
 function quickConfig() {
+  // ?campaign=<mission 0-16>[&difficulty=0|1|2]: a campaign mission
+  if (params.has('campaign')) return { campaign: +params.get('campaign'), difficulty: params.has('difficulty') ? +params.get('difficulty') : 1, debug: params.has('debug') && params.get('debug') !== '0' };
   const k = { ...G.settings.skirmish };
   if (params.has('tribe')) k.me = params.get('tribe');
   if (params.has('enemy')) k.ai = params.get('enemy');
@@ -744,15 +798,29 @@ async function startGame(cfg) {
     G.config = cfg;
     loadEl.classList.remove('done');
     loadEl.style.display = '';
-    const S = await mapSource(cfg);
-    await loadModels([cfg.me, cfg.ai], mapModels(S));
+    let S;
+    if (cfg.campaign != null) {
+      // a campaign mission (game/campaign/setup.js): its map's landscape + the world of the mission data
+      progress(0.03, 'Reading the mission…');
+      const C = G.campaign = new Campaign(G, await loadCampaign(cfg.campaign), cfg).plan(G.data, Assets.manifest.models);
+      S = await mapSource({ map: C.entry.map, skipObjects: C.skip });
+      const need = mapModels(S);
+      for (const m of C.models()) need.add(m);
+      await loadModels(C.fullTribes, need);
+    } else {
+      G.campaign = null;
+      S = await mapSource(cfg);
+      await loadModels([cfg.me, cfg.ai], mapModels(S));
+    }
     await buildWorld(cfg, S);
+    if (G.campaign) G.mission = new MissionUI(G);
     progress(1, 'Ready');
     loadEl.classList.add('done');
     setTimeout(() => { loadEl.style.display = 'none'; }, 600);
     G.menu.inGame = true;
-    G.hud.message(`Build up your settlement and defeat the ${G.ai.name}.`, 'good');
-    G.audio.playMusic('background', cfg.me);
+    if (G.campaign) { if (!G.mission || G.mission.manual) G.hud.message(G.campaign.map.title || G.campaign.map.name, 'good'); }     // else: the title card (ui/mission.js)
+    else G.hud.message(`Build up your settlement and defeat the ${G.ai.name}.`, 'good');
+    G.audio.playMusic('background', G.me.tribe || cfg.me);
     if (!MANUAL) requestAnimationFrame(frame);
     G.ready = true;
   } catch (e) {
@@ -762,6 +830,21 @@ async function startGame(cfg) {
     reportError('start-up', e);
   }
 }
+// The end of a campaign mission, called by the trigger engine (QUIT / SQNZ quit = won, GAOV = lost):
+// info = { text (the reason line, already resolved), delay (seconds before the end screen, default 1.5), points (bonus points, optional) }
+G.endMission = (won, info = {}) => {
+  if (G.over) return;
+  G.over = true;
+  const W = G.world, t = Math.floor(W.time), C = G.campaign;
+  G.audio.playMusic(won ? 'victory' : 'defeat');
+  const show = () => G.menu.end(!!won, {
+    time: `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`, kills: G.me.kills, lost: G.me.lost, epoch: EPOCH[G.me.epoch()],
+    mission: C ? { title: C.map.title || C.map.name, text: info.text || '', next: won && C.next() ? C.next() : null, difficulty: C.difficulty, points: info.points } : null,
+    text: info.text || '',
+  });
+  G.endInfo = { won: !!won, text: info.text || '', points: info.points };
+  if (MANUAL || info.delay === 0) show(); else setTimeout(show, (info.delay == null ? 1.5 : info.delay) * 1000);
+};
 // "Exit game": silence everything, stop the local server (server.ps1 /__quit) and close the window.
 // Browsers only let a page close a window it opened itself / an app window; otherwise a closing screen stays.
 function exitGame() {
@@ -777,6 +860,8 @@ async function boot() {
     await loadCore();
     G.menu = new Menu(G, {
       start: (cfg) => startGame(cfg),
+      // "Next mission": the page reloads into the given mission like a restart
+      startCampaign: (cfg) => { try { sessionStorage.setItem('pwr.autostart', JSON.stringify(cfg)); } catch (e) { /* ignore */ } location.reload(); },
       restart: () => { try { sessionStorage.setItem('pwr.autostart', JSON.stringify(G.config)); } catch (e) { /* ignore */ } location.reload(); },
       quit: () => { try { sessionStorage.removeItem('pwr.autostart'); } catch (e) { /* ignore */ } location.reload(); },
       exit: exitGame,

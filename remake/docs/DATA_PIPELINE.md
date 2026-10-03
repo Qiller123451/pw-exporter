@@ -2,10 +2,17 @@
 
 Everything the remake shows or plays comes from the player's own game folder (`Data/Base`, `Data/BoosterPack1`).
 **No game file is part of the toolkit or its repository.** The first time the remake is started from the launcher,
-`remake/pipeline` converts what the game needs (about 5 minutes on a desktop PC, once); the result lives in the
-toolkit's data folder (`%APPDATA%\ParaWorldToolkit\remake\<installation id>\`, Linux/macOS
-`~/.config/paraworld-toolkit/remake/...`) and is rebuilt only when the installation or the pipeline changes
-(`pipeline.ASSET_VERSION`, a signature of the archives and the tech tree).
+`remake/pipeline` converts what the game needs (about 5 minutes on a desktop PC); the result lives in the toolkit's
+data folder (`%APPDATA%\ParaWorldToolkit\remake\<installation id>\`, Linux/macOS
+`~/.config/paraworld-toolkit/remake/...`).
+
+**Builds are incremental.** `build.json` keeps a fingerprint per step (`pipeline/stamps.py`): the step's code (its
+module and every toolkit module it imports, plus the data files they name) and the names, sizes and times of the game
+folders it reads (`pipeline.STEPS`). A step runs again only when its fingerprint changed, a step it builds on ran
+again (assets ← rules, models; sounds ← assets) or its output is missing. The converted models stay in `_conv`
+between builds (`_conv/stamps.json` per archive: only changed archives are converted again; deleting the folder is
+safe). The launcher's **Prepare** button builds what is out of date, ↻ builds everything; on the command line
+`--force`. `pipeline.ASSET_VERSION` is only bumped to force a full rebuild everywhere.
 
 **The game-file readers live in `pwexport`** (the Model & Map Exporter, see docs/EXPORTER.md of the toolkit): the GSF
 converter (`gsf.py`), the tech tree / settings parser (`tree.py`), the texts (`texts.py`), the composites table of
@@ -25,6 +32,7 @@ UI/menue/**                                      ──► menu     build_menu.p
 Cursors/*.cur                                    ──► cursors  build_cursors.py   ──► assets/ui/cur/*.png, hotspots.json
 Texture/Scape/<Setting>/**                       ──► terrain  build_terrain.py   ──► assets/terrain/**
 Scripts/Server/init/*.txt                        ──► sounds   build_sounds.py    ──► assets/sounds.json
+Scripts/Ai/**, _AI_ObjectData.txt, 4 Server .usl ──► ai       build_ai.py        ──► ai.json
 Audio/Sound/**/*.wav, Audio/Music/*.mp3, Maps/** ──► read straight from the game folder by the server
 ```
 
@@ -32,7 +40,7 @@ Run it by hand (all steps, or some):
 
 ```
 python -m remake.pipeline "C:\Games\ParaWorld" "C:\temp\remake-data"            # everything
-python -m remake.pipeline "C:\Games\ParaWorld" "C:\temp\remake-data" rules assets # some steps (--keep-conv keeps _conv)
+python -m remake.pipeline "C:\Games\ParaWorld" "C:\temp\remake-data" rules assets # exactly these steps (--force: all)
 python remake/devserver.py --game "C:\Games\ParaWorld" --data "C:\temp\remake-data"   # play it on :8411
 ```
 
@@ -49,6 +57,13 @@ Every step module also runs alone (`python remake/pipeline/build_ui.py <Data fol
 | `assets/snd/<path>` | `Data/<mod>/Audio/Sound/<path>` (most are IMA ADPCM wavs: `src/engine/audio.js decodeWav` decodes them – bit-exact with ffmpeg – since browsers can't) |
 | `assets/music/<file>` | `Data/<mod>/Audio/Music/<file>` |
 | `maps/index.json`, `maps/<pack>/<path>` | every `Data/<pack>/Maps/**/*.ula` |
+
+Campaign missions are not part of the build: `campaign/index.json` (the missions in playing order with their
+localised titles and descriptions - only each map's level info is read, a quarter of a second for all 17) and
+`campaign/<pack>/<rel>.ula.json` (one mission's data, `pwexport.campaign`, docs/CAMPAIGN_FORMAT.md §10) are made on
+first request by `toolkit/remake.py` (`campaign_file`, `campaign_index`) and cached in
+`<built data>/campaign/pw-campaign_1/<language>/`. A mission file is rebuilt when the map or the exporter module is
+newer than the cached file; the index after an hour.
 
 ## 1. Models (GSF → glTF)
 
@@ -107,6 +122,15 @@ source, walk speeds, walk set (`walk`), footprint, sound events, seamless walk l
 
 * `sounddb.py` parses the sound configuration syntax (with `name = 'base' {overrides}` inheritance);
   `build_sounds.py` writes the event table with the wav paths of the installation.
+* `build_ai.py` (step `ai`, no dependencies) reads the computer player's tables out of the AI scripts and settings:
+  behaviours, the difficulty levels 0-9 and their handicaps, build orders, attack plans, army tables, unit mixes,
+  level caps ... → `ai.json` (keys: spec/ai.md §12). The script tables are code (`if tribe == ... AddRequest(...)`),
+  so the step has a small reader for if / elseif chains with literal arguments instead of typed-in numbers; mods
+  and other installations give their own values. Inputs: `Scripts/Ai`, `Scripts/Server/settings/Techtree/
+  _AI_ObjectData.txt`, `Scripts/Server/misc/Player.usl`, `RequirementsMgr.usl`, `classes/task/Action.usl`,
+  `classes/FightingObj/FightingObj.usl` (official mods). A data folder built before the step existed gets its
+  `ai.json` on first request (`toolkit/remake.py`), and the game plays without the file on built-in fallbacks.
+  Alone: `python -m remake.pipeline.build_ai <Data folder> <output folder>`.
 * `build_ui.py` converts the HUD textures and the icon atlas; `build_menu.py` the menu art; `build_cursors.py` the
   cursors (ICO containers with an AND mask).
 * `build_terrain.py`: the 8 ground materials of every setting from `Texture/Scape/<Setting>/ScapeTexture<Q>.dat` +

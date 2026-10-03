@@ -96,7 +96,7 @@ export const MOVES = {
   // Resurrect (Resurrect.usl): walk to a spirit, pray, and the unit comes back at its level if the pyramid has room
   Resurrect: { target: 'spirit', range: 20, run(W, u, s) {
     if (!s || s.kind !== 'spirit' || !s.alive || s.owner !== u.owner || s.busy) return false;
-    if (u.owner.slotFree(s.level, W.data.pyramid)) return false;
+    if (u.owner.slotFree(s.level, W.pyramidFor(u.owner))) return false;
     s.busy = true;
     u.owner.queuedAtLevel[s.level - 1]++; u.owner.queuedUnits++;
     u.busyAnim = true; u.anim.play(u.anim.pick('praying_wall', 'heal_0') || u.idleAnim);

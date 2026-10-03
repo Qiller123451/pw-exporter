@@ -249,7 +249,7 @@ function renderList() {
     for (const m of list.slice(0, 2000)) {
       const li = el('li', { class: cur.raw && cur.raw.name === m.name && cur.raw.archive === m.archive ? 'on' : '', onclick: () => selectRaw(m) },
         el('span', { class: 'dot t-none' }),
-        el('div', { class: 'nm' }, el('b', { text: m.name }), el('small', { text: m.archive + (m.mod !== 'Base' ? ' · ' + m.mod : '') + (m.anims ? ` · ${m.anims} anim.` : '') })),
+        el('div', { class: 'nm' }, el('b', { text: m.name }), el('small', { text: m.archive + (m.mods && m.mods.length > 1 ? ' · ' + m.mods.join(', ') : m.mod !== 'Base' ? ' · ' + m.mod : '') + (m.anims ? ` · ${m.anims} anim.` : '') })),
         el('span', { class: 'badge', text: m.fourcc }));
       ul.append(li);
     }
@@ -259,7 +259,7 @@ function renderList() {
 // ------------------------------------------------------------------ selection
 function selectEntry(e) {
   leaveMap();
-  cur.entry = e; cur.raw = null; cur.modelIdx = 0; cur.level = 1; cur.anim = null; cur.partAnim = {}; cur.state = null;
+  cur.entry = e; cur.raw = null; cur.mod = null; cur.modelIdx = 0; cur.level = 1; cur.anim = null; cur.partAnim = {}; cur.state = null;
   cur.addons = new Map(e.addons.map((a) => [a.id, { on: a.default, variant: null }]));
   cur.exp.name = e.id;
   renderList();
@@ -267,30 +267,33 @@ function selectEntry(e) {
 }
 function selectRaw(m) {
   leaveMap();
-  cur.raw = m; cur.entry = null; cur.anim = null; cur.partAnim = {}; cur.state = null; cur.addons = new Map();
+  cur.raw = m; cur.entry = null; cur.mod = null; cur.anim = null; cur.partAnim = {}; cur.state = null; cur.addons = new Map();
   cur.exp.name = m.name;
   renderList();
   refresh(false);
 }
 
-async function info(name, archive) {
-  const k = name + '|' + (archive || '');
-  if (!modelInfo.has(k)) modelInfo.set(k, api.get('/api/model?name=' + encodeURIComponent(name) + (archive ? '&archive=' + encodeURIComponent(archive) : '')));
+async function info(name, archive, mod) {
+  const k = name + '|' + (archive || '') + '|' + (mod || '');
+  if (!modelInfo.has(k)) modelInfo.set(k, api.get('/api/model?name=' + encodeURIComponent(name) + (archive ? '&archive=' + encodeURIComponent(archive) : '') + (mod ? '&mod=' + encodeURIComponent(mod) : '')));
   return modelInfo.get(k);
 }
 
 // the parts to show: main model + active add-ons, each {model, archive, parent, link, anim, addon}
 function wantedParts() {
-  if (cur.raw) return [{ model: cur.raw.name, archive: cur.raw.archive, parent: null, link: null }];
+  // cur.mod = the copy chosen in the "Mod" selector ({mod, archive}) or null = the default copy. Add-ons follow the
+  // mod where it has them (the server falls back to the default copy).
+  const M = cur.mod;
+  if (cur.raw) return [{ model: cur.raw.name, archive: M ? M.archive : cur.raw.archive, mod: M ? M.mod : null, parent: null, link: null }];
   const e = cur.entry;
   const main = e.models[Math.min(cur.modelIdx, e.models.length - 1)];
-  const out = [{ model: main.gfx, parent: null, link: null }];
+  const out = [{ model: main.gfx, archive: M ? M.archive : null, mod: M ? M.mod : null, parent: null, link: null }];
   const placed = new Map();
   for (const a of e.addons) {
     const st = cur.addons.get(a.id);
     if (!st || !st.on) continue;
     if (a.pi >= 0 && !placed.has(a.pi)) continue;
-    out.push({ model: addonGfx(a, st), parent: a.pi >= 0 ? placed.get(a.pi) : 0, link: a.link, addon: a });
+    out.push({ model: addonGfx(a, st), mod: M ? M.mod : null, parent: a.pi >= 0 ? placed.get(a.pi) : 0, link: a.link, addon: a });
     placed.set(a.id, out.length - 1);
   }
   return out;
@@ -309,18 +312,19 @@ async function refresh(keepCamera = true) {
   const parts = wantedParts();
   $('#busy').classList.remove('hidden'); $('#busy-text').textContent = S.converting;
   let infos;
-  try { infos = await Promise.all(parts.map((p) => info(p.model, p.archive))); } catch (err) {
+  try { infos = await Promise.all(parts.map((p) => info(p.model, p.archive, p.mod))); } catch (err) {
     $('#busy').classList.add('hidden'); toast(String(err.message || err)); return;
   }
   if (my !== refreshing) return;
   parts.forEach((p, i) => { p.info = infos[i]; p.url = infos[i].url; });
   // keep the state of the main model's parts while only add-ons change
-  const keepState = cur.state && cur.stateFor === parts[0].model;
+  const mainKey = parts[0].model + '|' + (parts[0].mod || '');
+  const keepState = cur.state && cur.stateFor === mainKey;
   await viewer.show(parts.map((p, i) => ({ url: p.url, parent: p.parent, link: p.link, state: i === 0 && keepState ? cur.state : null })), keepCamera && cur.lastMain === parts[0].model);
   $('#busy').classList.add('hidden');
   cur.lastMain = parts[0].model;
   cur.parts = parts;
-  if (!keepState) { cur.state = viewer.parts[0].state; cur.stateFor = parts[0].model; }
+  if (!keepState) { cur.state = viewer.parts[0].state; cur.stateFor = mainKey; }
   if (cur.party) viewer.setParty(cur.party.map((x) => x / 255));
   // animations: keep the current one if the model has it
   const names = infos[0].anims.map((a) => a.name);
@@ -358,15 +362,34 @@ function renderDetails() {
     if (e.desc) head.append(el('p', { text: e.desc.replace(/\n\s*\n/g, '\n') }));
   } else if (cur.raw) {
     head.append(el('h2', { text: cur.raw.name }));
-    head.append(el('div', { class: 'sub', text: `${cur.raw.archive}.gsf · ${cur.raw.mod} · ${cur.raw.fourcc}` }));
+    head.append(el('div', { class: 'sub', text: `${inf ? inf.archive : cur.raw.archive}.gsf · ${inf ? inf.mod : cur.raw.mod} · ${inf ? inf.fourcc : cur.raw.fourcc}` }));
   }
-  renderModelSect(); renderAddons(); renderParts(); renderAnims(); renderExport();
+  renderModelSect(); renderAddons(); renderParts(); renderMaterials(); renderAnims(); renderExport();
 }
 
+// "Mod": which copy of the model is shown, when the game and its mods have several (the same archive name in
+// Data/Base, Data/BoosterPack3, Data/MIRAGE ... or another archive of a mod). The default is the official game's.
+function modRow() {
+  const inf = cur.parts && cur.parts[0].info;
+  const copies = (inf && inf.copies) || [];
+  if (copies.length < 2) return null;
+  const sel = el('select', { id: 'mod-sel', title: S.modTip, onchange: (ev) => {
+    const c = copies[+ev.target.value];
+    cur.mod = c.default ? null : { mod: c.mod, archive: c.archive };
+    refresh();
+  } });
+  const same = copies.every((c) => c.archive === copies[0].archive);
+  copies.forEach((c, i) => sel.append(el('option', { value: i, selected: c.mod === inf.mod && c.archive === inf.archive }, c.mod + (same ? '' : ` · ${c.archive}.gsf`))));
+  return el('div', { class: 'row' }, el('label', { text: S.mod }), sel);
+}
 function renderModelSect() {
   const s = $('#s-model'); s.innerHTML = '';
   const e = cur.entry;
-  if (!e) return;
+  if (!e) {
+    const row = cur.raw && modRow();
+    if (row) s.append(el('h3', { text: S.model }), row);
+    return;
+  }
   s.append(el('h3', { text: S.model }));
   if (e.models.length > 1) {
     const sel = el('select', { onchange: (ev) => {
@@ -392,6 +415,8 @@ function renderModelSect() {
     for (let l = 1; l <= 5; l++) lv.append(el('option', { value: l, selected: l === cur.level }, String(l)));
     s.append(el('div', { class: 'row' }, el('label', { text: S.level }), lv));
   }
+  const row = modRow();
+  if (row) s.append(row);
 }
 function modelLabel(m, i) {
   const lv = /level (\d)/.exec(m.label || '');
@@ -438,13 +463,41 @@ function renderAddons() {
   }
 }
 
+// Player colour (its own section: it is a material setting, not a part flag)
 function renderParts() {
   const s = $('#s-parts'); s.innerHTML = '';
   const vp = viewer.parts[0];
-  if (!vp) return;
+  if (!vp || cur.map) return;
+  const sw = el('div', { class: 'swatches' });
+  sw.append(el('button', { class: 'none' + (!cur.party ? ' on' : ''), title: S.none, onclick: () => { cur.party = null; viewer.setParty(null); renderParts(); } }));
+  for (const c of PARTY) sw.append(el('button', { class: cur.party === c ? 'on' : '', style: `background:rgb(${c})`, onclick: () => { cur.party = c; viewer.setParty(c.map((x) => x / 255)); renderParts(); } }));
+  s.append(el('h3', { text: S.party }), sw);
+  renderVis();
+}
+
+// Visibility. Every mesh chunk of a model has a 32-bit flag field; what the bits mean depends on the model type
+// (FourCC, parts.js FLAGS). Two blocks:
+//  * "In-game look": presets that follow the game's rules (epoch, construction stage, condition, equipment, level of
+//    detail). They decide what shows while no flag bit is ticked.
+//  * "Flag bits": all 32 bits as independent checkboxes. With bits ticked, a chunk shows exactly when it has every
+//    ticked bit set (parts.js apply).
+function renderVis() {
+  const s = $('#s-vis'); s.innerHTML = '';
+  const vp = viewer.parts[0];
+  if (!vp || cur.map) return;
   const inf = vp.info, st = vp.state;
+  st.filter = st.filter || {};
   const upd = () => { viewer.applyState(0); cur.state = st; renderVis(); };
+  const mask = P.filterMask(st);
+  s.append(el('h3', { text: S.visibility }));
+
+  // ---- in-game look (presets)
   const body = [];
+  if (inf.lods.length > 1) {
+    const row = el('div', { class: 'lods' });
+    for (const k of inf.lods) row.append(el('button', { class: (st.lod || 0) === k ? 'on' : '', text: String(k), title: S.lodTip(k), onclick: () => { st.lod = k; upd(); } }));
+    body.push(el('div', { class: 'row' }, el('label', { text: S.lod }), row));
+  }
   if (inf.dynamic) {
     for (const b of inf.flags.filter((x) => x < 20)) {
       const label = (vp.fourcc === 'Anim' && S.flags[b]) || P.flagName(vp.fourcc, b) || S.flags[b] || `Flag ${b}`;
@@ -477,48 +530,43 @@ function renderParts() {
   }
   if (inf.fx) body.push(el('label', { class: 'chk' }, el('input', { type: 'checkbox', checked: st.fx, onchange: (ev) => { st.fx = ev.target.checked; upd(); } }), el('span', { text: S.fx })));
   if (inf.helpers) body.push(el('label', { class: 'chk' }, el('input', { type: 'checkbox', checked: st.helpers, onchange: (ev) => { st.helpers = ev.target.checked; upd(); } }), el('span', { text: S.helpers })));
-  // player colour
-  const sw = el('div', { class: 'swatches' });
-  sw.append(el('button', { class: 'none' + (!cur.party ? ' on' : ''), title: S.none, onclick: () => { cur.party = null; viewer.setParty(null); renderParts(); } }));
-  for (const c of PARTY) sw.append(el('button', { class: cur.party === c ? 'on' : '', style: `background:rgb(${c})`, onclick: () => { cur.party = c; viewer.setParty(c.map((x) => x / 255)); renderParts(); } }));
-  body.push(el('div', { class: 'row' }, el('label', { text: S.party }), sw));
-  s.append(el('h3', { text: S.parts }), ...body);
-  renderVis();
+  if (body.length) {
+    const box = el('div', { class: 'preset' + (mask ? ' off' : ''), id: 'vis-preset' }, el('h4', { text: S.presetLook }), ...body);
+    if (mask) box.append(el('div', { class: 'note', text: S.presetOff }));
+    s.append(box);
+  }
+
+  // ---- flag bits: all 32, independent
+  const head = el('h4', {}, el('span', { text: S.flagBits }));
+  if (mask) head.append(el('button', { class: 'link', id: 'vis-clear', text: S.clearBits, onclick: () => { st.filter = {}; upd(); } }));
+  const grid = el('div', { class: 'bits', id: 'vis-bits' });
+  for (let b = 0; b < 32; b++) {
+    const n = inf.all[b], name = P.flagName(vp.fourcc, b);
+    grid.append(el('label', { class: 'chk bit' + (n ? '' : ' none') + (name ? '' : ' unk'), title: S.bitTip(b, n, inf.chunks, name) },
+      el('input', { type: 'checkbox', 'data-bit': b, checked: !!st.filter[b], onchange: (ev) => { if (ev.target.checked) st.filter[b] = true; else delete st.filter[b]; upd(); } }),
+      el('span', { text: name || `bit ${b}` }), el('small', { text: (name ? b + ' · ' : '') + n })));
+  }
+  let shown = 0;
+  for (const n of P.flagged(vp.obj)) if (n.visible) shown++;
+  s.append(head, grid, el('div', { class: 'note', id: 'vis-note', text: mask ? S.bitsOn(shown, inf.chunks, '0x' + mask.toString(16).padStart(8, '0')) : S.bitsNote(vp.fourcc || '?') }));
 }
 
-// Visibility: the raw attribute bits of the main model's mesh chunks, named per model type (parts.js FLAGS), and the
-// level of detail. Overrides on top of Model Parts: unticking hides every chunk with that bit, ticking shows them.
-function renderVis() {
-  const s = $('#s-vis'); s.innerHTML = '';
+// Materials of the main model as the archive stores them: texture, MaterialAttributes 1 / 2 and how the alpha is used
+function renderMaterials() {
+  const s = $('#s-mats'); s.innerHTML = '';
   const vp = viewer.parts[0];
   if (!vp || cur.map) return;
-  const inf = vp.info, st = vp.state;
-  st.vis = st.vis || {};
-  const upd = () => { viewer.applyState(0); cur.state = st; renderVis(); };
-  const head = el('h3', {}, el('span', { text: S.visibility }));
-  if (Object.keys(st.vis).length || st.lod) head.append(el('button', { class: 'link', text: S.reset, onclick: () => { st.vis = {}; st.lod = 0; upd(); } }));
-  s.append(head);
-  if (inf.lods.length > 1) {
-    const row = el('div', { class: 'lods' });
-    for (const k of inf.lods) row.append(el('button', { class: (st.lod || 0) === k ? 'on' : '', text: String(k), title: S.lodTip(k), onclick: () => { st.lod = k; upd(); } }));
-    s.append(el('div', { class: 'row' }, el('label', { text: S.lod }), row));
+  const seen = new Map();
+  vp.obj.traverse((o) => { if (o.isMesh) for (const m of [].concat(o.material)) { const u = m.userData || {}; if (u.gsf_flags && !seen.has(m.name + u.gsf_flags)) seen.set(m.name + u.gsf_flags, { m, u }); } });
+  if (!seen.size) return;
+  const box = el('details', { class: 'mats' }, el('summary', {}, el('h3', {}, S.materials, el('small', { text: String(seen.size) }))));
+  for (const { m, u } of seen.values()) {
+    const [a1, a2] = String(u.gsf_flags).split('/');
+    const alpha = m.alphaTest > 0 ? 'hard alpha' : m.transparent ? 'soft alpha' : 'no alpha';
+    const extra = [parseInt(a1, 16) & 0x10 && u.gsf_normal ? 'nm ' + u.gsf_normal : '', u.gsf_env ? 'env ' + u.gsf_env : '', parseInt(a1, 16) & 0x1000 ? 'player colour' : ''].filter(Boolean);
+    box.append(el('div', { class: 'mat' }, el('b', { text: u.gsf_texture || m.name }), el('code', { text: `${a1} / ${a2}` }), el('small', { text: [alpha, ...extra].join(' · ') })));
   }
-  // which chunks with each bit are shown now
-  const shown = new Map();
-  for (const n of P.flagged(vp.obj)) {
-    const a = n.userData.attr >>> 0;
-    for (const [b] of inf.bits) if ((a >>> b) & 1) { const e = shown.get(b) || [0, 0]; e[0]++; if (n.visible) e[1]++; shown.set(b, e); }
-  }
-  for (const [b, count] of inf.bits) {
-    const [tot, on] = shown.get(b) || [count, 0];
-    const forced = st.vis[b];
-    const cb = el('input', { type: 'checkbox', checked: forced !== undefined ? forced : on > 0, onchange: (ev) => { st.vis[b] = ev.target.checked; upd(); } });
-    if (forced === undefined && on > 0 && on < tot) cb.indeterminate = true;
-    const name = P.flagName(vp.fourcc, b) || S.unknownBit;
-    s.append(el('label', { class: 'chk' + (forced !== undefined ? ' forced' : ''), title: S.visTip(b, tot, on) }, cb, el('span', { text: name }), el('small', { text: `bit ${b} · ${tot}` })));
-  }
-  if (!inf.bits.length && inf.lods.length <= 1) s.append(el('div', { class: 'note', text: S.visNone }));
-  s.append(el('div', { class: 'note', text: S.visNote(vp.fourcc || '?') }));
+  s.append(box);
 }
 
 function renderAnims() {
@@ -577,7 +625,7 @@ function renderExport() {
   const res = el('div', { class: 'result' });
   const go = el('button', { class: 'primary', id: 'exp-go', onclick: async () => {
     go.disabled = true; go.textContent = S.exporting; res.className = 'result'; res.textContent = '';
-    const parts = cur.parts.map((p, i) => ({ model: p.model, archive: p.info.archive, parent: p.parent, link: p.link,
+    const parts = cur.parts.map((p, i) => ({ model: p.model, archive: p.info.archive, mod: p.info.mod, parent: p.parent, link: p.link,
       hide: viewer.parts[i] ? viewer.parts[i].hidden : [], anim: i ? (viewer.parts[i] && viewer.parts[i].clipName) : null }));
     const inf = cur.parts[0].info;
     const r = await api.post('/api/export', { parts, format: X.format, animations: F.animated ? X.animations : 'selected', anim: cur.anim,
@@ -655,7 +703,7 @@ function renderMapDetails() {
   const M = cur.map;
   const head = $('#d-head'); head.innerHTML = '';
   $('#details').scrollTop = 0;
-  for (const id of ['#s-model', '#s-addons', '#s-parts', '#s-vis', '#s-anims', '#s-export']) $(id).innerHTML = '';
+  for (const id of ['#s-model', '#s-addons', '#s-parts', '#s-vis', '#s-mats', '#s-anims', '#s-export']) $(id).innerHTML = '';
   if (!M) return;
   head.append(el('h2', { text: M.name }));
   head.append(el('div', { class: 'sub', text: `${M.id}` }));
@@ -744,9 +792,14 @@ function showSettings() {
     c.append(el('h4', { text: S.namesLang }), nl);
     const bi = el('input', { type: 'text', value: blender, placeholder: ST.blender || '', oninput: (e) => { blender = e.target.value; } });
     c.append(el('h4', { text: S.blender }), el('p', { class: 'note', text: ST.blender ? S.blenderFound + ST.blender : S.blenderMissing }), bi);
+    const tq = el('select', { id: 'set-texq' });
+    for (const q of ['max', 'high', 'medium', 'low']) tq.append(el('option', { value: q, selected: q === (ST.settings.tex_quality || 'max') }, S.qualities[q]));
+    c.append(el('h4', { text: S.texQuality }), el('p', { class: 'note', text: S.texQualityNote }), tq);
     c.append(el('div', { class: 'actions' }, el('button', { onclick: close }, S.close), el('button', { class: 'primary', onclick: async () => {
-      const r = await api.post('/api/settings', { install: inst, lang: nl.value, blender });
+      const changedQ = tq.value !== (ST.settings.tex_quality || 'max');
+      const r = await api.post('/api/settings', { install: inst, lang: nl.value, blender, tex_quality: tq.value });
       close();
+      if (changedQ) modelInfo.clear();               // other texture sizes: the models are converted again
       ST = await api.get('/api/state');
       if (r && r.ok && !ST.progress.ready) return showLoading();
       await loadCatalog(true);

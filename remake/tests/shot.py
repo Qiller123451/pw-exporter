@@ -1,6 +1,11 @@
+import os as _os
+try:
+    import fcntl as _f; _lk = open(_os.environ.get('PWR_LOCK', '/tmp/pwr_browser.lock'), 'w'); _f.flock(_lk, _f.LOCK_EX)   # one headless browser at a time (memory)
+except ImportError:
+    pass
 import sys, time, json
 from playwright.sync_api import sync_playwright
-url = sys.argv[1] if len(sys.argv) > 1 else 'http://127.0.0.1:8411/index.html?manual'
+url = sys.argv[1] if len(sys.argv) > 1 else 'http://127.0.0.1:' + __import__('os').environ.get('PWR_PORT', '8411') + '/index.html?manual'
 out = sys.argv[2] if len(sys.argv) > 2 else '/tmp/pwr_shot.png'
 script = sys.argv[3] if len(sys.argv) > 3 else ''
 with sync_playwright() as p:

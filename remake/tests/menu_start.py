@@ -1,5 +1,10 @@
 """Start a game the way a player does (title menu -> skirmish start, audio unlocked, real frame loop) and call
 each per-frame step once, reporting the first exception of each. python3 tests/menu_start.py [tribe] [enemy]"""
+import os as _os
+try:
+    import fcntl as _f; _lk = open(_os.environ.get('PWR_LOCK', '/tmp/pwr_browser.lock'), 'w'); _f.flock(_lk, _f.LOCK_EX)   # one headless browser at a time (memory)
+except ImportError:
+    pass
 import sys, time, json
 from playwright.sync_api import sync_playwright
 me = sys.argv[1] if len(sys.argv) > 1 else 'SEAS'
@@ -10,7 +15,7 @@ with sync_playwright() as p:
     logs = []
     pg.on('console', lambda m: logs.append(m.type + ': ' + m.text) if m.type in ('error', 'warning') else None)
     pg.on('pageerror', lambda e: logs.append('PAGEERROR: ' + str(e)))
-    pg.goto('http://127.0.0.1:8411/index.html')
+    pg.goto('http://127.0.0.1:' + __import__('os').environ.get('PWR_PORT', '8411') + '/index.html')
     for _ in range(120):
         if pg.evaluate('!!(window.G && (G.titleReady || G.error))'): break
         time.sleep(0.5)

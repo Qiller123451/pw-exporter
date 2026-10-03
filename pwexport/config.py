@@ -40,6 +40,7 @@ DEFAULTS = {
     'export_dir': '',           # last export folder
     'blender': '',              # blender executable (found automatically when empty)
     'fps': 25.0,                # playback rate of the game's animations
+    'tex_quality': 'max',       # texture size by the game's detail table: max | high | medium | low
 }
 
 

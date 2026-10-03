@@ -53,7 +53,7 @@ the tree (`SURF` = the start of the map data; nested trees count from their own 
 | `Objs` | placed objects (below) |
 | `GWFl` { `GrWa`, `Flck` } | |
 | `IOMG` | landscape decoration instances (below) |
-| `Trgr`, `Ques`, `DlgS`, `AI` | triggers, quests, dialogues, scripted AI of campaign maps: `u32 size` + a nested tree (`SURF`, `AIMM`) |
+| `Trgr`, `Ques`, `DlgS`, `AI` | triggers, quests, dialogues, scripted AI of campaign maps: `u32 size` + a nested tree (`SURF`, `AIMM`). Decoded in [CAMPAIGN_FORMAT.md](CAMPAIGN_FORMAT.md) (as is the layout of `Rgns`) |
 
 ### LInf – level info
 
@@ -125,7 +125,7 @@ f32     x, y, z
 f32     rotation quaternion x, y, z, w   (applied as its conjugate, see below)
 string  unique name (<class>_<n>)
 u8[16]  guid
-...     (fixed-size rest, not decoded)
+...     handle, visibility, flags, linked objects: CAMPAIGN_FORMAT.md §6
 ```
 
 **Rotations.** The engine multiplies row vectors (Direct3D), so the stored quaternion turns a model the other way

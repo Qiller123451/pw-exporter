@@ -209,7 +209,7 @@ export const Economy = {
     }
     if (u.edgeDist(t.drop) < 2.2 || (!u.path.length && u.edgeDist(t.drop) < 5)) {
       const res = u.carry.res;
-      const left = u.owner.deliver(res, u.carry.amount, this.time);
+      const left = this.gain(u.owner, res, u.carry.amount);
       if (left >= u.carry.amount - 1e-6) {
         // storage full: wait at the storehouse and try again every 2 s (Harvest.usl:1002)
         u.path = []; u.vel.set(0, 0, 0);
@@ -232,6 +232,14 @@ export const Economy = {
     if (t.drop.kind === 'unit' && !u.path.length) { const [x, z] = this.approachPoint(u, t.drop); u.setPath(x, z); }
     const sp = u.steer(dt, u.speed);
     u.moveAnim(sp);
+  },
+  // a load reaches the storehouse: a computer player's gather factor (CAiPlayer.AddResource, Player.usl:600) multiplies
+  // it; -> the part of the load that did not fit (a remainder below one unit is dropped)
+  gain(p, res, amount) {
+    const g = p.aiMods ? p.aiMods.gather || 1 : 1;
+    if (g === 1) return p.deliver(res, amount, this.time);
+    const left = p.deliver(res, amount * g, this.time);
+    return left < 1 ? 0 : left / g;
   },
   // search radius: wood 64 m around the last tree, stone 100 m, food 50 m (the scripts' search_for_jobs)
   findNextNode(u) {
@@ -323,7 +331,8 @@ export const Economy = {
     };
     for (const b of this.buildings) if (b.alive && b.owner === p && b.built) add(b);
     for (const u of this.units) if (u.alive && u.owner === p && u.stats.limits && (u.stats.limits.max_units || u.stats.limits.max_food)) add(u);
-    p.maxUnits = Math.max(0, Math.min(p.popMax, mu));
+    p.maxUnits = Math.max(0, Math.min(p.popMax, mu + (p.aiMods ? p.aiMods.unitLimit || 0 : 0)));
+    if (p.capsFixed) return;                       // storage limits set by a mission (world.setCaps)
     const before = { ...p.caps };
     for (const r of RES) p.caps[r] = Math.max(300, caps[r]);
     // losing a storehouse cuts the stock down to the new limit

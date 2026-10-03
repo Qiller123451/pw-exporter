@@ -29,7 +29,7 @@ remake/                      (part of the ParaWorld Toolkit; the launcher serves
 │  │  ├─ anim.js             animation controller with sound events
 │  │  ├─ nav.js              walkability grid, clearance, A* path finding, gates, spatial hash
 │  │  ├─ player.js           resources, caps, population, pyramid counters, diplomacy
-│  │  ├─ ai.js               the computer opponent (plays every tribe; harbours and fishing on water maps)
+│  │  ├─ ai.js, ai/          the computer player: a port of the original's script AI (docs/COMPUTER_PLAYER.md)
 │  │  ├─ wallmap.js          the 8 m wall grid: wall pieces with arms per neighbour, lines, gates with wings
 │  │  ├─ colors.js           the 8 original player colours (ACColors.txt) and party-material detection
 │  │  ├─ mapgen.js           the random jungle skirmish map (trees, stones, bushes, animals, start positions)
@@ -175,6 +175,10 @@ http://127.0.0.1:8411/ with the game data the launcher built; `--data <folder>` 
 * `python3 tests/scenarios.py "&tribe=Hu&enemy=Aje"` – scripted rule scenarios (special moves, auras, eggs ...).
 * `python3 tests/evaljs.py tests/pathing.js|stuck.js|naval.js "<url options>"` – pathing through a ring of buildings,
   long AI games watching for stuck units, and the naval rules on a water map (`&map=maps/Base/Multiplayer/multi_2_jun_001.ula`).
+* `python3 tests/evaljs.py tests/ai_match.js "&tribe=Hu&enemy=Aje&aivai&aib=Giraffe,Dodo&aid=4&minutes=25"` – the
+  computer player against itself: a timeline per side (epochs, workers / army, attacks, kills) and sanity checks;
+  `tests/ai_defence.js` (proportional defence, workers, wild animals) and `tests/ai_campaign.js` (the interface
+  campaign triggers use: behaviours, scripted waves, defence areas, unit locks). See COMPUTER_PLAYER.md.
 * `python3 tests/live.py` – the real frame loop with mouse selection.
 * `python3 tests/evaljs.py tests/nests.js "&map=maps/Base/Multiplayer/the%20river.ula"` – nest respawning.
 * `python3 tests/evaljs.py tests/maps_audit.js` – which objects of every listed map can be shown.
@@ -205,3 +209,23 @@ extracted original rules in [spec/](spec/).
   made the top jagged). The variant of an arm comes from the edge it shares with its neighbour and variants are
   sorted by height, so both halves of a segment match (`assets.js tagWallArms`, `parts.js applyState`). Pointing at
   a wall piece while placing a tower / trap / gate snaps to that piece's tile.
+
+## Campaign missions (2026-10-02)
+
+The original single player campaign runs from the mission data the toolkit exports (`pwexport.campaign`, schema
+`pw-campaign/1`, served as `campaign/index.json` and `campaign/<pack>/<map>.ula.json`). The foundation is in:
+
+* `src/game/campaign/setup.js` - `loadCampaign(id)`, class `Campaign` (= `G.campaign`): plans what the mission
+  needs (models, which map objects it places itself), builds the players, objects, groups and start locations, and
+  is the run-time context of the trigger engine; `registry.js` (objects by GUID / name / handle / group / query),
+  `regions.js`, `props.js` (stand-alone scenery).
+* `src/game/scripting.js` - World methods for mission actions (diplomacy, owner changes, spawn by class, delete,
+  teleport, resources, tech filters, fog reveals).
+* `src/game/player.js` - N players with a directed diplomacy table (hostile / neutral / friendly); skirmish keeps
+  its two players and teams. `G.ai` only exists in skirmish; `G.brains` is the map of AI brains, `G.sees(p)` whose
+  view the human player shares.
+* `src/ui/menu.js` - title → Campaign (mission list, difficulty); `G.endMission(won, info)` ends a mission.
+* `src/ui/mission.js` - the mission UI contract (a stub).
+
+The interface for the trigger engine, the mission UI and the campaign AI is **docs/CAMPAIGN_RUNTIME.md**. Test:
+`tests/campaign_load.js` (`&campaign=<n>`; missions 11 and 1 are in `tests/regress.sh`).

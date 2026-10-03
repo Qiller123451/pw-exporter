@@ -150,6 +150,11 @@ export class Feedback {
         case 'healfx':
           if (vis(e.to.pos)) fx.spawn('glow', e.to.pos.clone().setY(e.to.pos.y + e.to.height * 0.6), { size: 1.2, size1: 2.5, life: 0.5, color: 0x9dffa0 });
           break;
+        // deleted by a mission (world.removeEntity): no death effects, just out of the selection and the groups
+        case 'removed': { const en = e.entity; if (en.owner === me) { const L = G.input.groups; for (const k in L) L[k] = L[k].filter((x) => x !== en); } if (G.sel.delete(en)) G.selChanged(true); break; }
+        case 'owner': { const en = e.entity; if (e.from === me) { const L = G.input.groups; for (const k in L) L[k] = L[k].filter((x) => x !== en); if (G.sel.delete(en)) G.selChanged(true); } break; }
+        // _NT_DiplChangeEnemyAttacked: an attack order on a neutral player started a war (FightingObj.usl:6613-6617)
+        case 'diplomacy': if (e.attacked && (e.a === me || e.b === me)) G.hud.message(`You are now at war with the ${(e.a === me ? e.b : e.a).name}`, 'bad'); break;
         case 'revealarea': if (e.player === me) (G.reveals || (G.reveals = [])).push({ x: e.x, z: e.z, r: e.r, until: e.until }); break;
         case 'trap': if (e.victim.owner === me) G.hud.message('A trap was sprung!', 'bad'); break;
         case 'warpgate': {

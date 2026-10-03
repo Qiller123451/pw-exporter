@@ -25,6 +25,38 @@ and checked by rendering the results.
   model (skeleton or animated mesh), and null means that chunk has no animation.
 - Animation chunks are heavily shared between models (all_characters: 1269 unique chunks, 85779 references).
 
+### MaterialAttributes1: how the alpha is used (community table)
+Each mesh has its own material table (one entry per submesh: submesh k uses entry k, an index into the model's
+used-material list). Whether a submesh uses the alpha channel of its texture is decided by the material flags, not by
+the texture. The low hex digit of attr1, as found by the community by trying the values in the game
+(Paraworld_gsf_viewer `docs/gsf/gsf_expl.txt`, work in progress):
+
+| low digit | meaning | exported as |
+|---|---|---|
+| 0, 4, 8, C | alpha not used (8 = "no shaders", C = "green water shader") | opaque |
+| 1, 3, 5, B, D, F | hard alpha (3 / 5 with the "black water shader", B / D / F with a water shader) | alpha test (MASK, 0.5) |
+| 2, 6, 7, A, E | soft alpha | blending |
+| 9 | "delete texture using env alpha mask" | opaque (not reproduced) |
+
+This agrees with the bit reading above (`0x1` test, `0x2` blend) except where `0x4` / `0x8` are also set. Other
+digits of the table: `0x10` use the normal map (the normal map is only exported when it is set), `0x20`–`0x50` no
+received light, `0x1000` player colour, `0x4000` shininess, `0x8000` maximum shadow, `0x100`–`0x800` masks and
+min / max light; MaterialAttributes2 `0x100000` water shader. Of all this only alpha, normal map and player colour
+change the export; the raw words travel as material `extras.gsf_flags` ("attr1/attr2", hex).
+All 41 attr1 values of the shipped archives are combinations of `0x1 0x2 0x4 0x8 0x10 0x100 0x200 0x1000 0x4000`.
+`0x4` is **not** plain "additive" on meshes: 2000+ wall and building submeshes with ordinary building textures carry
+`0x104`.
+
+Sprites (billboard chunks) are cut out by their texture's alpha whatever the flags say; the exporter gives them
+their own copy of the material (`extras.gsf_sprite`) so that meshes sharing the material keep their own alpha use.
+
+### Textures: `Texture/detailtable.txt`
+Materials name `.tga` files (`animals/all_trex.tga`). The game loads `<name>_(<size, 4 digits>).dds` from the
+`Texture` folder of the active mods; `detailtable.txt` in that folder lists, per texture base name, the format and
+the sizes it may load: `All_Trex   dxt5   64 128 256 512  [-dontchange]`. The texture quality setting picks the
+size (maximum = the last one); `-dontchange` entries ignore the setting. A larger file on disk that the table does
+not list (Wintermod ships `_(1024)` copies) is not loaded.
+
 ## Chunk attributes (visibility flags)
 Every mesh / billboard chunk carries a u32 attribute word. The engine draws a chunk when its bits fit the object's
 current render mask (bits that must be set, bits that must be clear). **Bits 0–4 are the LoD mask** (bit k = drawn at
@@ -72,7 +104,11 @@ collision" list of SEK's exporter; attr = the record's visibility bits): type 0 
 - Bone: guid (= crc32 of the lower-case name, e.g. crc32("root") = 0x16F4F95B), flags, pos[3], scale[3],
   quat[4] (xyzw), child count, **pointer to the first child — children are stored next to each other**, child count.
 - Quaternions are D3D style: for column vectors use the **conjugate**. Rest local transform = T(pos)·R(conj q).
-  The rest scale is **not** part of the bind pose (ignore it).
+  The magnitude of the rest scale is **not** part of the bind pose (ignore it). Its **sign is**: a bone with scale
+  (-1, -1, -1) is mirrored – its local transform is the point reflection −(T(pos)·R) = T(−pos)·R·S(−1), and its
+  children inherit it (their bind matrices have determinant −1). Only the snapping turtles use it (`macrolemys_land`,
+  `macrolemys_water`, `aje_transport_turtle`: the left legs are the right ones mirrored); ignoring it leaves one leg
+  pointing at the sky. Checked against the bind matrices of all 1023 skeletons of Base + BoosterPack1.
 - Bind poses: one row-major inverse bind matrix per bone, in **depth-first** bone order.
   Vertex bone indices and animation track indices use this same depth-first order.
 

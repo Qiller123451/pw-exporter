@@ -62,9 +62,13 @@ CMyShrine: {
 
 ## Teach the AI
 
-`src/game/ai.js`: `PLANS` holds each tribe's build order (`[building, epoch, count]`); `DIFF` the difficulty
-settings. Housing, storage, workers, units, epochs, upgrades and moves are chosen from the tech tree automatically.
-`naval()` builds a harbour when fish shoals are near the base and keeps three fishing boats busy.
+The computer player (`src/game/ai/`, docs/COMPUTER_PLAYER.md) plays from the original's own tables, which the
+pipeline extracts into `ai.json`: build orders per tribe and personality, attack plans, army tables, unit mixes,
+the difficulty levels. A mod that changes the game's AI scripts or `Scripts/Ai/settings/**` changes the remake's
+AI after the `ai` step ran again. Without `ai.json` (or for a tribe whose settings folder is missing) the fallbacks
+in `ai/data.js` are used: `PLANS` holds a build order per tribe (`[building, epoch, count]`), unit mixes and
+squads are derived from the tech tree. What a list entry needs first (its building, a farm mode, an epoch) is
+worked out from the tech tree, so new units and buildings need no AI code.
 
 ## Maps
 

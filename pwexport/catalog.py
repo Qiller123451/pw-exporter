@@ -41,6 +41,7 @@ class ModelIndex:
         self.cache_file = os.path.join(cache_dir(), 'index_%08x.json' % (zlib.crc32(install.data.lower().encode('utf-8')) & 0xffffffff))
         self._archives = {}             # path -> gsf.Archive (parsed, kept for re-use)
         self._lock = threading.Lock()
+        self.quality = 'max'            # texture quality of conversions (gsf.QUALITIES; the app's setting)
         self.models = {}                # lower name -> entry
         self.all = []                   # every (archive, model) pair, also duplicates
         self._build(progress)
@@ -53,16 +54,17 @@ class ModelIndex:
             cached = {}
         if cached.get('version') != gsf.VERSION:
             cached = {}
-        arch = self.install.archives()
+        arch = self.install.archive_list()
         out = {'version': gsf.VERSION, 'archives': {}}
         n = len(arch)
-        for k, (an, path) in enumerate(sorted(arch.items())):
+        for k, it in enumerate(arch):
+            an, path = it['name'], it['path']
             st = os.stat(path)
             sig = '%d:%d' % (st.st_size, int(st.st_mtime))
             c = (cached.get('archives') or {}).get(path)
             if not c or c.get('sig') != sig:
                 if progress:
-                    progress('Reading %s.gsf (%d/%d)' % (an, k + 1, n), k / n)
+                    progress('Reading %s/%s.gsf (%d/%d)' % (it['mod'], an, k + 1, n), k / n)
                 try:
                     a = self.archive(path)
                     models = [[m['name'], i, m['fourcc'].strip(), len(a.anim_names_index(i))] for i, m in enumerate(a.infos)]
@@ -76,21 +78,25 @@ class ModelIndex:
                 json.dump(out, f)
         except OSError:
             pass
-        # main archives first; a later mod replaces a model of the same name
-        def prio(item):
-            path = item[0]
-            an = os.path.splitext(os.path.basename(path))[0].lower()
-            mod = self.install.archive_mod(path)
-            mi = self.install.model_mods.index(mod) if mod in self.install.model_mods else 0
-            return (1 if _MINOR.match(an) else 0, -mi)
-        self.models, self.all = {}, []
-        for path, c in sorted(out['archives'].items(), key=prio):
-            an = os.path.splitext(os.path.basename(path))[0]
-            mod = self.install.archive_mod(path)
+        # Which copy a plain name means (units, add-ons, maps): main archives before campaign / sequence / test ones,
+        # the official game before the mods (BoosterPack1 over Base, as for the rules), then the mods in folder order.
+        # Every other copy stays reachable: self.all lists all of them, copies(name) is what the viewer's
+        # "Mod" selector offers, locate(name, archive, mod) finds one.
+        mods = self.install.model_mods
+        official = [m.lower() for m in self.install.mods]
+
+        def prio(it):
+            mod = it['mod']
+            rank = -official.index(mod.lower()) - len(mods) if mod.lower() in official else mods.index(mod)
+            return (1 if _MINOR.match(it['name']) else 0, rank, it['name'])
+        self.models, self.all, self._copies = {}, [], {}
+        for it in sorted(arch, key=prio):
+            c = out['archives'][it['path']]
             for name, i, fourcc, nanim in c['models']:
-                e = {'name': name, 'archive': an, 'mod': mod, 'path': path, 'index': i, 'fourcc': fourcc, 'anims': nanim}
+                e = {'name': name, 'archive': it['name'], 'mod': it['mod'], 'path': it['path'], 'index': i, 'fourcc': fourcc, 'anims': nanim}
                 self.all.append(e)
                 self.models.setdefault(name.lower(), e)
+                self._copies.setdefault(name.lower(), []).append(e)
         if progress:
             progress('Ready', 1.0)
 
@@ -109,19 +115,32 @@ class ModelIndex:
     def has(self, name):
         return (name or '').lower() in self.models
 
-    def locate(self, name, archive=None):
-        if archive:
-            for e in self.all:
-                if e['archive'].lower() == archive.lower() and e['name'].lower() == name.lower():
+    def copies(self, name):
+        """every copy of a model, the default one first: [entry] (one per mod and archive that has the name)"""
+        return self._copies.get((name or '').lower(), [])
+
+    def locate(self, name, archive=None, mod=None):
+        """the copy of a model in that archive and / or mod (the best match by the default order), else the default"""
+        if archive or mod:
+            al, ml = (archive or '').lower(), (mod or '').lower()
+            hits = [e for e in self.copies(name) if (not ml or e['mod'].lower() == ml)]
+            for e in hits:
+                if not al or e['archive'].lower() == al:
+                    return e
+            if hits:                    # the mod keeps the model in another archive (mirage_characters.gsf ...)
+                return hits[0]
+            for e in self.copies(name):
+                if al and e['archive'].lower() == al:
                     return e
         return self.get(name)
 
-    def convert(self, name, out_dir=None, archive=None, embed_textures=False, fps=25.0):
+    def convert(self, name, out_dir=None, archive=None, embed_textures=False, fps=25.0, mod=None):
         """convert one model (all parts and levels of detail, all animations) -> path of the .glb. Results are cached on disk."""
-        e = self.locate(name, archive)
+        e = self.locate(name, archive, mod)
         if not e:
             raise KeyError('unknown model %s' % name)
-        out_dir = out_dir or cache_dir('models', gsf.VERSION, e['mod'], e['archive'])
+        q = self.quality if self.quality in gsf.QUALITIES else 'max'
+        out_dir = out_dir or cache_dir('models', gsf.VERSION + ('' if q == 'max' else '-' + q), e['mod'], e['archive'])
         out = os.path.join(out_dir, '%s.glb' % gsf.safe(e['name']))
         stamp = os.path.getmtime(e['path'])
         if os.path.exists(out) and os.path.getmtime(out) >= stamp:
@@ -129,7 +148,7 @@ class ModelIndex:
         a = self.archive(e['path'])
         tmp = out + '.part'
         res = a.export_index(e['index'], tmp, data_dir=self.install.data, all_parts=True, all_lods=True, embed_textures=embed_textures,
-                             tex_dir=os.path.join(out_dir, 'textures'), fps=fps, log=lambda *x: None)
+                             tex_dir=os.path.join(out_dir, 'textures'), fps=fps, log=lambda *x: None, quality=q)
         if not res:
             if os.path.exists(tmp):
                 os.remove(tmp)
@@ -238,6 +257,21 @@ class Catalog:
                 'tribes': {t: self.tribe_name(t) for t in ('Hu', 'Aje', 'Ninigi', 'SEAS')}}
 
     def models_json(self):
-        """every model of every archive (the "All models" browser)"""
-        return [{'name': e['name'], 'archive': e['archive'], 'mod': e['mod'], 'fourcc': e['fourcc'], 'anims': e['anims']}
-                for e in self.index.all]
+        """the "All models" browser: one row per archive name and model; `mods` = the mods that have this copy (the
+        default one first) - the viewer offers them in its "Mod" selector"""
+        rows, by = [], {}
+        for e in self.index.all:
+            k = (e['archive'], e['name'].lower())
+            r = by.get(k)
+            if r is None:
+                r = by[k] = {'name': e['name'], 'archive': e['archive'], 'mod': e['mod'], 'mods': [], 'fourcc': e['fourcc'], 'anims': e['anims']}
+                rows.append(r)
+            if e['mod'] not in r['mods']:
+                r['mods'].append(e['mod'])
+        return rows
+
+    def copies_json(self, name):
+        """every copy of a model for the "Mod" selector: [{mod, archive, fourcc, anims, default}]"""
+        d = self.index.get(name)
+        return [{'mod': e['mod'], 'archive': e['archive'], 'fourcc': e['fourcc'], 'anims': e['anims'], 'default': e is d}
+                for e in self.index.copies(name)]

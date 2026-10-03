@@ -56,7 +56,7 @@ try:
 except ImportError:  # textures are optional
     Image = None
 
-VERSION = '2026.10.9'     # bump when the output changes (invalidates cached conversions)
+VERSION = '2026.10.11'     # bump when the output changes (invalidates cached conversions)
 NULL = 0x80000000
 
 _SPHERE_B64 = "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"
@@ -621,12 +621,55 @@ def reduce_keyframes(v, eps):
 
 
 # =========================================================================== textures
-class TextureFinder:
-    """maps game texture paths (e.g. 'animals/ice_henodus_a.tga') to files on disk,
-    choosing the highest resolution '_(NNNN).dds' variant"""
+QUALITIES = ('max', 'high', 'medium', 'low')         # the game's texture detail setting; 'max' = the largest size
 
-    def __init__(self, roots):
-        self.index = {}
+
+def detail_table(roots):
+    """Texture/detailtable.txt of the given texture folders (first root wins, like the textures themselves):
+    {texture name (lower case, no extension): {'format': 'dxt5', 'sizes': [64, 128, 256, 512], 'fixed': bool}}.
+    A line is `All_Trex   dxt5   64 128 256 512  [-dontchange]`: the sizes the game may load for that texture; the
+    texture quality setting picks one and the file is `<name>_(<size, 4 digits>).dds`."""
+    out = {}
+    for root in reversed(roots):
+        p = os.path.join(root, 'detailtable.txt')
+        if not os.path.isfile(p):
+            p = next((os.path.join(root, f) for f in os.listdir(root) if f.lower() == 'detailtable.txt'), None) if os.path.isdir(root) else None
+        if not p:
+            continue
+        try:
+            with open(p, encoding='latin-1') as f:
+                lines = f.read().splitlines()
+        except OSError:
+            continue
+        for ln in lines:
+            ln = ln.strip()
+            if not ln or ln[0] in '#;/':
+                continue
+            tok = ln.split()
+            sizes = [int(t) for t in tok[2:] if t.isdigit()]
+            if len(tok) >= 3 and sizes:
+                out[tok[0].lower()] = {'format': tok[1].lower(), 'sizes': sorted(sizes), 'fixed': any(t.lower() == '-dontchange' for t in tok)}
+    return out
+
+
+def detail_size(entry, quality='max'):
+    """the size the game loads for a detail table entry at a texture quality"""
+    sizes = entry['sizes']
+    if entry.get('fixed') or quality == 'max' or quality not in QUALITIES:
+        return sizes[-1]
+    return sizes[max(0, len(sizes) - 1 - QUALITIES.index(quality))]
+
+
+class TextureFinder:
+    """maps game texture paths (e.g. 'animals/ice_henodus_a.tga') to files on disk. The models name .tga files; the
+    game loads `<name>_(NNNN).dds` with the size its detail table (Texture/detailtable.txt) allows for the texture
+    quality setting. Textures the table does not list (or whose listed size is missing on disk) fall back to the
+    nearest size there is."""
+
+    def __init__(self, roots, quality='max'):
+        self.index = {}                 # relative path without extension -> (root, {size: file}); '#name' -> same
+        self.quality = quality
+        self.detail = detail_table(roots)
         for root in roots:
             if not os.path.isdir(root):
                 continue
@@ -636,20 +679,17 @@ class TextureFinder:
                     ext = ext.lower()
                     if ext not in ('.dds', '.tga', '.png', '.bmp', '.jpg'):
                         continue
-                    res = 1 << 20 if ext != '.dds' else 0
+                    res = 1 << 20 if ext != '.dds' else 0        # a plain .tga / .png beats the sized .dds copies
                     mm = re.match(r'^(.*)_\((\d+)\)$', stem)
                     if mm:
                         stem, res = mm.group(1), int(mm.group(2))
-                    rel = os.path.relpath(os.path.join(dp, stem), root).replace('\\', '/').lower()
-                    key = rel
-                    prev = self.index.get(key)
-                    if prev is None or (prev[0] == root and res > prev[1]):
-                        # first root wins (mods first), inside a root prefer biggest
-                        if prev is None or prev[0] == root:
-                            self.index[key] = (root, res, os.path.join(dp, f))
-                    base = key.rsplit('/', 1)[-1]
-                    if ('#' + base) not in self.index:
-                        self.index['#' + base] = (root, res, os.path.join(dp, f))
+                    key = os.path.relpath(os.path.join(dp, stem), root).replace('\\', '/').lower()
+                    for k in (key, '#' + key.rsplit('/', 1)[-1]):
+                        prev = self.index.get(k)
+                        if prev is None:
+                            self.index[k] = prev = (root, {})
+                        if prev[0] == root:                       # first root wins (the model's mod first)
+                            prev[1].setdefault(res, os.path.join(dp, f))
         self.cache = {}
 
     def find(self, name):
@@ -657,8 +697,25 @@ class TextureFinder:
             return None
         key = os.path.splitext(name.replace('\\', '/').lower())[0]
         key = re.sub(r'_\(\d+\)$', '', key)
-        hit = self.index.get(key) or self.index.get('#' + key.rsplit('/', 1)[-1])
-        return hit[2] if hit else None
+        base = key.rsplit('/', 1)[-1]
+        hit = self.index.get(key) or self.index.get('#' + base)
+        if not hit:
+            return None
+        files = hit[1]
+        ent = self.detail.get(base)
+        if ent:
+            want = detail_size(ent, self.quality)
+            if want in files:
+                return files[want]
+            sized = sorted(k for k in files if 0 < k < (1 << 20))
+            if sized:                                 # the listed size is not on disk: the nearest below, else above
+                below = [k for k in sized if k <= want]
+                return files[below[-1] if below else sized[0]]
+        elif self.quality != 'max':                   # not in the table: scale by the sizes on disk
+            sized = sorted(k for k in files if 0 < k < (1 << 20))
+            if sized:
+                return files[sized[max(0, len(sized) - 1 - QUALITIES.index(self.quality))]]
+        return files[max(files)]
 
     def png(self, name, normal_map=False):
         path = self.find(name)
@@ -820,10 +877,19 @@ def export_model(r, h, model, mats, names, texfinder, out_path, fps=25.0, all_lo
         for bi in dfs:
             b = bones[bi]
             q = qnorm(qconj(b['quat']))
+            # A mirrored bone (rest scale -1, -1, -1: the left limbs of the snapping turtles are the right ones turned
+            # inside out) is the point reflection of T(pos) * R, as its bind matrix shows: -T(pos) * R = T(-pos) * R * S(-1).
+            # Its children inherit the reflection. Other rest scales are not part of the bind pose (see the notes above).
+            b['mirror'] = all(x < 0 for x in b['scale'])
+            if not b['mirror'] and any(x < 0 for x in b['scale']):
+                log('   ! bone %08x: mirrored on some axes only %s (not handled)' % (b['guid'], [round(x, 2) for x in b['scale']]))
+            sg = -1.0 if b['mirror'] else 1.0
             n = g.node(name='bone_%08x' % b['guid'] if b['guid'] != 0x16F4F95B else 'root' + suffix,
-                       translation=[float(x) for x in b['pos']], rotation=[float(x) for x in q])
+                       translation=[float(sg * x) for x in b['pos']], rotation=[float(x) for x in q])
+            if b['mirror']:
+                g.j['nodes'][n]['scale'] = [-1.0, -1.0, -1.0]
             node_of[bi] = n
-            L = np.eye(4); L[:3, :3] = qmat(q); L[:3, 3] = b['pos']
+            L = np.eye(4); L[:3, :3] = sg * qmat(q); L[:3, 3] = sg * np.array(b['pos'])
             world[bi] = L if b['parent'] < 0 else world[b['parent']] @ L
             g.add_child(root if b['parent'] < 0 else node_of[b['parent']], n)
         joints = [node_of[bi] for bi in dfs]
@@ -847,6 +913,8 @@ def export_model(r, h, model, mats, names, texfinder, out_path, fps=25.0, all_lo
         pbr = dict(metallicFactor=0.0, roughnessFactor=0.9)
         m = dict(name=safe(os.path.splitext(os.path.basename(md['tex'] or 'material_%d' % gi))[0]),
                  pbrMetallicRoughness=pbr)
+        # MaterialAttributes1, low digit: how the texture's alpha channel is used (community table, docs/GSF_FORMAT.md):
+        # 1 3 5 B D F = hard alpha (alpha test), 2 6 7 A E = soft alpha (blending), others = the alpha is not used.
         alpha = md['attr1'] & 0xF
         tx = texfinder.png(md['tex']) if texfinder else None
         if tx:
@@ -857,11 +925,12 @@ def export_model(r, h, model, mats, names, texfinder, out_path, fps=25.0, all_lo
                 m['alphaMode'] = 'BLEND'; m['doubleSided'] = True
         elif md['tex']:
             m['extras'] = dict(missing_texture=md['tex'])
-        if texfinder and md.get('nm'):
+        if texfinder and md.get('nm') and md['attr1'] & 0x10:        # flag 0x10: the material uses its normal map
             nt = texfinder.png(md['nm'], normal_map=True)
             if nt:
                 m['normalTexture'] = dict(index=g.image(nt, tex_dir))
-        m.setdefault('extras', {}).update(gsf_texture=md['tex'] or '', gsf_flags='%08x/%08x' % (md['attr1'], md.get('attr2', 0)))
+        m.setdefault('extras', {}).update(gsf_texture=md['tex'] or '', gsf_flags='%08x/%08x' % (md['attr1'], md.get('attr2', 0)),
+                                         gsf_normal=md.get('nm') or '', gsf_env=md.get('env') or '')
         g.j.setdefault('materials', []).append(m)
         mat_cache[gi] = len(g.j['materials']) - 1
         return mat_cache[gi]
@@ -1011,11 +1080,20 @@ def export_model(r, h, model, mats, names, texfinder, out_path, fps=25.0, all_lo
             attrs['WEIGHTS_0'] = g.accessor(np.tile([1.0, 0, 0, 0], (len(P), 1)), 5126, 'VEC4', 34962)
         um_ = model['used_materials']
         gi_ = um_[b['mat']] if b.get('mat', 99999) < len(um_) else bb_mat     # the chunk's own material (fallback: guess)
-        mi_ = material(gi_ if gi_ is not None else -1)
+        # Sprites are cut out by their texture's alpha whatever the material flags say (they are drawn by the sprite
+        # renderer, not as meshes), and are two-sided. They get their OWN copy of the material: the meshes that share
+        # it keep the alpha use their flags ask for.
+        gk = gi_ if gi_ is not None else -1
+        if ('bb', gk) not in mat_cache:
+            mj = json.loads(json.dumps(g.j['materials'][material(gk)]))
+            mj['doubleSided'] = True
+            if 'alphaMode' not in mj and 'baseColorTexture' in mj['pbrMetallicRoughness']:
+                mj['alphaMode'] = 'MASK'; mj['alphaCutoff'] = 0.5
+            mj.setdefault('extras', {})['gsf_sprite'] = True
+            g.j['materials'].append(mj)
+            mat_cache[('bb', gk)] = len(g.j['materials']) - 1
+        mi_ = mat_cache[('bb', gk)]
         mat_j = g.j['materials'][mi_]
-        mat_j['doubleSided'] = True
-        if 'alphaMode' not in mat_j and 'baseColorTexture' in mat_j['pbrMetallicRoughness']:
-            mat_j['alphaMode'] = 'MASK'; mat_j['alphaCutoff'] = 0.5
         name = '%s_foliage%d_lod%x' % (model['name'], ci, lodmask)
         # raw sprite data for engines that draw real camera-facing sprites (stored in the root node's extras)
         try:
@@ -1165,7 +1243,7 @@ def export_model(r, h, model, mats, names, texfinder, out_path, fps=25.0, all_lo
                 if a['root']['t'] is not None:
                     chan(rig['node_of'][b0], 'translation', times, pad(a['root']['t'] + np.array(bones[b0]['pos'])), 'VEC3')
                 if a['root']['s'] is not None and np.abs(a['root']['s']).min() > 1e-6:
-                    chan(rig['node_of'][b0], 'scale', times, pad(a['root']['s']), 'VEC3')
+                    chan(rig['node_of'][b0], 'scale', times, pad(-np.abs(a['root']['s']) if bones[b0].get('mirror') else a['root']['s']), 'VEC3')
                 done.add(hb)
             for tr in a['tracks']:
                 if tr['bone'] >= len(dfs) or tr['bone'] in done:
@@ -1181,12 +1259,13 @@ def export_model(r, h, model, mats, names, texfinder, out_path, fps=25.0, all_lo
                         q[k] = -q[k]
                 node = rig['node_of'][bi]
                 chan(node, 'rotation', times, pad(q), 'VEC4')
+                mir = b.get('mirror')                  # a mirrored bone: T(-pos) * R * S(-|s|), as in its rest pose
                 if 'dx' in tr:
                     tp = np.tile(np.array(b['pos']), (nf, 1))
                     tp[:, 0] += tr['dx']
-                    chan(node, 'translation', times, pad(tp), 'VEC3')
+                    chan(node, 'translation', times, pad(-tp if mir else tp), 'VEC3')
                 if 's' in tr and np.abs(tr['s']).min() > 1e-6:
-                    chan(node, 'scale', times, pad(tr['s']), 'VEC3')
+                    chan(node, 'scale', times, pad(-np.abs(tr['s']) if mir else tr['s']), 'VEC3')
             # hold rest pose on bones without a track, so actions don't leak into each other
             for k, bi in enumerate(dfs):
                 if k in done:
@@ -1242,10 +1321,13 @@ def texture_roots(data_dir, mod):
     if not data_dir or not os.path.isdir(data_dir):
         return roots
     subs = {d.lower(): d for d in os.listdir(data_dir)}
+    # the model's own mod first, then the official game with the patch over the original (as the game loads them),
+    # then whatever other mods there are (a texture only a mod ships is still better than none)
     order = []
-    if mod:
+    if mod and mod.lower() not in ('base', 'boosterpack1'):
         order.append(mod)
-    order += ['Base', 'BoosterPack1', 'BoosterPack3', 'MIRAGE', 'Wintermod', 'ReColor']
+    order += ['BoosterPack1', 'Base', 'BoosterPack3', 'MIRAGE', 'Wintermod', 'ReColor']
+    order += sorted(d for d in subs.values() if d not in order)
     for mname in order:
         d = subs.get(mname.lower())
         if d:
@@ -1333,7 +1415,7 @@ class Archive:
         return sig, bones
 
     def export(self, name, out_path, data_dir=None, textures=True, finders={}, fps=25.0, all_lods=False,
-               all_parts=False, embed_textures=False, tex_dir=None, reduce_keys=False, skip_anims=None, log=print):
+               all_parts=False, embed_textures=False, tex_dir=None, reduce_keys=False, skip_anims=None, log=print, quality='max'):
         """write one model as .glb. Textures go into `tex_dir` (default: <out folder>/textures) unless
         embed_textures. all_parts keeps every LOD0 part (saddles, damage stages, ...) with its flags in the
         node extras ("attr") - the Model Exporter uses that to toggle them."""
@@ -1341,17 +1423,19 @@ class Archive:
         if i is None:
             raise KeyError('%s has no model %r' % (self.path, name))
         return self.export_index(i, out_path, data_dir, textures, finders, fps, all_lods, all_parts, embed_textures,
-                                 tex_dir, reduce_keys, skip_anims, log)
+                                 tex_dir, reduce_keys, skip_anims, log, quality)
 
     def export_index(self, i, out_path, data_dir=None, textures=True, finders={}, fps=25.0, all_lods=False,
-                     all_parts=False, embed_textures=False, tex_dir=None, reduce_keys=False, skip_anims=None, log=print):
-        """like export(), by position in the archive (archives may hold two models with the same name)"""
+                     all_parts=False, embed_textures=False, tex_dir=None, reduce_keys=False, skip_anims=None, log=print,
+                     quality='max'):
+        """like export(), by position in the archive (archives may hold two models with the same name).
+        quality: the game's texture detail setting ('max' | 'high' | 'medium' | 'low', see TextureFinder)"""
         finder = None
         if textures and Image is not None:
             dd = data_dir or self.data_dir
-            key = (dd, self.mod)
+            key = (dd, self.mod, quality)
             if key not in finders:
-                finders[key] = TextureFinder(texture_roots(dd, self.mod))
+                finders[key] = TextureFinder(texture_roots(dd, self.mod), quality)
             finder = finders[key]
         if not embed_textures and tex_dir is None:
             tex_dir = os.path.join(os.path.dirname(os.path.abspath(out_path)), 'textures')

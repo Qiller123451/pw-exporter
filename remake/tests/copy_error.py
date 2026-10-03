@@ -1,11 +1,16 @@
 """The error banner copies its message (with stack and game info) when clicked: python3 tests/copy_error.py"""
+import os as _os
+try:
+    import fcntl as _f; _lk = open(_os.environ.get('PWR_LOCK', '/tmp/pwr_browser.lock'), 'w'); _f.flock(_lk, _f.LOCK_EX)   # one headless browser at a time (memory)
+except ImportError:
+    pass
 import time
 from playwright.sync_api import sync_playwright
-url = 'http://127.0.0.1:8411/index.html?quick&tribe=Hu&enemy=Aje'
+url = 'http://127.0.0.1:' + __import__('os').environ.get('PWR_PORT', '8411') + '/index.html?quick&tribe=Hu&enemy=Aje'
 with sync_playwright() as p:
     b = p.chromium.launch(args=['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'])
     ctx = b.new_context(viewport={'width': 1280, 'height': 720})
-    ctx.grant_permissions(['clipboard-read', 'clipboard-write'], origin='http://127.0.0.1:8411')
+    ctx.grant_permissions(['clipboard-read', 'clipboard-write'], origin='http://127.0.0.1:' + __import__('os').environ.get('PWR_PORT', '8411') + '')
     pg = ctx.new_page()
     pg.goto(url)
     t0 = time.time()

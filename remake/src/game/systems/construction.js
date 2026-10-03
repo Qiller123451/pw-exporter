@@ -259,7 +259,7 @@ export const Construction = {
       if (h.name === 'tesla_s0' && h.level >= 2 && b.surfDist(h.pos.x, h.pos.z) < 20) rate *= 2;
       if (h.name === 'babbage_s0' && h.level >= 5) rate *= 2;
     }
-    const total = D * tf * S;
+    const total = D * tf * S * (b.owner && b.owner.aiMods ? b.owner.aiMods.buildTime || 1 : 1);     // AI handicap (Action.usl:346)
     const k = dt * rate / total;
     b.progress = Math.min(1, b.progress + k);
     b.hp = Math.max(1, Math.min(b.maxHp, b.hp + b.maxHp * k));

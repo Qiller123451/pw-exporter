@@ -72,6 +72,7 @@ class App:
         try:
             self.install = Install(self.settings['install'])
             self.index = ModelIndex(self.install, progress=lambda s, f: self.progress.update(stage=s, frac=f * 0.9))
+            self.index.quality = self.settings.get('tex_quality', 'max')
             self.progress.update(stage='Reading texts and the tech tree', frac=0.92)
             self.texts = {}
             self.catalog = Catalog(self.install, self.index, self._texts(self.settings['lang']))
@@ -136,8 +137,8 @@ class App:
             [dict(id=k, blender=True, **v) for k, v in blender.FORMATS.items()]
         return d
 
-    def model(self, name, archive=None):
-        path = self.index.convert(name, archive=archive)
+    def model(self, name, archive=None, mod=None):
+        path = self.index.convert(name, archive=archive, mod=mod)
         j, _ = glb.load(path)
         ex = glb.root_extras(j)
         rel = os.path.relpath(path, cache_dir()).replace(os.sep, '/')
@@ -154,8 +155,9 @@ class App:
             loops = glb.walk_loops(j, b)
         except Exception:
             pass
-        e = self.index.locate(name, archive)
+        e = self.index.locate(name, archive, mod)
         return {'url': '/cache/' + rel, 'name': e['name'], 'archive': e['archive'], 'mod': e['mod'],
+                'copies': self.catalog.copies_json(e['name']) if self.catalog else [],
                 'fourcc': ex.get('fourcc', ''), 'anims': anims, 'loops': loops, 'walksets': ex.get('walksets') or {},
                 'links': glb.links(j), 'flags': parts.flag_groups(j), 'visible': sorted(parts.visible_nodes(j))}
 
@@ -167,7 +169,7 @@ class App:
         self.settings.save()
         specs = []
         for p in d['parts']:
-            specs.append({'glb': self.index.convert(p['model'], archive=p.get('archive')), 'parent': p.get('parent'),
+            specs.append({'glb': self.index.convert(p['model'], archive=p.get('archive'), mod=p.get('mod')), 'parent': p.get('parent'),
                           'link': p.get('link'), 'hide': p.get('hide') or [], 'anim': p.get('anim')})
         mode = d.get('animations', 'all')
         names = None if mode == 'all' else ([d['anim']] if mode == 'selected' and d.get('anim') else [])
@@ -427,7 +429,7 @@ def make_handler(app):
                 if p == '/api/models': return self.send_json(app.catalog.models_json() if app.catalog else [])
                 if p == '/api/model':
                     try:
-                        return self.send_json(app.model(q['name'], q.get('archive')))
+                        return self.send_json(app.model(q['name'], q.get('archive'), q.get('mod')))
                     except (KeyError, ValueError) as e:          # unknown model / no geometry: the client shows it
                         return self.send_json({'error': str(e)})
                 if p == '/api/maps': return self.send_json(app.maps.list())
@@ -462,8 +464,9 @@ def make_handler(app):
                 d = self.body()
                 if p == '/api/setup': return self.send_json(app.setup(d))
                 if p == '/api/settings':
-                    for k in ('ui_lang', 'export_dir', 'blender', 'fps'):
+                    for k in ('ui_lang', 'export_dir', 'blender', 'fps', 'tex_quality'):
                         if k in d: app.settings[k] = d[k]
+                    if app.index: app.index.quality = app.settings.get('tex_quality', 'max')
                     if 'lang' in d: app.set_lang(d['lang'])
                     if d.get('install') and Install.valid(d['install']) and d['install'] != app.settings.get('install'):
                         return self.send_json(app.setup({'install': d['install'], 'lang': app.settings.get('lang'), 'ui_lang': app.settings.get('ui_lang')}))

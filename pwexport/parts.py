@@ -10,6 +10,9 @@ Animals / vehicles / characters use script flags (FightingObj.usl VIS_FLAG_*) in
   5 party colour, 6 saddle, 7 helmet, 8 armour, 9 standard, 10 armour saddle, 11 misc, 16 "activated" (healer kit)
   20..27 wounds (arm l/r, leg l/r, belly l/r, head, tail) shown as hit points drop
 
+These are the game's rules ("In-game look" presets of the app). The app's Visibility checkboxes are a plain filter on
+top: with bits ticked, a mesh shows exactly when it has every ticked bit set (web/parts.js apply, filterMask).
+
     visible_nodes(gltf_json, owned=True)                  -> set of mesh node names the game would show
     flag_groups(gltf_json)                                -> the toggles the app offers for this model
 """

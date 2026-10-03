@@ -133,3 +133,18 @@ button.round { width: 34px; height: 34px; border-radius: 50%; padding: 0; backgr
 .chk.forced span { color: var(--accent2); }
 .sect h3 button.link { background: none; border: none; color: var(--dim); font-size: 11px; cursor: pointer; text-transform: none; letter-spacing: 0; padding: 0; }
 .sect h3 button.link:hover { color: inherit; text-decoration: underline; }
+
+/* Visibility: the in-game look presets and the 32 flag bits */
+.sect h4 { margin: 10px 0 4px; font-size: 12px; font-weight: 600; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; display: flex; align-items: center; justify-content: space-between; }
+.preset.off { opacity: .45; }
+.bits { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 10px; }
+.bits .bit { padding: 1px 0; font-size: 12.5px; gap: 6px; min-width: 0; }
+.bits .bit small { flex: none; }
+.bits .bit.none span { color: var(--dim); }
+.bits .bit.unk span { font-style: italic; }
+.bits .bit small { font-size: 11px; }
+.mats summary { cursor: pointer; list-style: none; }
+.mats summary h3 { display: inline-flex; gap: 8px; align-items: baseline; }
+.mats .mat { display: grid; grid-template-columns: 1fr auto; gap: 0 8px; padding: 3px 0; font-size: 12px; border-top: 1px solid rgba(255,255,255,.06); }
+.mats .mat b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.mats .mat small { grid-column: 1 / 3; color: var(--dim); }

@@ -139,6 +139,7 @@ export class Unit extends Entity {
     const W = this.world;
     this.gfx = (this.camoGfx && W.template(this.camoGfx, true) ? this.camoGfx : null) || this.stats.gfx;
     if (!W.template(this.gfx, true) && W.data.classGfx(this.name)) this.gfx = W.data.classGfx(this.name);   // tech tree gfx missing: class file gfx
+    if (!W.template(this.gfx, true) && W.standIns && W.standIns.get(this.name.toLowerCase())) this.gfx = W.standIns.get(this.name.toLowerCase());   // no model in the game data: the mission's stand-in
     const tpl = this.tpl = W.template(this.gfx);
     if (this.obj) { W.scene.remove(this.obj); this.anim && this.anim.dispose(); }
     if (this.comp) this.comp.dispose();

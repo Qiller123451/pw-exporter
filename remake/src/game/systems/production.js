@@ -31,7 +31,7 @@ export const Production = {
       // while one hero is being hired the others can't be (<hero>_RemoveMe filters)
       if (this.data.def(name, p) && this.data.def(name, p).unique && producer.queue.some((q) => q.action.results[0] && this.data.def(q.action.results[0].obj, p) && this.data.def(q.action.results[0].obj, p).unique)) return 'unique';
       const lv = this.unitStartLevel(action, p);
-      const why = p.slotFree(lv, this.data.pyramid);
+      const why = p.slotFree(lv, this.pyramidFor(p));
       if (why) return why;
     }
     return null;
@@ -53,9 +53,23 @@ export const Production = {
     producer.queue.push(item);
     return null;
   },
-  // duration of production / research (the AI difficulty multipliers of Action.usl are not used in skirmish);
-  // debug mode: instant
-  productionTime(action, p) { return p && p.debug ? 0.05 : Math.max(0.5, action.time || 1); },
+  // duration of production / research; debug mode: instant. A computer player's actions are faster from difficulty 5
+  // on, except the first epoch upgrade (Action.usl:346-382, "AIHelp"; player.aiMods)
+  productionTime(action, p) {
+    if (p && p.debug) return 0.05;
+    const m = p && p.aiMods;
+    const k = !m || action.id === 'age_2' ? 1 : action.kind === 'Upgrades' ? m.researchTime || 1 : m.buildTime || 1;
+    return Math.max(0.5, (action.time || 1) * k);
+  },
+  // pyramid slots per level: the game's, plus the extra slots of a computer player at difficulty 7-9
+  // (RequirementsMgr.usl:213-241)
+  pyramidFor(p) {
+    const m = p && p.aiMods;
+    const base = (p && p.pyramid) || this.data.pyramid;        // a mission's own limits (campaign unit_limits / BLSL)
+    if (!m || !m.pyramid) return base;
+    if (!m.pyramidAbs || m.pyramidAbs.src !== m.pyramid || m.pyramidAbs.base !== base) { m.pyramidAbs = base.map((v, i) => v + (m.pyramid[i] || 0)); m.pyramidAbs.src = m.pyramid; m.pyramidAbs.base = base; }
+    return m.pyramidAbs;
+  },
   cancelQueue(producer, i) {
     const item = producer.queue[i];
     if (!item) return;
@@ -172,7 +186,7 @@ export const Production = {
       if (!swapWith.alive || swapWith.owner !== p || swapWith.level !== nl) return 'level';
       if (!this.canHaveLevel(swapWith, ol)) return 'max';
       if (ol > nl) cost += this.skullCost(nl, ol);
-    } else if (p.atLevel[nl - 1] + p.queuedAtLevel[nl - 1] >= this.data.pyramid[nl - 1]) return 'level';
+    } else if (p.atLevel[nl - 1] + p.queuedAtLevel[nl - 1] >= this.pyramidFor(p)[nl - 1]) return 'level';
     if (p.debug) cost = 0;                      // debug mode: free level-ups
     if (p.res.skulls < cost) return 'skulls';
     p.res.skulls -= cost;

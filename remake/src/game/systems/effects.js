@@ -97,6 +97,7 @@ export const Effects = {
       const visit = (u) => {
         if (!u.alive || u === s || !u.st) return;
         const friend = u.owner && s.owner.isFriend(u.owner);
+        if (u.owner && s.owner.isNeutral(u.owner)) return;       // auras help friends and harm enemies, not neutral players
         if ((A.who === 'friend') !== !!friend) return;
         if (A.match && !A.match(u)) return;
         if (Math.hypot(u.pos.x - s.pos.x, u.pos.z - s.pos.z) - (u.radius || 0) > r) return;

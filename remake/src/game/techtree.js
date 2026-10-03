@@ -120,13 +120,18 @@ export class TechTree {
   enable(path) {
     const n = this.enabled.get(path) || 0;
     this.enabled.set(path, n + 1);
-    if (!n && this.base.filter(path)) this.rebuild();
+    if (!n && this.base.filter(path)) this.changed();
   }
   disable(path) {
     const n = this.enabled.get(path) || 0;
     if (!n) return;
-    if (n === 1) { this.enabled.delete(path); if (this.base.filter(path)) this.rebuild(); } else this.enabled.set(path, n - 1);
+    if (n === 1) { this.enabled.delete(path); if (this.base.filter(path)) this.changed(); } else this.enabled.set(path, n - 1);
   }
+  // batch: between suspend() and resume() filter switches do not rebuild the tree (a campaign map places hundreds of
+  // buildings and levelled units per player at once); resume() rebuilds once if anything changed. Calls nest.
+  changed() { if (this.held) this.dirty = true; else this.rebuild(); }
+  suspend() { this.held = (this.held || 0) + 1; }
+  resume() { if (this.held && --this.held === 0 && this.dirty) { this.dirty = false; this.rebuild(); } }
   has(path) { return this.enabled.has(path); }
   node(path) { return nodeAt(this.root, path); }
   get(path, d) { const v = scalar(this.node(path)); return v === undefined ? d : v; }

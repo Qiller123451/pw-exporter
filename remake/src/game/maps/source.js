@@ -22,6 +22,7 @@
 //   nests[]     {species, x, z, max, rate, amount, swim, start[]}  respawning nests (start = pre-spawned animals)
 //   starts[]    [x, z] start locations; bases[] = the two used by this skirmish
 //   models      Set of model names the map needs (loaded on top of the tribes' models)
+//   origin      original maps: [ox, oy] with game x = map x - ox, game z = oy - map y
 // Game coordinates: x east, z south, y up, (0, 0) = centre of the world.
 import { MAP, heightFn, splatFn, generate } from '../mapgen.js';
 import { fbm } from '../../engine/terrain.js';
@@ -105,7 +106,10 @@ export function originalSource(md, D, cfg, manifest) {
 
   const trees = [], decor = [], stones = [], bushes = [], fish = [], animals = [], starts = [], nests = [];
   const woodOf = (g) => D.resourceValue ? (D.resourceValue('WOOD', g + '_timber') || 300) : 300;
+  // campaign missions place their units, buildings and addressed scenery themselves (game/campaign/setup.js)
+  const skip = cfg && cfg.skipObjects ? cfg.skipObjects : null;
   for (const o of md.objects) {
+    if (skip && skip.has(o.name)) continue;
     const [x, z] = toGame(o.x, o.y);
     const cls = o.cls, script = scriptOf(cls), g = gfxOf(cls);
     switch (o.type) {
@@ -171,6 +175,7 @@ export function originalSource(md, D, cfg, manifest) {
     // wall grid: tile centres at map x ≡ 4, y ≡ 4 (mod 8) -> game x = mx - ox, z = oy - my (docs/spec/walls.md §2)
     wallGrid: [(((4 - ox) % 8) + 8) % 8, (((oy - 4) % 8) + 8) % 8],
     size, meshCell: size > 1400 ? 4 : 2, play, water: md.water,
+    origin: [ox, oy],                 // map (x, y) -> game (x - ox, oy - y)
     height,
     textures: [0, 1, 2, 3, 4, 5, 6, 7].map((k) => `${md.setting}/scape_${k}.jpg`), scales: [0, 1, 2, 3, 4, 5, 6, 7].map(() => [1 / 24, 1 / 24]),
     splat, minimapColors: null,

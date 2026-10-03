@@ -71,7 +71,7 @@ export class Overlay {
   }
   visibleToMe(e) {
     const G = this.G;
-    if (e.owner === G.me) return true;
+    if (G.sees(e.owner)) return true;
     return G.fow.visible(e.pos.x, e.pos.z);
   }
   update(dt) {
@@ -87,8 +87,8 @@ export class Overlay {
     };
     for (const e of G.sel) {
       if (!e.alive) continue;
-      const own = e.owner === G.me;
-      const col = own ? 0x7dff6a : e.owner ? 0xff4a3a : e.kind === 'res' ? 0xffe070 : 0xffb050;
+      const own = e.owner === G.me, rel = e.owner && !own ? G.me.relation(e.owner) : 0;
+      const col = own ? 0x7dff6a : e.owner ? (rel === 2 ? 0x6ab4ff : rel === 1 ? 0xf0e060 : 0xff4a3a) : e.kind === 'res' ? 0xffe070 : 0xffb050;
       put(e.pos.x, e.pos.z, (e.kind === 'building' ? e.radius * 1.05 : e.radius * 1.25 + 0.2), col);
     }
     const tg = new Set();
@@ -124,7 +124,7 @@ export class Overlay {
       ctx.fillRect(s.x - bw / 2, s.y, bw * Math.max(0, Math.min(1, f)), 4);
       return s;
     };
-    const hpCol = (e, f) => e.owner === G.me ? (f > 0.6 ? '#6fdc5a' : f > 0.3 ? '#e8c43a' : '#e4492f') : e.owner ? (f > 0.5 ? '#ff6a4a' : '#d42a1a') : '#ffae3a';
+    const hpCol = (e, f) => e.owner === G.me ? (f > 0.6 ? '#6fdc5a' : f > 0.3 ? '#e8c43a' : '#e4492f') : e.owner ? (G.me.isEnemy(e.owner) ? (f > 0.5 ? '#ff6a4a' : '#d42a1a') : G.me.isFriend(e.owner) ? '#6ab4ff' : '#e8dc6a') : '#ffae3a';
     const draw = (e) => {
       if (!e.alive || e.kind === 'res') return;
       const show = G.sel.has(e) || e === hover || e.hp < e.maxHp - 0.5 || G.input.keys.AltLeft;
@@ -189,8 +189,8 @@ export class Minimap {
   update(dt, force) {
     this.t -= dt;
     if (this.t > 0 && !force) return;
-    this.t = 0.25;
     const G = this.G, ctx = this.ctx, S = this.S;
+    this.t = G.mission && G.mission.markers.length ? 0.08 : 0.25;      // mission markers pulse: redraw more often
     ctx.drawImage(this.bg, 0, 0);
     // stones
     ctx.fillStyle = '#c8c4b8';
@@ -211,7 +211,7 @@ export class Minimap {
     const me = G.me;
     for (const b of G.world.buildings) {
       if (!b.alive) continue;
-      if (b.owner !== me && !f.explored_(b.pos.x, b.pos.z)) continue;
+      if (b.parked || !b.owner || (b.owner !== me && !f.explored_(b.pos.x, b.pos.z))) continue;
       const [x, y] = this.w2m(b.pos.x, b.pos.z);
       const r = Math.max(3, b.radius / (2 * this.half) * S * 1.2);
       ctx.fillStyle = '#000'; ctx.fillRect(x - r - 1, y - r - 1, 2 * r + 2, 2 * r + 2);
@@ -219,7 +219,7 @@ export class Minimap {
     }
     for (const u of G.world.units) {
       if (!u.alive) continue;
-      if (u.owner !== me && !f.visible(u.pos.x, u.pos.z)) continue;
+      if (u.parked || u.inside || (!G.sees(u.owner) && !f.visible(u.pos.x, u.pos.z))) continue;
       const [x, y] = this.w2m(u.pos.x, u.pos.z);
       ctx.fillStyle = u.owner ? '#' + u.owner.color.toString(16).padStart(6, '0') : '#ffc040';
       const r = u.radius > 2 ? 2.5 : 1.6;
@@ -233,6 +233,8 @@ export class Minimap {
       ctx.strokeStyle = `rgba(255,60,40,${1 - k})`; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.arc(x, y, 4 + k * 14, 0, Math.PI * 2); ctx.stroke();
     }
+    // campaign: the quest / hint markers of the mission (ui/mission.js)
+    if (G.mission && G.mission.drawMinimap) G.mission.drawMinimap(ctx, this);
     // camera view
     const corners = G.input.viewCorners();
     if (corners) {

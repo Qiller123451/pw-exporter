@@ -4,7 +4,8 @@
     game.data                               # .../Data
     game.mods                               # ['Base', 'BoosterPack1', ...] present, in override order
     game.file('Scripts/Server/settings/techtree/_TechTree.ttree')   # newest mod's copy wins
-    game.archives()                         # {'all_animals': '.../Base/GSF/all_animals.gsf', ...}
+    game.archives()                         # {'all_animals': '.../Base/GSF/all_animals.gsf', ...} newest mod's copy
+    game.archive_list()                     # every copy: [{'mod', 'name', 'path'}]
     game.locales()                          # ['uk', 'de', ...] text languages
     Install.find()                          # guess install folders on this computer
 
@@ -137,6 +138,20 @@ class Install:
             for f in sorted(os.listdir(g)):
                 if f.lower().endswith('.gsf'):
                     out[os.path.splitext(f)[0].lower()] = os.path.join(g, f)
+        return out
+
+    def archive_list(self):
+        """every .gsf of every mod, nothing replaced: [{'mod', 'name', 'path'}] in mod order (Base first). The same
+        archive name in several mods (all_characters.gsf in Base, BoosterPack3, MIRAGE, Wintermod ...) gives one
+        entry each: the exporter lists every copy of a model and lets the user pick the mod."""
+        out = []
+        for m in self.model_mods:
+            g = _ci_join(os.path.join(self.data, m), 'GSF')
+            if not g:
+                continue
+            for f in sorted(os.listdir(g)):
+                if f.lower().endswith('.gsf'):
+                    out.append({'mod': m, 'name': os.path.splitext(f)[0].lower(), 'path': os.path.join(g, f)})
         return out
 
     def archive_mod(self, path):

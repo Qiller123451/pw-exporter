@@ -33,7 +33,7 @@ export const FLAGS = {
   Vgtn: { 18: 'SelVol', 19: 'TreeBillboard' },
   RIVR: { 18: 'SelVol', 21: 'UseWaterShader', 31: 'Unknown (ice_river_1)' },
 };
-export function flagName(fourcc, b) { return (FLAGS[fourcc] || {})[b] || null; }
+export function flagName(fourcc, b) { return b < 5 ? 'LOD' + b : (FLAGS[fourcc] || {})[b] || null; }
 const SELVOL = new Set(['Char', 'Ress', 'Bldg', 'Deko', 'Vehi', 'Fiel', 'Misc', 'Anim', 'Vgtn', 'RIVR']);
 const NIGHT = new Set(['Bldg', 'Deko', 'Fiel', 'Misc', 'Ship']);
 const STATES = new Set(['Bldg', 'Wall', 'Fiel', 'Misc', 'Deko', 'Vgtn', 'Ship']);   // construction / damage bits 21-28
@@ -97,15 +97,18 @@ export function describe(root, fourcc) {
     const h = helper(a, fourcc) || (isHull(n) ? 'pick' : null);
     if (h === 'pick' || h === 'shadow' || h === 'billboard') helpers = true;
   }
+  // how many chunks have each of the 32 bits (the Visibility checkboxes show all of them)
+  const all = new Array(32).fill(0);
+  for (const n of nodes) { const a = n.userData.attr >>> 0; for (let k = 0; k < 32; k++) if ((a >>> k) & 1) all[k]++; }
   return { fourcc, dynamic: DYNAMIC.includes(fourcc), flags: [...flags.keys()].sort((x, y) => x - y), ages: [...ages].sort(), stages, damage, night, helpers, fx,
-    res: [...res].sort(), lods: [0, 1, 2, 3, 4].filter((k) => (lods >> k) & 1), bits: [...bits.entries()].sort((x, y) => x[0] - y[0]) };
+    res: [...res].sort(), lods: [0, 1, 2, 3, 4].filter((k) => (lods >> k) & 1), bits: [...bits.entries()].sort((x, y) => x[0] - y[0]), all, chunks: nodes.length };
 }
 // default state: the in-game look of an owned unit / a finished intact building of its latest epoch, LoD 0
 export function defaultState(info) {
   const flags = {};
   for (const b of info.flags) flags[b] = b === 11 ? true : b === 8 || b === 10 || b === 16 || b >= 20 ? false : true;
   return { flags, level: 4, dmg: 0, age: info.ages.length ? Math.max(...info.ages) : 1, night: false, helpers: false, fx: false,
-    res: info.res && info.res.length ? Math.max(...info.res) : 0, lod: 0, vis: {} };
+    res: info.res && info.res.length ? Math.max(...info.res) : 0, lod: 0, filter: {} };
 }
 // the game's rules (Model Parts) for one chunk
 function gameVisible(n, a, fourcc, st) {
@@ -122,19 +125,25 @@ function gameVisible(n, a, fourcc, st) {
   if (!STATES.has(fourcc)) return true;
   return sigVisible(staticSig(a), st.level, st.dmg, st.age);
 }
-// apply a state; returns the names of the hidden mesh nodes (sent to the exporter).
-// st.lod: the level of detail shown (chunks with a LoD mask that lacks it are hidden);
-// st.vis: Visibility overrides {bit: true | false} - false hides every chunk with that bit, true shows them.
+// The mask of the ticked Visibility checkboxes (st.filter = {bit: true}); 0 = no filter.
+export function filterMask(st) {
+  let m = 0;
+  for (const k in st.filter || {}) if (st.filter[k]) m |= (1 << k);
+  return m >>> 0;
+}
+// Apply a state; returns the names of the hidden mesh nodes (sent to the exporter). Two ways to decide:
+//  * the bit filter (Visibility checkboxes): with any of the 32 bits ticked, a chunk shows exactly when every ticked
+//    bit is set in its flag field - nothing else counts (no grouping, no helper rules);
+//  * else the in-game look (the preset controls): the game's rules for the chosen epoch / construction stage /
+//    condition / equipment, at the level of detail st.lod.
 export function apply(root, fourcc, st) {
   const hidden = [];
-  const lod = st.lod || 0, vis = st.vis || {};
+  const mask = filterMask(st), lod = st.lod || 0;
   for (const n of flagged(root)) {
     const a = n.userData.attr >>> 0;
-    let ok = gameVisible(n, a, fourcc, st);
-    let forceOn = false, forceOff = false;
-    for (const k in vis) { if ((a >>> k) & 1) { if (vis[k]) forceOn = true; else forceOff = true; } }
-    if (forceOff) ok = false; else if (forceOn) ok = true;
-    if (lodMask(a) && !((a >>> lod) & 1)) ok = false;
+    let ok;
+    if (mask) ok = ((a & mask) >>> 0) === mask;
+    else ok = gameVisible(n, a, fourcc, st) && !(lodMask(a) && !((a >>> lod) & 1));
     n.visible = ok;
     if (!ok && n.userData.nodeName) hidden.push(n.userData.nodeName);
   }

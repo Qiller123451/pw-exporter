@@ -1,7 +1,12 @@
 """Run the rule scenarios of tests/scenarios.js in a headless game: python3 tests/scenarios.py [url options]"""
+import os as _os
+try:
+    import fcntl as _f; _lk = open(_os.environ.get('PWR_LOCK', '/tmp/pwr_browser.lock'), 'w'); _f.flock(_lk, _f.LOCK_EX)   # one headless browser at a time (memory)
+except ImportError:
+    pass
 import sys, time
 from playwright.sync_api import sync_playwright
-url = 'http://127.0.0.1:8411/index.html?manual&reveal' + (sys.argv[1] if len(sys.argv) > 1 else '&tribe=Hu&enemy=Aje')
+url = 'http://127.0.0.1:' + __import__('os').environ.get('PWR_PORT', '8411') + '/index.html?manual&reveal' + (sys.argv[1] if len(sys.argv) > 1 else '&tribe=Hu&enemy=Aje')
 with sync_playwright() as p:
     b = p.chromium.launch(args=['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'])
     pg = b.new_page(viewport={'width': 1280, 'height': 720})
