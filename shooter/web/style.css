@@ -1,0 +1,107 @@
+/* ParaWorld shooter: HUD and menu screens. Colours: sandstone, bronze, a cold blue for armour, red for health. */
+:root { --sand: #e9dcc0; --bronze: #c8964a; --dark: rgba(18, 14, 10, 0.72); --blue: #7fc4ff; --red: #e0452e; --font: "Segoe UI", system-ui, -apple-system, sans-serif; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0d10; color: var(--sand); font-family: var(--font); user-select: none; }
+#game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+#hud, #overlay { position: fixed; inset: 0; pointer-events: none; }
+#hud { text-shadow: 0 1px 3px #000; }
+
+/* crosshair: four ticks that open with the spread, a dot */
+.cross { position: absolute; left: 50%; top: 50%; --gap: 8px; }
+.cross i { position: absolute; background: #fff; box-shadow: 0 0 2px #000; opacity: 0.85; }
+.cross i:nth-child(1) { width: 2px; height: 9px; left: -1px; top: calc(-9px - var(--gap)); }
+.cross i:nth-child(2) { width: 2px; height: 9px; left: -1px; top: var(--gap); }
+.cross i:nth-child(3) { width: 9px; height: 2px; top: -1px; left: calc(-9px - var(--gap)); }
+.cross i:nth-child(4) { width: 9px; height: 2px; top: -1px; left: var(--gap); }
+.cross b { position: absolute; width: 3px; height: 3px; left: -1.5px; top: -1.5px; background: #fff; border-radius: 50%; box-shadow: 0 0 2px #000; }
+.cross.melee i { border-radius: 2px; background: var(--bronze); }
+.hitm { position: absolute; left: 50%; top: 50%; opacity: 0; }
+.hitm.on { opacity: 1; }
+.hitm i { position: absolute; width: 12px; height: 2px; background: #fff; transform-origin: 0 50%; }
+.hitm i:nth-child(1) { transform: rotate(45deg) translate(7px); } .hitm i:nth-child(2) { transform: rotate(135deg) translate(7px); }
+.hitm i:nth-child(3) { transform: rotate(225deg) translate(7px); } .hitm i:nth-child(4) { transform: rotate(315deg) translate(7px); }
+.hitm.kill i { background: var(--red); width: 16px; height: 3px; } .hitm.head i { background: #ffd24a; }
+
+/* damage */
+.vign { position: absolute; inset: 0; opacity: 0; transition: opacity 0.35s; background: radial-gradient(ellipse at center, transparent 55%, rgba(127, 196, 255, 0.35) 100%); }
+.vign.hp { background: radial-gradient(ellipse at center, transparent 45%, rgba(200, 20, 10, 0.55) 100%); }
+.vign.on { opacity: 1; transition: none; }
+.vign.low { opacity: 0.75; background: radial-gradient(ellipse at center, transparent 40%, rgba(160, 10, 5, 0.6) 100%); animation: pulse 0.9s infinite alternate; }
+@keyframes pulse { from { opacity: 0.45; } to { opacity: 0.85; } }
+.dmgdir { position: absolute; left: 50%; top: 50%; }
+.dmgdir i { position: absolute; left: -60px; top: -150px; width: 120px; height: 300px; transform-origin: 50% 50%; animation: fade 0.7s forwards; }
+.dmgdir i::before { content: ""; position: absolute; left: 20px; top: 0; width: 80px; height: 16px; border-radius: 50% 50% 0 0; background: linear-gradient(rgba(230, 40, 20, 0.9), transparent); }
+@keyframes fade { to { opacity: 0; } }
+
+/* objective */
+.objective { position: absolute; top: 22px; left: 50%; transform: translateX(-50%); text-align: center; }
+.objective small { letter-spacing: 0.3em; font-size: 11px; color: var(--bronze); }
+.objective div { font-size: 20px; font-weight: 600; }
+.objective em { font-style: normal; font-size: 15px; color: #fff; }
+.marker { position: absolute; left: 0; top: 0; }
+.marker span { position: absolute; left: -9px; top: -9px; width: 14px; height: 14px; border: 2px solid var(--bronze); background: rgba(200, 150, 74, 0.35); transform: rotate(45deg); }
+.marker em { position: absolute; left: -40px; top: 12px; width: 80px; text-align: center; font-style: normal; font-size: 12px; }
+.marker.edge span { background: var(--bronze); }
+.kills { position: absolute; right: 28px; top: 22px; text-align: right; }
+.kills b { font-size: 34px; line-height: 1; display: block; } .kills small { letter-spacing: 0.25em; font-size: 11px; color: var(--bronze); }
+.kills em { display: block; font-style: normal; font-size: 22px; color: #ffd24a; font-weight: 700; }
+
+/* characters: health and armour */
+.chars { position: absolute; left: 28px; bottom: 26px; display: flex; flex-direction: column-reverse; gap: 10px; }
+.ch { width: 190px; opacity: 0.7; } .ch b { font-size: 12px; font-weight: 600; } .ch small { float: right; font-size: 11px; color: var(--bronze); margin-top: -34px; }
+.ch.act { width: 300px; opacity: 1; } .ch.act b { font-size: 16px; }
+.ch.dead { opacity: 0.35; }
+.arm { display: flex; gap: 4px; margin: 4px 0; }
+.arm u { flex: 1; height: 7px; background: rgba(0, 0, 0, 0.55); border: 1px solid rgba(127, 196, 255, 0.5); transform: skewX(-20deg); }
+.arm s { display: block; height: 100%; background: var(--blue); }
+.hp { height: 10px; background: rgba(0, 0, 0, 0.55); border: 1px solid rgba(233, 220, 192, 0.4); }
+.hp s { display: block; height: 100%; background: linear-gradient(#f0624a, #b52a18); transition: width 0.15s; }
+.ch.act .hp { height: 14px; } .ch.act .arm u { height: 10px; }
+
+/* weapon */
+.weapon { position: absolute; right: 28px; bottom: 26px; text-align: right; }
+.wn { font-size: 14px; letter-spacing: 0.1em; color: var(--bronze); text-transform: uppercase; }
+.am b { font-size: 44px; line-height: 1; font-weight: 700; } .am small { font-size: 16px; opacity: 0.7; margin-left: 6px; }
+.am .rel { font-size: 22px; color: #ffd24a; }
+.fuel { display: inline-block; width: 220px; height: 14px; background: rgba(0, 0, 0, 0.55); border: 1px solid rgba(233, 220, 192, 0.4); margin: 12px 0 6px; }
+.fuel s { display: block; height: 100%; background: linear-gradient(90deg, #ffb02e, #ff5a1e); float: right; }
+.wl span { font-size: 12px; margin-left: 12px; opacity: 0.55; } .wl span.on { opacity: 1; color: #fff; border-bottom: 2px solid var(--bronze); }
+.abil { position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%); display: flex; gap: 26px; font-size: 13px; }
+.abil em { font-style: normal; border: 1px solid var(--bronze); padding: 1px 6px; margin-right: 6px; border-radius: 3px; background: var(--dark); }
+.abil u { display: inline-block; width: 12px; height: 12px; margin-left: 4px; border: 1px solid var(--bronze); transform: rotate(45deg); }
+.abil u.on { background: #ffb02e; } .abil .cd { opacity: 0.35; }
+
+/* messages */
+.notes { position: absolute; left: 50%; top: 62%; transform: translateX(-50%); text-align: center; font-size: 15px; letter-spacing: 0.06em; }
+.notes div { transition: opacity 0.5s; } .notes .out { opacity: 0; }
+.prompt { position: absolute; left: 50%; top: 56%; transform: translateX(-50%); font-size: 18px; font-weight: 700; color: #ff7a5c; letter-spacing: 0.1em; }
+.banner { position: absolute; left: 0; right: 0; top: 24%; text-align: center; opacity: 0; transition: opacity 0.6s; }
+.banner.on { opacity: 1; } .banner h2 { margin: 0; font-size: 40px; letter-spacing: 0.12em; font-weight: 300; text-transform: uppercase; }
+.banner p { margin: 6px 0 0; font-size: 20px; color: var(--bronze); }
+.boss { position: absolute; left: 50%; top: 92px; transform: translateX(-50%); width: 46%; text-align: center; display: none; }
+.boss.on { display: block; } .boss span { font-size: 14px; letter-spacing: 0.2em; text-transform: uppercase; }
+.boss div { height: 12px; background: rgba(0, 0, 0, 0.6); border: 1px solid var(--bronze); margin-top: 4px; }
+.boss i { display: block; height: 100%; background: linear-gradient(#e0452e, #8c1d10); transition: width 0.2s; }
+.fps { position: absolute; left: 10px; top: 8px; font: 12px monospace; opacity: 0.8; }
+
+/* screens */
+#overlay.on { pointer-events: auto; background: rgba(10, 8, 6, 0.62); display: flex; align-items: center; justify-content: center; }
+.panel { background: var(--dark); border: 1px solid rgba(200, 150, 74, 0.6); padding: 26px 34px; max-width: 860px; max-height: 92vh; overflow: auto; box-shadow: 0 10px 60px #000; }
+.panel h1 { margin: 0; font-weight: 300; font-size: 38px; letter-spacing: 0.1em; text-transform: uppercase; }
+.panel .sub { color: var(--bronze); letter-spacing: 0.2em; text-transform: uppercase; margin: 2px 0 14px; }
+.load { width: 460px; } .bar { height: 8px; background: rgba(0, 0, 0, 0.6); border: 1px solid var(--bronze); } .bar i { display: block; height: 100%; width: 0; background: var(--bronze); }
+.st { font-size: 13px; opacity: 0.8; min-height: 1.2em; }
+.pick { display: flex; gap: 14px; margin: 16px 0 6px; } .pick.one { justify-content: flex-start; }
+button { font: inherit; color: var(--sand); background: rgba(200, 150, 74, 0.16); border: 1px solid var(--bronze); padding: 12px 18px; cursor: pointer; text-align: left; flex: 1; }
+.pick.one button { flex: 0 0 auto; }
+button:hover { background: rgba(200, 150, 74, 0.4); } button b { display: block; font-size: 18px; } button span { font-size: 13px; opacity: 0.85; }
+.hint { font-size: 13px; opacity: 0.75; margin: 0 0 14px; }
+.cols { display: flex; gap: 30px; flex-wrap: wrap; }
+.keys { border-collapse: collapse; font-size: 13px; } .keys th { text-align: right; padding: 2px 12px 2px 0; color: var(--bronze); font-weight: 600; white-space: nowrap; } .keys td { padding: 2px 0; }
+.stats { font-size: 17px; margin: 10px 0 16px; }
+.set { display: flex; flex-direction: column; gap: 10px; font-size: 13px; min-width: 240px; }
+.set select, .set input[type=range] { display: block; width: 100%; margin-top: 3px; }
+.set select { background: #1b1612; color: var(--sand); border: 1px solid var(--bronze); padding: 4px; font: inherit; }
+
+/* log file note in the menus */
+.panel .hint code { font-size: 12px; word-break: break-all; user-select: all; opacity: .9; }
+.panel .hint.warn { color: #ffb37a; }
