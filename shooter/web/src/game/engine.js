@@ -61,5 +61,50 @@ export class Engine {
     this.sun.target.updateMatrixWorld();
   }
 
+  // Before the first picture: hand the textures to the graphics card a few at a time and let it build the shaders
+  // in the background. Left to the first frame, all of that is one single job for the graphics driver - on the big
+  // map it took 16 s, the browser took the driver for hung and threw the WebGL context away (white screen).
+  // roots: more model trees whose textures will be needed (the enemies' and troops' templates).
+  async warm(roots = [], progress = () => {}) {
+    const r = this.renderer, gl = r.getContext(), texs = new Set(), out = { textures: 0, images: 0, texMs: 0, shaderMs: 0, frameMs: 0 };
+    const KEYS = ['map', 'normalMap', 'alphaMap', 'emissiveMap', 'specularMap', 'aoMap', 'lightMap'];
+    const take = (o) => {
+      const ms = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
+      for (const m of ms) {
+        for (const k of KEYS) if (m[k] && m[k].isTexture) texs.add(m[k]);
+        for (const u of Object.values(m.uniforms || {})) if (u && u.value && u.value.isTexture) texs.add(u.value);
+      }
+    };
+    this.scene.traverse(take);
+    for (const root of roots) if (root) root.traverse(take);
+    const all = [...texs].filter((t) => t.image && (t.image.width || t.image.videoWidth) && t.image.complete !== false);
+    // Every model file brings its own texture objects, also for a picture dozens of models share (the tribes'
+    // texture sheets): with the loader's cache on (main.js) those are one and the same image, so they can share one
+    // texture on the graphics card (three.js does that for textures with the same `source`). Without this the big
+    // map put ~600 textures there instead of ~150.
+    const seen = new Map(), list = [];
+    for (const t of all) { const s = seen.get(t.image); if (s) t.source = s; else { seen.set(t.image, t.source); } list.push(t); }
+    out.images = seen.size;
+    const pause = () => new Promise((res) => setTimeout(res, 0));
+    let t0 = performance.now(), tick = t0;
+    for (const t of list) {
+      try { r.initTexture(t); } catch (e) { /* a texture the renderer cannot take yet: the first frame will */ }
+      out.textures++;
+      if (performance.now() - tick > 40) { gl.flush(); progress(0.7 * out.textures / list.length, 'Preparing the graphics'); await pause(); tick = performance.now(); }
+    }
+    gl.finish();
+    out.texMs = Math.round(performance.now() - t0);
+    t0 = performance.now();
+    progress(0.75, 'Preparing the graphics');
+    try { await Promise.race([r.compileAsync(this.scene, this.camera), new Promise((res) => setTimeout(res, 90000))]); } catch (e) { /* older three: the first frame compiles */ }
+    out.shaderMs = Math.round(performance.now() - t0);
+    progress(0.95, 'Preparing the graphics');
+    await pause();
+    t0 = performance.now();
+    this.render(); gl.finish();                          // what is left (the geometry, the shadow pass) goes with this frame
+    out.frameMs = Math.round(performance.now() - t0);
+    return out;
+  }
+
   render() { this.renderer.render(this.scene, this.camera); }
 }

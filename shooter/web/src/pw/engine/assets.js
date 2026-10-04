@@ -95,11 +95,30 @@ export function tagWallArms(root) {
     e.arm = arm;
     groups.get(key).push(e);
   }
-  // variants sorted by height: the k-th variant of opposite arms then has the same height, so a segment whose two
-  // halves use the same pick (same edge) has an even top
+  // The variants of an arm are not looks but slopes: wall pieces stand at heights in 2 m steps and never level the
+  // ground, so every arm comes level, 2 m lower and 2 m higher at its outer end (clay wall: walkway 4..4.8, 2..4.9,
+  // 4..6.9) and the engine takes the one that meets the neighbour's piece. userData.slope = -1 / 0 / 1 (measured
+  // against the commonest height of the group), userData.slopes = bit mask of the slopes the group has, and
+  // variant / vcount count only the pieces of the same slope (two level ones: a free choice).
   for (const g of groups.values()) {
-    g.sort((a, b) => a.box.max.z - b.box.max.z || a.box.min.z - b.box.min.z);
-    g.forEach((e, k) => { for (const o of e.meshes) { o.userData.arm = e.arm; o.userData.variant = k; o.userData.vcount = g.length; } });
+    if (g.length < 2) { for (const o of g[0].meshes) { o.userData.arm = g[0].arm; o.userData.variant = 0; o.userData.vcount = 1; } continue; }
+    const mid = (e) => Math.round((e.box.min.z + e.box.max.z) * 2) / 2;
+    const count = new Map();
+    for (const e of g) count.set(mid(e), (count.get(mid(e)) || 0) + 1);
+    const sorted = [...count.keys()].sort((a, b) => a - b);
+    let ref = sorted[Math.floor((sorted.length - 1) / 2)];
+    for (const k of sorted) if (count.get(k) > count.get(ref)) ref = k;
+    let have = 0;
+    const by = new Map();
+    for (const e of g) {
+      e.slope = Math.max(-1, Math.min(1, Math.round((mid(e) - ref) / 2)));
+      have |= 1 << (e.slope + 1);
+      if (!by.has(e.slope)) by.set(e.slope, []);
+      by.get(e.slope).push(e);
+    }
+    for (const [sl, list] of by) list.forEach((e, k) => {
+      for (const o of e.meshes) { o.userData.arm = e.arm; o.userData.slope = sl; o.userData.slopes = have; o.userData.variant = k; o.userData.vcount = list.length; }
+    });
   }
 }
 
@@ -113,7 +132,7 @@ function mergeStatic(root, animatedNodes) {
     if (!o.isMesh || o.isSkinnedMesh || o.isInstancedMesh || o.userData.sprite) return;
     if (animatedNodes.size && moving(o)) { if (o.userData.attr !== undefined) { const sg = staticSig(o.userData.attr >>> 0); if (sg !== 0x1fff) o.userData.sig = sg; } return; }
     const sig = o.userData.attr !== undefined ? staticSig(o.userData.attr >>> 0) : 0x1fff;
-    const k = o.material.uuid + '|' + Object.keys(o.geometry.attributes).sort().join(',') + '|' + (o.geometry.index ? 1 : 0) + '|' + sig + '|' + (o.userData.arm ?? '') + '|' + (o.userData.vcount > 1 ? o.userData.variant + '/' + o.userData.vcount : '');
+    const k = o.material.uuid + '|' + Object.keys(o.geometry.attributes).sort().join(',') + '|' + (o.geometry.index ? 1 : 0) + '|' + sig + '|' + (o.userData.arm ?? '') + '|' + (o.userData.slope !== undefined || o.userData.vcount > 1 ? (o.userData.slope ?? '') + ':' + o.userData.variant + '/' + o.userData.vcount : '');
     o.userData.sigTmp = sig;
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(o);
@@ -134,6 +153,7 @@ function mergeStatic(root, animatedNodes) {
     if (sig !== 0x1fff) mesh.userData.sig = sig;
     if (list[0].userData.arm !== undefined) mesh.userData.arm = list[0].userData.arm;
     if (list[0].userData.vcount > 1) { mesh.userData.variant = list[0].userData.variant; mesh.userData.vcount = list[0].userData.vcount; }
+    if (list[0].userData.slope !== undefined) { mesh.userData.slope = list[0].userData.slope; mesh.userData.slopes = list[0].userData.slopes; mesh.userData.variant = list[0].userData.variant; mesh.userData.vcount = list[0].userData.vcount; }
     root.add(mesh);
     for (const m of list) m.removeFromParent();
   }

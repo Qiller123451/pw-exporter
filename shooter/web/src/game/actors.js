@@ -66,6 +66,35 @@ export class Actor {
   }
 }
 
+// Something built onto a model with its own animation and crew - a turret, a catapult:
+//   addon = {model, link, clip, crew: [[model, link on the addon, idle clip, clip when it fires]]}
+// Returns {obj, links, fire(), update(dt), muzzle(out)} (or null); fire() plays the addon's and the crew's clips once.
+export function addAddon(actor, A, templates) {
+  const t = templates.get(A.model), obj = t && actor.attach(A.link, t);
+  if (!obj) return null;
+  const links = linksOf(obj), anim = new AnimCtl(obj, t.clips), crew = [];
+  for (const [m, link, idle, atk] of A.crew || []) {
+    const ct = templates.get(m), l = links[link];
+    if (!ct || !l) continue;
+    const o = cloneModel(ct);
+    if (o.children[0]) o.children[0].rotation.set(0, 0, 0);
+    o.traverse((x) => { if (x.isMesh) { x.castShadow = true; x.frustumCulled = false; } });
+    l.add(o);
+    const an = new AnimCtl(o, ct.clips), c = an.pick(idle, 'standanim');
+    if (c) an.play(c, { loop: true });
+    crew.push({ an, idle: c, atk });
+  }
+  return {
+    obj, links,
+    fire() {
+      if (anim.has(A.clip)) anim.play(A.clip, { loop: false, restart: true, fade: 0.05 });
+      for (const c of crew) if (c.atk && c.an.has(c.atk)) c.an.play(c.atk, { loop: false, restart: true, fade: 0.1, onDone: () => { if (c.idle) c.an.play(c.idle, { loop: true }); } });
+    },
+    update(dt) { anim.update(dt); for (const c of crew) c.an.update(dt); },
+    muzzle(out) { const l = links[A.muzzle || 'Proj'] || links.unnamed; return l ? l.getWorldPosition(out) : obj.getWorldPosition(out).setY(out.y + 1); },
+  };
+}
+
 // clips of another model that has the same skeleton, fitted to this model's proportions
 export function borrowClips(dstTpl, srcTpl, names) {
   const want = new Set(names.map((n) => n.toLowerCase()));

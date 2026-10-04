@@ -36,7 +36,8 @@ export const CFG = {
     pitchMin: -70, pitchMax: 75,
   },
 
-  physics: { gravity: 46, airControl: 0.35, groundAccel: 95, friction: 14, stepHeight: 1.1 },
+  // wade: how deep the water may be to walk in (deeper water stops the player like a wall)
+  physics: { gravity: 46, airControl: 0.35, groundAccel: 95, friction: 14, stepHeight: 1.1, wade: 1.3 },
 
   // ---------------------------------------------------------------- the two player characters
   // model: the body. clipsFrom: other models (same skeleton) whose animation clips are added.
@@ -60,6 +61,11 @@ export const CFG = {
       weapons: ['mg', 'flamer', 'rocket'],
       aimFov: 48, aimSpeed: 0.65, aimSens: 0.6,           // right mouse button: zoom, walking speed, mouse speed
       fpGun: [-0.42, 0.52, 0.55],                         // first person: the eye relative to the gun's grip [right, up, back]
+      // the ultimate (key G): for `time` seconds bombs fall all around - `every` seconds one, within `radius` of the
+      // Gunner (he can keep moving, the bombardment follows him); `aimed` of them come down on an enemy, the rest
+      // anywhere. Enemies only: nothing of it hurts the Gunner or his own side.
+      ultimate: { name: 'Bombardment', cooldown: 60, time: 4, radius: 44, every: 0.075, aimed: 0.6,
+        bomb: { model: 'seas_rocket', height: 75, fall: 0.6, radius: 9, damage: 240, knock: 30 } },
       death: 'dying', hurt: 'hit_reaction',
       steps: ['04_step/step_unit1.wav', '04_step/step_unit2.wav', '04_step/step_unit3.wav', '04_step/step_unit4.wav'], stepEvery: 5.2,
       voice: 'seas_gunner',
@@ -97,12 +103,14 @@ export const CFG = {
   // kind 'bullet': instant hit along the aim ray     kind 'flame': cone that sets things on fire
   // kind 'rocket': flying projectile that explodes   kind 'melee': swing in an arc in front
   // rate = shots per second; spread in degrees; clip = upper-body animation while firing (loop part "#l" if it has one)
+  // range: how far a bullet carries (nothing is hit beyond it - no sniping at towers from out of their reach);
+  // reach: how far a rocket flies before it goes off by itself
   // barrel: the direction the weapon model shoots in, in its own frame (the upper body is turned until that points
   // where the player aims); barrelLen: from the grip to the muzzle
   weapons: {
     mg: {
       name: 'Machine gun', kind: 'bullet', model: 'seas_gun', hand: 'HndR', barrel: [-0.89, -0.09, 0.46], barrelLen: 2.5,
-      rate: 13, damage: 17, spread: 1.1, spreadAim: 0.35, range: 260, magazine: 90, reload: 1.5, knock: 1.5, stagger: 0.12,
+      rate: 13, damage: 17, spread: 1.1, spreadAim: 0.35, range: 100, magazine: 90, reload: 1.5, knock: 1.5, stagger: 0.12,
       clip: 'seas_gunner_0', tracer: 0xffd27a, kick: 0.05,
       sounds: ['02_battle/arm_gatling_gun_shot1.wav', '02_battle/arm_gatling_gun_shot2.wav', '02_battle/arm_gatling_gun_shot3.wav', '02_battle/arm_gatling_gun_shot4.wav'], volume: 55,
     },
@@ -114,7 +122,7 @@ export const CFG = {
     },
     rocket: {
       name: 'Rocket launcher', kind: 'rocket', model: 'seas_rpg', hand: 'HndR', projectile: 'seas_rocket', barrel: [-0.85, 0.51, 0.15], barrelLen: 1.2, fpGun: [-0.7, 0.75, 0.4],
-      rate: 1.25, damage: 260, radius: 11, speed: 95, magazine: 6, regenEvery: 2.2, knock: 34,
+      rate: 1.25, damage: 260, radius: 11, speed: 95, reach: 130, magazine: 6, regenEvery: 2.2, knock: 34,
       clip: 'seas_rocketman_0', clipAt: 0.95, kick: 0.5,
       sounds: ['02_battle/arm_rocket_shoot1.wav', '02_battle/arm_rocket_shoot2.wav'], volume: 80,
     },
@@ -134,7 +142,7 @@ export const CFG = {
     },
     minigun: {
       name: 'Minigun', kind: 'bullet',
-      rate: 18, damage: 30, spread: 1.6, spreadAim: 0.7, range: 280, magazine: 200, reload: 2.2, knock: 3, stagger: 0.2, pierce: 1, spinUp: 0.35,
+      rate: 18, damage: 30, spread: 1.6, spreadAim: 0.7, range: 85, magazine: 200, reload: 2.2, knock: 3, stagger: 0.2, pierce: 1, spinUp: 0.35,
       clip: 'attack_front_m_0', tracer: 0xffb060, kick: 0.07, barrelLen: 2.0,
       sounds: ['02_battle/arm_minigun_shot1.wav', '02_battle/arm_minigun_shot2.wav'], soundEvery: 0.16, volume: 70,
     },
@@ -214,27 +222,54 @@ export const CFG = {
     },
     stego: {
       // the Dustriders' armoured beast: it turns its back on you and strikes with the spiked tail
+      // attack of the big ones: start = begins that much outside its reach, lunge = speed at which it closes until
+      // the blow lands, arc = degrees of the sweep (everyone in it is hit), turn = rad/s it can follow while striking
       name: 'Stegosaurus rider', models: ['stegosaurus'], held: [['aje_animal_flag_02', 'flag']], riders: [['aje_rider_a', 'Ride']],
-      health: 1300, speed: 9.5, radius: 3.2, height: 7, run: 'walk_3', runSpeed: 7, idle: 'standanim', animal: true, heavy: true,
-      attack: { range: 8, damage: 30, clips: ['attack_back', 'attack_back_left', 'attack_back_right', 'sm_attack_back'], hitAt: 0.55, time: 1.5, ts: 1.0, knock: 30, back: true },
+      health: 1300, speed: 10.5, charge: 14, radius: 3.2, height: 7, run: 'walk_3', runSpeed: 7, idle: 'standanim', animal: true, heavy: true, armor: true, maxAlive: 3,
+      attack: { range: 8, damage: 30, clips: ['attack_back', 'attack_back_left', 'attack_back_right', 'sm_attack_back'], hitAt: 0.55, time: 1.5, ts: 1.0, knock: 30, back: true, start: 3, lunge: 16, arc: 150 },
       die: ['dying'], knock: null, up: null, flinch: 'hit_reaction', taunt: 'menace',
       staggerAt: 350, executable: 0.12, score: 15,
     },
     allosaurus: {
       // the Dustriders' war beast (aje_allosaurus): the animal with its rider and banner, not the wild one
       name: 'Allosaurus rider', models: ['allosaurus'], held: [['aje_animal_flag_03', 'flag']], riders: [['aje_rider_b', 'Ride']],
-      health: 2400, speed: 11, radius: 3.4, height: 9, run: 'walk_3', runSpeed: 7, idle: 'standanim', animal: true, elite: true, heavy: true,
-      attack: { range: 8.5, damage: 34, clips: ['attack_front', 'attack_front_s'], hitAt: 0.55, time: 1.5, ts: 1.0, knock: 26 },
+      health: 2400, speed: 12.5, charge: 19, radius: 3.4, height: 9, run: 'walk_3', runSpeed: 7, idle: 'standanim', animal: true, elite: true, heavy: true,
+      attack: { range: 8.5, damage: 34, clips: ['attack_front', 'attack_front_s'], hitAt: 0.55, time: 1.5, ts: 1.0, knock: 26, start: 3.5, lunge: 18, arc: 100, turn: 3 },
       die: ['dying'], knock: null, up: null, flinch: 'hit_front', taunt: 'roaring',
       staggerAt: 400, executable: 0.12, score: 25,
     },
     trex: {
       // the T-Rex titan (aje_trex): three riders and the banner
       name: 'T-Rex titan', models: ['trex'], held: [['aje_animal_flag_05', 'flag']], riders: [['aje_rider_b', 'Ride'], ['aje_rider_a', 'Rid2'], ['aje_rider_a', 'Rid3']],
-      health: 9000, speed: 10, radius: 4.6, height: 13, run: 'walk_3', runSpeed: 7, idle: 'standanim', animal: true, elite: true, heavy: true, boss: true,
-      attack: { range: 11, damage: 48, clips: ['attack_front', 'attack_2', 'attack_3'], hitAt: 0.6, time: 1.7, ts: 1.0, knock: 34 },
+      health: 9000, speed: 11.5, charge: 17, radius: 4.6, height: 13, run: 'walk_3', runSpeed: 7, idle: 'standanim', animal: true, elite: true, heavy: true, boss: true,
+      attack: { range: 11, damage: 48, clips: ['attack_front', 'attack_3'], hitAt: 0.6, time: 1.7, ts: 1.0, knock: 34, start: 3.5, lunge: 17, arc: 110, turn: 2.6,
+        stomp: { clip: 'attack_2', time: 2.0, hitAt: 0.95, radius: 15, damage: 40, knock: 30, chance: 0.3 } },
       die: ['dying'], knock: null, up: null, flinch: 'hit_reaction', taunt: 'menace',
       staggerAt: 900, executable: 0.08, score: 100,
+    },
+    ankylo: {
+      // the Dustriders' artillery (aje_ankylosaurus): a catapult on the animal's back with its own crew. It keeps its
+      // distance and lobs stones that burst where they land - on you or on your troops. addon: the thing built on
+      // {model, link, clip, crew: [[model, link, idle clip, clip when it fires]]}
+      name: 'Ankylosaurus catapult', models: ['ankylosaurus'], held: [['aje_animal_flag_01', 'flag']], riders: [['aje_rider_a', 'Ride']],
+      addon: { model: 'aje_ankylosaurus_catapult', link: 'con', clip: 'attack_front', crew: [['aje_rider_a', 'Dri1', 'standanim', 'aje_attack_ankylo']] },
+      health: 1100, speed: 7, radius: 3.4, height: 8, scale: 1.3, maxAlive: 6, run: 'walk_2', runSpeed: 5, idle: 'standanim', animal: true, heavy: true,
+      attack: { range: 6.5, damage: 26, clips: ['attack_front', 'attack_01', 'attack_02'], hitAt: 0.5, time: 1.5, ts: 1.0, knock: 22, arc: 120 },
+      ranged: { range: 95, min: 16, damage: 28, releaseAt: 0.9, time: 2.4, every: 6.5, projectile: 'aje_ammo_stone', speed: 40, gravity: 26, keep: 60, splash: 7, stone: true },
+      die: ['dying'], knock: null, up: null, flinch: 'hit_reaction', taunt: 'menace',
+      staggerAt: 320, executable: 0.15, score: 12,
+    },
+    brachio: {
+      // the Dustriders' siege beast (aje_brachiosaurus with the catapult build-up): throws rocks a long way, and
+      // stamps on whatever comes close
+      name: 'Brachiosaurus catapult', models: ['brachiosaurus'], held: [['aje_animal_flag_01', 'flag']], riders: [['aje_rider_b', 'Ride']],
+      addon: { model: 'aje_brachiosaurus_catapult', link: 'con', clip: 'attack_front', crew: [['aje_rider_b', 'Dri1', 'standanim', 'bow_1']] },
+      health: 4200, speed: 6.5, radius: 5, height: 20, run: 'walk_2', runSpeed: 5, idle: 'standanim', animal: true, heavy: true, maxAlive: 2,
+      attack: { range: 9, damage: 30, clips: ['attack_front', 'attack_01', 'attack_02'], hitAt: 1.0, time: 2.4, ts: 1.0, knock: 26, arc: 120,
+        stomp: { clip: 'stomp', time: 2.4, hitAt: 1.1, radius: 14, damage: 34, knock: 28, chance: 0.6 } },
+      ranged: { range: 120, min: 22, damage: 34, releaseAt: 1.1, time: 2.8, every: 7, projectile: 'aje_ammo_stone', speed: 46, gravity: 24, keep: 0, splash: 9, stone: true },
+      die: ['dying'], knock: null, up: null, flinch: 'hit_reaction', taunt: 'menace',
+      staggerAt: 900, executable: 0.1, score: 30,
     },
     // ---- things to destroy (objective type "destroy"): they stand still and only take damage.
     // solid: radius the player cannot walk into; fire: how much more the flamethrower does to them
@@ -242,6 +277,24 @@ export const CFG = {
     bigtent: { name: 'Chieftain\'s tent', structure: true, models: ['aje_big_tent'], held: [], health: 1500, radius: 7, solid: 6, height: 10, fire: 2.5, heavy: true, score: 0 },
     totem: { name: 'Skull totem', structure: true, models: ['aje_skull_protector'], held: [], health: 800, radius: 5, solid: 4, height: 14, fire: 1.5, heavy: true, score: 0 },
     canoe: { name: 'War canoe', structure: true, models: ['aje_catamaran'], held: [], health: 1100, radius: 6, solid: 0, height: 8, fire: 2.5, heavy: true, score: 0 },
+    // (the Dustriders' transport: the giant turtle with the tribe's shell-house and banner on its back - not the wild animal)
+    turtle: { name: 'Transport turtle', structure: true, models: ['macrolemys_water'], held: [], owned: true, idle: 'standanim', sink: 'dying_water',
+      addon: { model: 'aje_transport_turtle', link: 'con', crew: [['aje_animal_flag_01', 'flag']] },
+      health: 1400, radius: 8, solid: 0, height: 7, fire: 1.2, heavy: true, score: 0 },
+    // the war catamaran with its catapult and crew: it shoots back
+    catamaran: { name: 'War catamaran', structure: true, models: ['aje_catamaran'], held: [], riders: [['aje_rider_a', 'Dri1']], idle: 'standanim',
+      health: 1300, radius: 6, solid: 0, height: 8, fire: 2.5, heavy: true, score: 0,
+      ranged: { range: 88, min: 14, damage: 18, every: 4.5, clip: 'attack_front', projectile: 'aje_ammo_stone', speed: 40, gravity: 26, splash: 6, stone: true, link: 'Proj' } },
+    // a gate of the Dustriders' own walls: a wall across the way (wall: half its length and thickness) that the
+    // player and his troops cannot pass; the Dustriders climb over it
+    bonegate: { name: 'Bone gate', structure: true, models: ['aje_clay_wall_gate'], held: [], health: 3200, radius: 9, height: 12, fire: 1.3, heavy: true, score: 0,
+      wall: { half: 11.5, thick: 1.6 }, lockedNote: 'The gate holds while the war towers stand' },
+    // towers shoot: `ranged` on a structure = its archers ({range, damage, every, projectile, speed, link: where the arrow starts})
+    tower: { name: 'Arrow tower', structure: true, models: ['aje_small_tower'], held: [], health: 1000, radius: 5, solid: 4, height: 19, fire: 1.6, heavy: true, score: 0,
+      ranged: { range: 62, damage: 7, every: 1.8, projectile: 'aje_arrow', speed: 85, link: 'Proj' } },
+    bigtower: { name: 'War tower', structure: true, models: ['aje_medium_tower'], held: [], health: 2400, radius: 6.5, solid: 5.5, height: 21, fire: 1.4, heavy: true, score: 0,
+      ranged: { range: 78, damage: 9, every: 1.6, projectile: 'aje_arrow', speed: 90, link: 'Proj' } },
+    heart: { name: 'Heart of the city', structure: true, models: ['defender_object'], held: [], health: 14000, radius: 10, solid: 9, height: 24, fire: 1, heavy: true, score: 0 },
   },
   swarm: {
     max: 150,                   // enemies alive at the same time
@@ -249,6 +302,63 @@ export const CFG = {
     corpseTime: 9,              // seconds a body stays
     separation: 1.9,            // how strongly they keep apart
     attackSlots: 7,             // how many may strike the player at the same time (the rest circle)
+  },
+
+  // ---------------------------------------------------------------- the player's own side (allies.js)
+  // Only in missions that set `count`: that many SEAS soldiers fight alongside; losses are replaced by groups of
+  // `group` every `every` seconds, arriving from behind (spawnMin .. spawnMax of walking away).
+  // lead: how far ahead of the player (towards the objective) the line forms; spread: how wide it is;
+  // slack: how far from his place a soldier may be before he moves again. heavyMax: walkers at the same time.
+  // types: models, held [model, link], speed, health, weapon {kind 'bullet' | 'rocket' | 'flame', clip, range,
+  //   bullet: damage, burst (rounds), rate (rounds/s inside a burst), pause (s between bursts), accuracy
+  //   rocket: damage, radius, speed, pause, min (not nearer than)      flame: damage, rate, cone, burn, burnDps
+  //   keep: backs off when an enemy is nearer than this; vsStructure: damage factor against tents and towers}
+  allies: {
+    vsBig: 0.35,                // what rifle and flame of the line do to the big beasts (rockets and the Exo's fists: all of it)
+    count: 0, group: 5, every: 7, spawnMin: 40, spawnMax: 105, lead: 16, spread: 16, slack: 5, corpseTime: 7, heavyMax: 2, basic: 'rifleman', damageTaken: 1,
+    mix: { rifleman: 8, marksman: 3, rocketeer: 2, flamer: 2, walker: 1 },
+    // units that join later (objective.arrive = type): `first` come together, then `perWave` with every group of
+    // reinforcements, never more than `max` alive
+    special: {
+      widow: { first: 3, perWave: 1, max: 3, note: 'The Black Widows have come up' },
+      enforcer: { first: 3, perWave: 1, max: 4, note: 'Exo enforcers join the assault' },
+    },
+    types: {
+      rifleman: { name: 'Rifleman', models: ['seas_gunner_s2', 'seas_gunner_s3'], held: [['seas_gun', 'HndR']], health: 85, speed: 10.5, radius: 0.85, height: 4,
+        run: 'walk_3_new', runSpeed: 7, idle: 'tec_fightpos_standanim', die: ['dying', 'die_simple'],
+        weapon: { kind: 'bullet', clip: 'seas_gunner_0', range: 52, keep: 9, damage: 3.5, burst: 4, rate: 9, pause: 1.4, accuracy: 0.65, vsStructure: 0.5, tracer: 0xffd27a,
+          sounds: ['02_battle/arm_gatling_gun_shot1.wav', '02_battle/arm_gatling_gun_shot2.wav', '02_battle/arm_gatling_gun_shot3.wav'], volume: 26 } },
+      marksman: { name: 'Marksman', models: ['seas_marksman_s2', 'seas_marksman_s3'], held: [['seas_rifle', 'HndR']], health: 70, speed: 10, radius: 0.85, height: 4,
+        run: 'walk_3_new', runSpeed: 7, idle: 'tec_fightpos_standanim', die: ['dying', 'die_simple'],
+        weapon: { kind: 'bullet', clip: 'seas_marksman_0', range: 85, keep: 16, damage: 24, burst: 1, rate: 1, pause: 2.8, accuracy: 0.85, vsStructure: 0.4, tracer: 0xfff0c0,
+          sounds: ['02_battle/arm_rifle_shot1.wav', '02_battle/arm_rifle_shot2.wav', '02_battle/arm_rifle_shot3.wav'], volume: 40 } },
+      rocketeer: { name: 'Rocket man', models: ['seas_rocketman_s2', 'seas_rocketman_s3'], held: [['seas_rpg', 'HndR']], health: 80, speed: 9.5, radius: 0.85, height: 4,
+        run: 'walk_3_new', runSpeed: 7, idle: 'tec_fightpos_standanim', die: ['dying', 'die_simple'],
+        weapon: { kind: 'rocket', clip: 'seas_rocketman_0', range: 62, min: 14, keep: 14, damage: 55, radius: 7, speed: 75, pause: 5.5, knock: 22, projectile: 'seas_rocket',
+          sounds: ['02_battle/arm_rocket_shoot1.wav', '02_battle/arm_rocket_shoot2.wav'], volume: 45 } },
+      flamer: { name: 'Flamethrower', models: ['seas_flamethrower_s2', 'seas_flamethrower_s3'], held: [['seas_flamer', 'HndR']], health: 110, speed: 10, radius: 0.85, height: 4,
+        run: 'walk_3_new', runSpeed: 7, idle: 'tec_fightpos_standanim', die: ['dying', 'die_simple'],
+        weapon: { kind: 'flame', clip: 'seas_flamethrower_0', range: 19, cone: 13, damage: 1.2, rate: 12, burn: 2.5, burnDps: 8, vsStructure: 2,
+          sounds: ['02_battle/arm_flamethrower_shot1.wav'], volume: 32 } },
+      // the SEAS siege spider ("Wehrspinne"): slow, tough, its gun turret shells towers first
+      widow: { name: 'Black Widow', models: ['seas_wehrspinne'], held: [],
+        addon: { model: 'seas_wehrspinne_top', link: 'we', clip: 'attack_front', muzzle: 'unnamed', crew: [['seas_rider_b', 'Dri1', 'balista_stand']] },
+        // (clip attack_front = curl up, stay curled while there is something to shoot at, get up again)
+        health: 1100, speed: 8, radius: 3, height: 8, heavy: true, machine: true, lead: 48,       // lead: they go well ahead of the player, at the objective
+        run: 'walk_2', runSpeed: 5, idle: 'standanim', die: ['dying'],
+        weapon: { kind: 'rocket', clip: 'attack_front', setup: 1.3, range: 82, min: 10, damage: 130, radius: 8, speed: 85, pause: 3.4, knock: 26, vsStructure: 2.6, prefers: 'structure', projectile: 'seas_wehrspinne_bullet',
+          sounds: ['02_battle/seas_big_cannon1.wav'], volume: 55 } },
+      // the SEAS close-combat robot: runs at the nearest enemy and swings (weapon kind 'melee': range = how far it
+      // sees an enemy, reach / arc of the swing, hitAt seconds into it)
+      enforcer: { name: 'Exo enforcer', models: ['seas_mobile_suit'], held: [], health: 750, speed: 10, radius: 1.8, height: 7, heavy: true, machine: true,
+        run: 'walk_2', runSpeed: 5, idle: 'standanim', die: ['dying'],
+        weapon: { kind: 'melee', clip: 'attack_s_0', clips: ['attack_s_0', 'attack_s_1', 'attack_s_2', 'attack_s_3'], range: 32, reach: 5.5, arc: 130, damage: 55, time: 1.1, hitAt: 0.45, knock: 14, vsStructure: 1.5,
+          sounds: ['08_machines/huge_robot_attack1.wav'], volume: 40 } },
+      walker: { name: 'Mechanical walker', models: ['seas_mechanical_walker'], held: [], riders: [['seas_rider_a', 'Ride']], health: 600, speed: 8.5, radius: 2.2, height: 7, heavy: true, machine: true,
+        run: 'walk_3', runSpeed: 7, idle: 'standanim', die: ['dying'],
+        weapon: { kind: 'bullet', clip: 'attack_front', range: 60, damage: 8, burst: 6, rate: 10, pause: 1.5, accuracy: 0.7, vsStructure: 1.5, tracer: 0xffb060, link: 'psh1', knock: 2,
+          sounds: ['02_battle/arm_minigun_shot1.wav', '02_battle/arm_minigun_shot2.wav'], volume: 34 } },
+    },
   },
 
   // ---------------------------------------------------------------- the districts of the city (zones.js)
@@ -302,6 +412,8 @@ export const CFG = {
   //   hold     stay in the circle (pos, radius) for `seconds`
   //   destroy  destroy the `targets` [{type: a structure of `enemies`, pos, yaw}, or {type, map: true} = the map's own]
   //   boss     kill the `bosses` (they appear at `at[i]`, or at pos)
+  // checkpoint: true (or {at: [x, z]} = where to stand): the mission can be taken up at this objective after a
+  // defeat; the player then stands where the objective before it was (or at `at`).
   // zone: the district that opens when the objective starts (zones.list). pos / radius: where the marker points
   // and, for hold / reach, the circle. waves: what attacks meanwhile - every `every` seconds a group of `group`
   // enemies of the mixed types, until `total` have come.
@@ -325,7 +437,7 @@ export const CFG = {
       { type: 'destroy', text: 'Sink the war canoes at the pier', pos: [60, -135], radius: 45,
         targets: [{ type: 'canoe', map: true }, { type: 'canoe', pos: [28, -152], yaw: 90 }, { type: 'canoe', pos: [58, -153], yaw: 100 }, { type: 'canoe', pos: [88, -151], yaw: 80 }],
         waves: { every: 4, group: 11, total: 9999, mix: { warrior: 4, spearman: 3, archer: 3, assassin: 2, thrower: 2 } } },
-      { type: 'reach', zone: 'lower', text: 'Break into the lower city', pos: [-41, -151], radius: 12,
+      { type: 'reach', zone: 'lower', text: 'Break into the lower city', pos: [-41, -151], radius: 12, checkpoint: { at: [6, -152] },
         waves: { every: 4, group: 11, total: 70, mix: { warrior: 4, spearman: 2, archer: 2, raptor: 3, thrower: 1 } } },
       { type: 'destroy', text: 'Topple the skull totems', pos: [-150, -180], radius: 90,
         targets: [{ type: 'totem', pos: [-101, -153] }, { type: 'totem', pos: [-109, -207], yaw: 90 }, { type: 'totem', pos: [-179, -167], yaw: 180 }, { type: 'totem', pos: [-245, -191], yaw: 270 }],
@@ -339,7 +451,7 @@ export const CFG = {
       { type: 'destroy', text: 'Burn the chieftains\' tents on the terrace', pos: [-175, -63], radius: 70,
         targets: [{ type: 'bigtent', pos: [-117, -65], yaw: 200 }, { type: 'bigtent', pos: [-231, -61], yaw: 60 }],
         waves: { every: 3.5, group: 12, total: 9999, mix: { warrior: 4, spearman: 2, archer: 2, raptor: 2, assassin: 2, rammer: 2, thrower: 1, dilo: 1 } } },
-      { type: 'reach', zone: 'arch', text: 'On to the triumphal arch', pos: [-39, -67], radius: 12,
+      { type: 'reach', zone: 'arch', text: 'On to the triumphal arch', pos: [-39, -67], radius: 12, checkpoint: true,
         waves: { every: 4, group: 12, total: 80, mix: { warrior: 4, spearman: 2, archer: 2, raptor: 3, rammer: 1, dilo: 1 } } },
       { type: 'kill', text: 'Hold the arch', pos: [-39, -67], radius: 60, count: 80,
         waves: { every: 3, group: 14, total: 110, mix: { warrior: 4, spearman: 3, archer: 2, raptor: 3, assassin: 3, rammer: 2, thrower: 2, dilo: 2 } } },

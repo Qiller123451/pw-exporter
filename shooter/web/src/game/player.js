@@ -53,6 +53,7 @@ export class Player {
       anim.setSpine(def.spine);
       if (def.fpArms) anim.setExtra(def.fpArms.bones);
       if (def.backpack) actor.attach('Back', await loadActor(def.backpack));
+      if (def.ultimate && def.ultimate.bomb.model) this.bombTpl = await loadActor(def.ultimate.bomb.model);
       const weapons = [];
       for (const wid of def.weapons) {
         const w = CFG.weapons[wid];
@@ -106,6 +107,7 @@ export class Player {
     if (input.hit('ControlLeft') || input.hit('ControlRight') || input.hit('KeyC')) I.dash = true;      // Ctrl (C still works)
     if (input.hit('KeyF') || input.click(1)) I.melee = true;
     if (input.hit('KeyE')) I.execute = true;
+    if (input.hit('KeyG')) I.ult = true;
     if (input.hit('KeyR')) I.reload = true;
     if (input.hit('Tab')) I.swap = true;
     if (input.hit('KeyV')) this.firstPerson = !this.firstPerson;
@@ -125,7 +127,10 @@ export class Player {
     if (this.upperHold && (this.upperHoldT -= dt) <= 0) { if (this.upperHold === 'melee') this._equip(this.ch); this.upperHold = null; }
     c.dashCd = Math.max(0, c.dashCd - dt);
     this.recoil = Math.max(0, this.recoil - dt * 6 * (0.2 + this.recoil));
-    for (const ch of Object.values(this.chars)) this._regen(ch, dt);
+    for (const ch of Object.values(this.chars)) { this._regen(ch, dt); ch.ultCd = Math.max(0, (ch.ultCd || 0) - dt); }
+    // the ultimate: called in with G, then it runs by itself
+    if (I.ult) { I.ult = false; this.ultimate(); }
+    if (this.bombing) this._bombing(dt);
     if (this.dead) { this._physics(dt, 0, 0, false); return; }
 
     if (I.swap) this.swap();
@@ -255,6 +260,16 @@ export class Player {
       if (Z.allowedAt(x0, p.z)) { p.x = x0; v.x = 0; } else if (Z.allowedAt(p.x, z0)) { p.z = z0; v.z = 0; } else { p.x = x0; p.z = z0; v.x = v.z = 0; }
       if (this.dashT > 0) this.dashT = 0;
       Z.touch(p);
+    }
+    // Deep water is a border on foot as well: one wades in up to the knees and no further. (Walking on, the
+    // "fell into the sea" rescue below used to throw the player back to where he had been a second before - in
+    // every pond, which looked like being teleported.) In the air nothing holds: a jump may cross a pond.
+    if (this.onGround) {
+      const W = G.level.water, deep = (x, z) => col.groundAt(x, z, p.y + P.stepHeight) < W - CFG.physics.wade;
+      if (deep(p.x, p.z) && !deep(x0, z0)) {
+        if (!deep(x0, p.z)) { p.x = x0; v.x = 0; } else if (!deep(p.x, z0)) { p.z = z0; v.z = 0; } else { p.x = x0; p.z = z0; v.x = v.z = 0; }
+        if (this.dashT > 0) this.dashT = 0;
+      }
     }
     const ground = col.groundAt(p.x, p.z, p.y + P.stepHeight);
     if (this.onGround) {
@@ -460,7 +475,7 @@ export class Player {
     G.fx.muzzle(m, dir, 2.2);
     G.fx.dust(m, 1.5, 3, [0.9, 0.9, 0.9, 0.5]);
     G.fx.shake(0.18);
-    G.projectiles.fire({ tpl: w.proj, pos: m, vel: dir.clone().multiplyScalar(wd.speed), life: 5, owner: 'player', radius: 0.5,
+    G.projectiles.fire({ tpl: w.proj, pos: m, vel: dir.clone().multiplyScalar(wd.speed), life: (wd.reach || 400) / wd.speed, expire: true, owner: 'player', radius: 0.5,
       trail: (p) => G.fx.rocketTrail(p.pos),
       onHit: (hit) => G.explode(new THREE.Vector3(hit.x, hit.y, hit.z), wd.radius, wd.damage, wd.knock) });
   }
@@ -538,6 +553,7 @@ export class Player {
     cur.actor.obj.visible = false;
     cur.anim.unlock(); cur.anim.upperClip(null);
     this.active = other.id;
+    if (this.wreck && this.wreck.ch === other) this.wreck = null;          // (back on his feet before the body was gone)
     other.actor.obj.visible = true;
     other.anim.unlock(); other.anim.legs(other.def.idleClip, { restart: true });
     this.swapCd = CFG.swapCooldown; this.stats.swaps++;
@@ -609,21 +625,79 @@ export class Player {
   shove(dx, dz, speed) { this.vel.x += dx * speed; this.vel.z += dz * speed; if (this.onGround && speed > 20) { this.vel.y = 9; this.onGround = false; } }
   _die() {
     const G = this.g, c = this.ch;
-    c.alive = false; c.health = 0; this.dead = true; this.busy = 0; this.pending = null;
+    c.alive = false; c.health = 0; this.busy = 0; this.pending = null;
     G.log.add('DOWN', c.def.name + ' | ' + G.log.state());
-    c.anim.unlock();
-    c.anim.full(c.def.death, { fade: 0.1 });
-    G.slowMo(0.3, 1.2);
     const other = Object.values(this.chars).find((x) => x.alive);
     G.hud.note(other ? `${c.def.name} is down - ${other.def.name} takes over` : 'You are dead');
-    this.pending = null;
-    this.deathT = 2.2;
-    // a suit that blows up: when it has folded down (the end of the death clip)
-    if (c.def.deathBlast) {
-      this.blast = { t: Math.min(3, (c.anim.duration(c.def.death) || 1.6) * 0.92), ch: c, pos: this.pos.clone() };
-      this.deathT = Math.max(this.deathT, this.blast.t + 0.9);
-      G.hud.note(`${c.def.name} is going critical`);
+    const fall = () => { c.anim.unlock(); c.anim.full(c.def.death, { fade: 0.1 }); };
+    const dur = c.anim.duration(c.def.death) || 1.6;
+    // a suit that blows up: when it has folded down (the end of the death clip) - where it fell
+    if (c.def.deathBlast) { this.blast = { t: Math.min(3, dur * 0.92), ch: c, pos: this.pos.clone() }; G.hud.note(`${c.def.name} is going critical`); }
+    if (other) {
+      // The other one is in at once. What is left of this one stays where it fell (the wreck: its death clip, and
+      // for the suit the explosion) - the player is not "dead", and nobody cheers yet.
+      G.slowMo(0.4, 0.5);
+      this.swapCd = 0;
+      this.swap();
+      c.actor.obj.visible = true; fall();
+      this.wreck = { ch: c, t: dur + 3 };
+      this.invulnerable = 2.0;
+      return;
     }
+    this.dead = true;
+    fall();
+    G.slowMo(0.3, 1.2);
+    this.deathT = Math.max(2.2, this.blast ? this.blast.t + 0.9 : 0);
+  }
+  // ---------------------------------------------------------------- the Gunner's ultimate: bombardment
+  ultimate() {
+    const G = this.g, c = this.ch, U = c.def.ultimate;
+    if (!U || this.dead || G.state !== 'play') return false;
+    if (c.ultCd > 0) { G.sfx('error', 35, null); return false; }
+    c.ultCd = U.cooldown;
+    this.bombing = { t: U.time, next: 0.25, U, n: 0, hit: 0 };
+    G.hud.note(U.name + ' - incoming');
+    G.sfx('warn', 80, null);
+    G.fx.ring(this.pos, U.radius, [1, 0.75, 0.3, 0.9]);
+    G.log.add('ULT', `${U.name} called at ${this.pos.x.toFixed(0)},${this.pos.z.toFixed(0)}`);
+    return true;
+  }
+  _bombing(dt) {
+    const G = this.g, b = this.bombing, U = b.U, B = U.bomb, col = G.level.collision;
+    b.t -= dt; b.next -= dt;
+    while (b.next <= 0 && b.t > 0) {
+      b.next += U.every;
+      // where: on an enemy near the Gunner (most of them), or anywhere around him
+      let x, z;
+      const near = Math.random() < U.aimed ? G.enemies.inRadius(this.pos, U.radius) : null;
+      if (near && near.length) { const e = near[Math.floor(Math.random() * near.length)]; x = e.pos.x + (Math.random() - 0.5) * 5; z = e.pos.z + (Math.random() - 0.5) * 5; }
+      else { const a = Math.random() * 6.283, r = Math.sqrt(Math.random()) * U.radius; x = this.pos.x + Math.cos(a) * r; z = this.pos.z + Math.sin(a) * r; }
+      // (never right on top of the Gunner: it would only blind the player)
+      if (Math.hypot(x - this.pos.x, z - this.pos.z) < 5) { x += 6; z += 6; }
+      const y = col.groundAt(x, z, this.pos.y + 40);
+      const from = new THREE.Vector3(x + 6, y + B.height, z - 4), vel = new THREE.Vector3(-6, -B.height, 4).multiplyScalar(1 / B.fall);
+      b.n++;
+      G.projectiles.fire({ tpl: this.bombTpl || null, pos: from, vel, life: B.fall + 0.3, owner: 'sky', radius: 0.5,
+        trail: (p) => G.fx.rocketTrail(p.pos),
+        onHit: (h) => { b.hit += this._bomb(new THREE.Vector3(h.x, h.y, h.z), B); } });
+    }
+    if (b.t <= -1) { G.log.add('ULT', `${b.n} bombs, ${b.hit} hits on enemies`); this.bombing = null; }
+  }
+  // one bomb going off: enemies only - not the player, not his soldiers
+  _bomb(p, B) {
+    const G = this.g;
+    G.fx.explosion(p, B.radius);
+    G.fx.dust(p, B.radius * 0.5, 4);
+    const d = this.pos.distanceTo(p);
+    G.fx.shake(Math.max(0.04, 0.22 - d * 0.004));
+    G.sfx('explode', 85, p, 0.75 + Math.random() * 0.4);
+    let n = 0;
+    for (const e of G.enemies.inRadius(p, B.radius)) {
+      const dd = Math.hypot(e.pos.x - p.x, e.pos.z - p.z), f = 1 - 0.6 * Math.min(1, dd / B.radius);
+      e.damage(B.damage * f, { kind: 'explosion', from: p, knock: B.knock * f });
+      n++;
+    }
+    return n;
   }
   // the wreck's explosion: huge damage to every enemy around, none to the player's side
   _blast() {
@@ -643,13 +717,16 @@ export class Player {
       e.damage(B.damage * (1 - 0.5 * Math.min(1, d / B.radius)), { kind: 'explosion', from: b.pos, knock: B.knock });
       n++;
     }
-    b.ch.actor.obj.visible = false;                       // nothing is left of the suit
+    if (b.ch !== this.ch) b.ch.actor.obj.visible = false;  // nothing is left of the suit
+    if (this.wreck && this.wreck.ch === b.ch) this.wreck = null;
     G.log.add('BLAST', `${b.ch.def.name} blew up: ${n} enemies caught`);
     return n;
   }
   // called every step while dead: after a moment the other character takes over, or the game ends
   afterDeath(dt) {
     if (this.blast && (this.blast.t -= dt) <= 0) this._blast();
+    // the body of the one who fell lies a while, then it is gone
+    if (this.wreck && !this.blast && (this.wreck.t -= dt) <= 0) { if (this.wreck.ch !== this.ch) this.wreck.ch.actor.obj.visible = false; this.wreck = null; }
     if (!this.dead) return;
     this.deathT -= dt;
     if (this.deathT > 0) return;
@@ -663,6 +740,7 @@ export class Player {
 
   // ---------------------------------------------------------------- per frame
   animate(dt) {
+    if (this.wreck && this.wreck.ch !== this.ch) this.wreck.ch.anim.update(dt);
     const c = this.ch, def = c.def, a = c.anim, v = this.vel;
     const speed = Math.hypot(v.x, v.z);
     if (!this.dead && this.busy <= 0 || (this.busy > 0 && !a.locked)) {

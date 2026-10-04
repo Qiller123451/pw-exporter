@@ -60,13 +60,18 @@ export function applyMask(root, hide) {
 // Wall pieces (userData.arm on their meshes): root.userData.armMask selects the arms shown (wallmap.js), and
 // root.userData.variant one of the geometry variants of each piece (userData.variant / vcount).
 export function applyState(root, level, dmg, age) {
-  const mask = root.userData.armMask, pick = root.userData.variant;
+  const mask = root.userData.armMask, pick = root.userData.variant, slope = root.userData.slope;
   root.traverse((o) => {
     const arm = o.userData.arm;
     let armOk = arm === undefined || arm < 0 || mask === undefined || ((mask >> arm) & 1) === 1;
     // one geometry variant per wall piece (assets.js tagWallArms): the tile's pick, different per arm
     // pick: [hub, arm 0..7] - each arm's pick comes from the edge it shares with its neighbour, so both halves of a
     // wall segment use the same variant and the top line is even
+    // the slope of the arm (root.userData.slope[arm]: -1 down, 0 level, 1 up towards the neighbour; assets.js)
+    if (armOk && o.userData.slope !== undefined) {
+      const want = slope && arm >= 0 ? slope[arm] || 0 : 0;
+      armOk = o.userData.slope === ((o.userData.slopes >> (want + 1)) & 1 ? want : 0);
+    }
     if (armOk && o.userData.vcount > 1) armOk = ((pick ? pick[arm + 1] : 0) % o.userData.vcount) === o.userData.variant;
     if (o.userData.sig !== undefined) o.visible = armOk && !o.userData.trimmed && !!sigVisible(o.userData.sig, level, dmg, age);
     else if (arm !== undefined) o.visible = armOk;

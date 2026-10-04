@@ -9,7 +9,7 @@ const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls)
 const KEYS = [
   ['W A S D', 'move'], ['Mouse', 'aim'], ['Left button', 'Gunner: fire &nbsp; Executioner: claw combo'], ['Right button', 'Gunner: aim down the sights &nbsp; Executioner: raise the minigun (left button then fires)'], ['1 2 3 / wheel', 'change weapon (Gunner)'],
   ['Tab', 'swap Gunner / Executioner'], ['Q', 'jetpack jump (F in the air: dive)'], ['Space', 'jump'], ['Shift', 'sprint'], ['Ctrl', 'dash (no damage taken; the Executioner rams what is in the way)'],
-  ['F', 'knife (Gunner)'], ['E', 'execute a reeling enemy: restores armour'], ['R', 'reload'], ['V', 'first / third person'], ['X', 'camera over the other shoulder'], ['Esc', 'pause'],
+  ['F', 'knife (Gunner)'], ['G', 'Gunner: bombardment all around (once a minute)'], ['E', 'execute a reeling enemy: restores armour'], ['R', 'reload'], ['V', 'first / third person'], ['X', 'camera over the other shoulder'], ['Esc', 'pause'],
 ];
 
 export class Hud {
@@ -148,7 +148,9 @@ export class Hud {
     // abilities
     const jet = [];
     for (let i = 0; i < c.def.jet.charges; i++) jet.push(`<u class="${i < c.jet ? 'on' : ''}"></u>`);
-    const ah = `<div><em>Q</em> Jetpack ${jet.join('')}</div><div class="${c.dashCd > 0 ? 'cd' : ''}"><em>Ctrl</em> Dash</div>`;
+    const U = c.def.ultimate, ucd = Math.ceil(c.ultCd || 0);
+    const ah = `<div><em>Q</em> Jetpack ${jet.join('')}</div><div class="${c.dashCd > 0 ? 'cd' : ''}"><em>Ctrl</em> Dash</div>`
+      + (U ? `<div class="ult ${ucd > 0 ? 'cd' : 'ready'}"><em>G</em> ${U.name}${ucd > 0 ? ' <b>' + ucd + ' s</b>' : ''}</div>` : '');
     if (ah !== this._abil) { this.abil.innerHTML = ah; this._abil = ah; }
 
     // objective + marker
@@ -172,7 +174,8 @@ export class Hud {
       }
     } else { this.objective.innerHTML = ''; this._obj = ''; this.marker.style.display = 'none'; }
 
-    const kh = `<b>${M ? M.totalKills : 0}</b><small>KILLS</small>${this.combo > 2 ? `<em>x${this.combo}</em>` : ''}`;
+    const AL = this.g.allies;
+    const kh = `<b>${M ? M.ownKills : 0}</b><small>KILLS</small>${this.combo > 2 ? `<em>x${this.combo}</em>` : ''}${AL ? `<i>SEAS troops <b>${AL.alive}</b></i>` : ''}`;
     if (kh !== this._kills) { this.kills.innerHTML = kh; this._kills = kh; }
 
     this._numbers(dt, cam);
@@ -228,31 +231,51 @@ export class Hud {
       });
     }
   }
+  // the first screen: which mission (missions whose map the installation does not have are greyed out)
+  missions(list, onPick) {
+    const o = this.screen(`<div class="panel"><h1>ParaWorld Shooter</h1><p class="sub">Choose the mission</p>
+      <div class="pick missions">${list.map((m) => `<button data-m="${m.id}"${m.available === false ? ' disabled' : ''}><b>${m.title}</b><span>${m.blurb}</span>${m.needs ? `<small>${m.available === false ? 'Not available: ' : ''}${m.needs}</small>` : ''}</button>`).join('')}</div>
+      ${this.logNote(this.g.previous)}</div>`, 'menu');
+    this.show(false);                         // nothing of the game is there yet
+    for (const b of o.querySelectorAll('[data-m]')) b.addEventListener('click', () => { this.show(true); onPick(b.dataset.m); });
+    return o;
+  }
   start(onStart) {
     this._load = false;
     const o = this.screen(`<div class="panel"><h1>ParaWorld Shooter</h1><p class="sub">${CFG.mission.title}</p><p>${CFG.mission.intro}</p>
       <div class="pick"><button data-c="gunner"><b>Gunner</b><span>Machine gun, flamethrower, rocket launcher. Fast.</span></button>
       <button data-c="executioner"><b>Executioner MKII</b><span>Claws and minigun. Big and tough.</span></button></div>
-      <p class="hint">Pick who goes in first. Tab swaps between them at any time.</p>
+      ${this.g.from ? `<p class="cp">You start at the checkpoint: <b>${CFG.mission.objectives[this.g.from].text}</b> &nbsp; <a href="#" data-a="scratch">from the beginning instead</a></p>` : this.g.stored ? `<p class="cp">A checkpoint is saved: <b>${CFG.mission.objectives[this.g.stored].text}</b> &nbsp; <a href="#" data-a="cp">continue there</a></p>` : ''}
+      <p class="hint">Pick who goes in first. Tab swaps between them at any time. &nbsp; <a href="#" data-a="other">Another mission</a></p>
       <div class="cols">${this.keysTable()}${this.settingsHtml()}</div>${this.logNote(this.g.previous)}</div>`, 'menu');
     this.bindSettings();
     for (const b of o.querySelectorAll('[data-c]')) b.addEventListener('click', () => onStart(b.dataset.c));
+    o.querySelector('[data-a=other]').addEventListener('click', (e) => { e.preventDefault(); this.g.restart(true); });
+    const cp = o.querySelector('[data-a=cp]'), sc = o.querySelector('[data-a=scratch]');
+    if (cp) cp.addEventListener('click', (e) => { e.preventDefault(); this.g.restart(false, this.g.stored); });
+    if (sc) sc.addEventListener('click', (e) => { e.preventDefault(); this.g.restart(false); });
   }
   pause(onResume, onRestart) {
-    const o = this.screen(`<div class="panel"><h1>Paused</h1><div class="pick one"><button data-a="resume"><b>Continue</b></button><button data-a="restart"><b>Restart the mission</b></button></div>
+    const o = this.screen(`<div class="panel"><h1>Paused</h1><div class="pick one"><button data-a="resume"><b>Continue</b></button><button data-a="restart"><b>Restart the mission</b></button>${this.g.mission.checkpoint ? '<button data-a="cp"><b>Back to the checkpoint</b></button>' : ''}<button data-a="other"><b>Another mission</b></button></div>
       <div class="cols">${this.keysTable()}${this.settingsHtml()}</div>${this.logNote()}</div>`, 'menu');
     this.bindSettings();
     o.querySelector('[data-a=resume]').addEventListener('click', onResume);
+    const cpb = o.querySelector('[data-a=cp]');
+    if (cpb) cpb.addEventListener('click', () => this.g.restart(false, this.g.mission.checkpoint));
+    o.querySelector('[data-a=other]').addEventListener('click', () => this.g.restart(true));
     o.querySelector('[data-a=restart]').addEventListener('click', onRestart);
   }
   end(win, stats, onRestart) {
     const t = Math.round(stats.time);
-    const o = this.screen(`<div class="panel"><h1>${win ? 'The Holy City is taken' : 'You have fallen'}</h1>
+    const o = this.screen(`<div class="panel"><h1>${win ? (CFG.mission.won || 'The Holy City is taken') : 'You have fallen'}</h1>
       <p class="sub">${win ? 'Mission complete' : 'The Dustriders hold the city'}</p>
       <table class="keys stats"><tr><th>Kills</th><td>${stats.kills}</td></tr><tr><th>Executions</th><td>${stats.executions}</td></tr>
       <tr><th>Time</th><td>${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}</td></tr><tr><th>Damage taken</th><td>${Math.round(stats.damage)}</td></tr></table>
-      <div class="pick one"><button data-a="restart"><b>Play again</b></button></div></div>`, 'menu');
+      <div class="pick one">${!win && stats.checkpoint ? `<button data-a="cp"><b>Continue from the checkpoint</b><span>${CFG.mission.objectives[stats.checkpoint].text}</span></button>` : ''}<button data-a="restart"><b>${win ? 'Play again' : 'From the beginning'}</b></button><button data-a="other"><b>Another mission</b></button></div></div>`, 'menu');
     o.querySelector('[data-a=restart]').addEventListener('click', onRestart);
+    const cp = o.querySelector('[data-a=cp]');
+    if (cp) cp.addEventListener('click', () => this.g.restart(false, stats.checkpoint));
+    o.querySelector('[data-a=other]').addEventListener('click', () => this.g.restart(true));
   }
   error(text) { this.screen(`<div class="panel"><h1>Cannot start</h1><p>${text}</p>${this.logNote()}</div>`, 'menu'); }
   // where the log is; on the start screen also how the session before ended

@@ -1,5 +1,6 @@
 // Play-through bot (evaluated in the page by tests/shot.mjs): plays the mission from start to end.
-//   window.PLAY = { minutes: 12, god: true }   may be set before this file is evaluated.
+//   window.PLAY = { minutes: 12, god: true, from: 0 }   may be set before this file is evaluated
+//   (from: start at that objective - the ones before are skipped).
 // The bot walks along its own flow field to "reach" objectives, shoots the nearest enemy through the camera, picks
 // the weapon for the situation, executes reeling enemies, swaps characters when hurt and uses the jetpack when stuck.
 // Returns a log line per 10 game seconds, the objective times and the final state.
@@ -15,6 +16,11 @@
   const dir = { x: 0, z: 0 };
   let flowFor = -1, stuck = 0, last = P.pos.clone(), lastT = 0;
   const times = [], log = [];
+  for (let n = 0; M.index < (o.from || 0) && n < 60; n++) {
+    for (const t of M.targets) if (t.alive) t.damage(1e6, {}); for (const b of M.bosses) if (b.alive) b.damage(1e7, {});
+    const ob = M.obj; if (ob.type === 'kill') M.kills = ob.count; if (ob.type === 'hold') M.held = ob.seconds; if (ob.type === 'reach') P.pos.set(ob.pos[0], G.level.collision.groundAt(ob.pos[0], ob.pos[1], 500), ob.pos[1]);
+    for (const c of Object.values(P.chars)) { c.health = c.def.health; c.alive = true; } G.test.run(0.4);
+  }
   let objIndex = M.index, objStart = 0;
   const bot = (g, t) => {
     if (o.god) { for (const c of Object.values(P.chars)) { c.health = c.def.health; c.alive = true; } }

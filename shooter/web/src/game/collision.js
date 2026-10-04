@@ -56,6 +56,16 @@ export class CollisionWorld {
     });
   }
 
+  // more solid things after build() (buildings that are put up during the mission): call add...(), then append()
+  begin() { this._soup = []; }
+  append() {
+    const add = this._soup, old = this.tri;
+    const all = new Float32Array(old.length + add.length);
+    all.set(old, 0); all.set(add, old.length);
+    this._soup = all;
+    this.build();
+  }
+
   // an upright 6-sided post (tree trunks)
   addCylinder(x, y, z, r, h) {
     const out = this._soup, N = 6;

@@ -171,7 +171,8 @@ export class Zones {
           for (const cc of r.cells) mask[cc] = 1;
         }
         // heap rubble along the gap (not where the map already has a barricade)
-        if (models.length && !c.door) {
+        // (only in streets: a border across open country is just the wall)
+        if (models.length && !c.door && r.t1 - r.t0 <= (CFG.zones.rubbleMax || 60)) {
           for (let t = r.t0 - 1; t <= r.t1 + 1.01; t += 5.2) {
             const x = c.x1 + ux * t + (rnd() - 0.5) * 1.2, z = c.z1 + uz * t + (rnd() - 0.5) * 1.2;
             if (own.some((o) => o.cut === k && Math.hypot(o.x - x, o.z - z) < 5.5)) continue;
@@ -308,7 +309,7 @@ export class Zones {
   // the player ran into the border
   touch(p) {
     this.touchP.set(p.x, p.y + 3, p.z); this.touchT = 1;
-    if (this.noteT <= 0) { this.noteT = 4; this.g.hud.note('This part of the city is still held - finish the objective first'); this.g.sfx('error', 35, null); }
+    if (this.noteT <= 0) { this.noteT = 4; this.g.hud.note(CFG.zones.note || 'This part of the city is still held - finish the objective first'); this.g.sfx('error', 35, null); }
   }
   update(dt, time) {
     if (!this.mat) return;

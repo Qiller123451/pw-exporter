@@ -10,7 +10,8 @@ export class Projectiles {
     this.list = [];
     this._d = new THREE.Vector3();
   }
-  // o: {tpl (model template or null), pos, vel, gravity, life, owner: 'player' | 'enemy', radius, onHit(hit), trail}
+  // o: {tpl (model template or null), pos, vel, gravity, life, owner: 'player' | 'enemy' | 'sky' (hits only the
+  // level: the bombardment), radius, onHit(hit), trail}
   fire(o) {
     let obj = null;
     if (o.tpl) {
@@ -18,7 +19,7 @@ export class Projectiles {
       obj.traverse((m) => { if (m.isMesh) m.castShadow = false; });
       this.g.scene.add(obj);
     }
-    const p = { obj, pos: o.pos.clone(), vel: o.vel.clone(), gravity: o.gravity || 0, life: o.life || 6, owner: o.owner, radius: o.radius || 0.3, onHit: o.onHit, trail: o.trail || null, t: 0 };
+    const p = { obj, pos: o.pos.clone(), vel: o.vel.clone(), gravity: o.gravity || 0, life: o.life || 6, owner: o.owner, radius: o.radius || 0.3, expire: !!o.expire, onHit: o.onHit, trail: o.trail || null, t: 0 };
     this.list.push(p);
     this._place(p);
     return p;
@@ -45,16 +46,19 @@ export class Projectiles {
         if (p.owner === 'player') {
           const e = G.enemies.raycast(p.pos, d, hit ? hit.t : len, p.radius);
           if (e) hit = { kind: 'enemy', enemy: e.enemy, t: e.t, x: p.pos.x + d.x * e.t, y: p.pos.y + d.y * e.t, z: p.pos.z + d.z * e.t, n: d.clone().negate() };
-        } else {
+        } else if (p.owner === 'enemy') {
           const t2 = G.player.rayHit(p.pos, d, hit ? hit.t : len, p.radius);
           if (t2 !== Infinity) hit = { kind: 'player', t: t2, x: p.pos.x + d.x * t2, y: p.pos.y + d.y * t2, z: p.pos.z + d.z * t2, n: d.clone().negate() };
+          const a = G.allies ? G.allies.rayHit(p.pos, d, hit ? hit.t : len, p.radius) : null;
+          if (a) hit = { kind: 'ally', ally: a.ally, t: a.t, x: p.pos.x + d.x * a.t, y: p.pos.y + d.y * a.t, z: p.pos.z + d.z * a.t, n: d.clone().negate() };
         }
       }
       if (hit || p.life <= 0) {
         if (hit) { p.pos.set(hit.x, hit.y, hit.z); if (p.onHit) p.onHit(hit, p); }
+        else if (p.expire && p.onHit) p.onHit({ kind: 'air', t: 0, x: p.pos.x, y: p.pos.y, z: p.pos.z, n: new THREE.Vector3(0, 1, 0) }, p);       // (a rocket at the end of its reach)
         if (p.obj) {
           // spears and arrows stay stuck in the ground for a moment
-          if (hit && hit.kind === 'world' && p.owner === 'enemy') { p.obj.position.copy(p.pos); const o = p.obj; setTimeout(() => o.removeFromParent(), 4000); } else p.obj.removeFromParent();
+          if (hit && hit.kind === 'world' && p.owner === 'enemy' && !p.noStick) { p.obj.position.copy(p.pos); const o = p.obj; setTimeout(() => o.removeFromParent(), 4000); } else p.obj.removeFromParent();
         }
         this.list.splice(i, 1);
         continue;

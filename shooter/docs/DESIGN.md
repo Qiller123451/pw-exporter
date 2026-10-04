@@ -82,6 +82,11 @@ NODE_PATH=<node_modules with playwright> node tests/shot.mjs "http://127.0.0.1:8
   strikes at 1.3 s, `attack_front` never reaches forward at all - which is why the third swing uses `_s_3` started
   at 0.5 s (`at` in the combo) and all three now strike 0.3-0.45 s after the click)
 * `dash.js` - dash length per character, no damage during it, the Executioner's ram hits everyone in the path once
+* `allies.js` - (The Assault) what the troops do on their own: kills, losses, the swarm's size over a minute
+* `ultimate.js` - the bombardment: how long, how many bombs, enemies hit, no damage to the player or the troops, cooldown
+* `checkpoint.js` - taking the mission up at an objective (`?from=N`): zones, place, targets already gone, storing
+* `range.js` - bullets hit inside the weapon's range and not beyond; a rocket goes off at its reach
+* `water.js` - walking into a pond stops at knee depth, no rescue teleport; a jetpack jump may cross
 * `numbers.js` - damage numbers: hits on one enemy in quick succession add up to one number, a kill shows the health
   that was left (not the overkill), head shots / fire / big hits have their own colour, the setting switches them off
 * `wall.js` - the border of the open districts and the rubble hold the player; the gate lets him through once open
@@ -155,6 +160,171 @@ bar at the top. The map's own tents and boats of those models are never placed a
 `level.mapTargets` - because a tent that looks like a target and takes no damage reads as a bug; objectives take
 them over with `{type, map: true}`), `boss` (one or several). The marker and
 `Mission.goalPos` follow the nearest target / boss.
+
+## Missions
+
+`missions.js`: a mission is `{id, title, blurb, map, zones, mission}` plus optional overrides of `look`, `nav`,
+`swarm`, `allies`. `useMission(id)` copies it into `CFG` before anything is loaded, so every other file keeps
+reading `CFG.map`, `CFG.zones`, `CFG.mission`. The Holy City mission is what `config.js` holds; `mission_assault.js`
+is the second one. The page asks for the mission first (`Hud.missions`; a mission whose map file the installation
+does not have is greyed out), `?mission=<id>` skips the question (restart keeps it; tests without it get the Holy
+City).
+
+What a map may need beyond the first one, all in the mission's own config:
+* `mission.gfx` - classes shown with another model (`seas_carrier_fake` -> `seas_carrier`: a fan map's own classes).
+* `zones.rubble` models are loaded even when the map has none of them (an intact city has no barricades).
+* `zones.rubbleMax` - a border across open country is only the wall: no rubble in gaps wider than this.
+* `mission.garrison` - `[{type, map: true}]`: every map object of a reserved model stands as a structure from the
+  first moment (`Mission.garrison`): the towers, the boats in the harbour, the fountain. A destroy objective picks
+  its targets among them with `{type, zone}` or `{type, near, within}`, never one in a district that is still shut.
+* `objective.troops` / `rally` - a group of allies arriving at a place when the objective starts; `objective.allies`
+  - how many troops this objective keeps up.
+
+"Holy City defender" is the Holy City of campaign mission 5 moved by (-32, +368) and repaired (2148 of the old
+map's 2235 scenery objects have a twin at that offset; what is missing are the barricades and the ruins), so the
+city's districts are the first mission's cut lines shifted (`S()` in `mission_assault.js`) plus one street the ruins
+used to block. The country outside is three zones divided by two straight lines across the whole map.
+
+## The player's side (allies.js)
+
+Only where `CFG.allies.count > 0`. An `Ally` is a model instance with one `AnimCtl`, like an enemy, and has the same
+shape as the player where the enemies need one: `pos`, `vel`, `def {radius, height}`, `dead`, `hurt()`, `shove()`.
+
+* **Where they go**: each has his own offset (`spread`) from the front point = the player's position + `lead`
+  towards `Mission.goalPos`. Further than `slack` from it he runs there - straight when near and nothing is in the
+  way, otherwise along the swarm's flow field (which leads to the player). So they need no path finding of their own.
+* **Who they shoot**: the nearest enemy within the weapon's range with a free line (looked for ~2.5 times a second;
+  living things before structures). Bullets are hit-scan with an `accuracy` chance, rockets are the player's
+  projectile kind with their own enemies-only explosion (`Allies.blast`), flames a cone. Their damage carries
+  `info.ally`, which keeps damage numbers, hit markers and the "own kills" counter for the player's own hits.
+* **Who hunts them**: `Enemy.pickTarget` - twice a second an enemy takes the nearest ally within 26 u when that one
+  is clearly nearer than the player; it goes for him only while it can run straight at him, otherwise back to the
+  player along the flow field. The seven attack slots only limit attacks on the player. Projectiles of the enemies
+  test `Allies.rayHit` too; fire bottles burn every ally in their splash.
+* **Reinforcements** (`Allies.reinforce`): every `every` seconds up to `group` to fill up to `count`, at a place
+  40-105 u of walking from the player that lies further from the objective than he is (so they come from behind),
+  in an open zone, out of sight if possible.
+* **Balance** (`tests/allies.js`: the player stands still, immortal, at "Hold the crossroads"): in 60 s the troops
+  kill about 140 while 4 enemies a second arrive, lose 30 of 39, and the swarm grows to its limit - they slow the
+  enemy down, they do not stop him.
+* No friendly fire either way by construction: the player's weapons only ever query `G.enemies`, the enemies'
+  attacks only the player and the allies.
+
+## Turrets, catapults and their crews (addons)
+
+`addAddon()` in `actors.js`: a model built onto another one at a link, with its own `AnimCtl` and a crew sitting on
+the addon's own links - what the game's composites call a turret / build-up with `pi` riders. Used by the Black
+Widow (`seas_wehrspinne` + `seas_wehrspinne_top` on `link_we`, driver `seas_rider_b` on the turret's `link_Dri1`)
+and by the Ankylosaurus catapult (`ankylosaurus` + `aje_ankylosaurus_catapult` on `link_con`, crew `aje_rider_a` who
+plays `aje_attack_ankylo` when it fires). `fire()` plays the addon's and the crew's clips; the shot leaves from
+the addon's `link_Proj` / `link_unnamed`.
+
+* **Black Widows** are a "special" ally type (`CFG.allies.special`): not in the mix until an objective names them
+  (`arrive: 'widow'`), then `first` at once at the objective's `rally`, `perWave` with every later group, `max`
+  alive. `prefers: 'structure'` puts towers first among their targets, `lead: 48` sends them well ahead of the
+  player towards the objective, `vsStructure` multiplies their shell against structures.
+* **Ankylosaurus catapults** are ordinary ranged enemies whose shot is a stone with splash (`ranged.stone`); four
+  stand at the tower line as the objective's `guards`, more come with the waves (mix weight 0.2).
+
+## What the models show (part flags)
+
+The converted models keep the game's part flags (`pw/engine/parts.js`); the shooter uses them the way the game does:
+* **Damage stages of buildings**: `Enemy.setLook()` -> `applyState(model, 4, stage, 1)` with stage 1 below 2/3 and
+  2 below 1/3 of the health (tents, towers, gates, the fountain).
+* **Ridden animals**: `applyMask(model, animalMask({owned, armor, hp}))` - saddle and harness for everything that
+  carries a rider or has `owned: true` (the default look of a model is the wild animal), armour with `armor: true`,
+  and the wound parts as the health drops.
+* **Wall pieces** (`level.js`): a wall model is a post with eight arms. Pieces on the 8 u wall grid get their own
+  copy with `userData.armMask` from the neighbouring wall / tower / gate tiles (no arm across an L corner, none
+  into a gate that stands on the grid); only the shown arms go into the collision. Rules: `claude/spec_walls.md`.
+  * **The four "variants" of an arm are slopes, not looks.** Wall pieces stand at heights in 2 m steps (the `y`
+    stored in the map) and never level the ground; every arm exists level (twice), 2 m lower and 2 m higher at its
+    outer end (clay wall walkway: 4..4.8, 2..4.9, 4..6.9). `tagWallArms` (assets.js) sorts them into
+    `userData.slope` -1 / 0 / 1, `applyState` shows the one in `root.userData.slope[arm]`. `level.js` sets it from
+    the neighbour's height: 2 m apart the lower piece's arm rises, 4 m apart both meet in the middle. Picked at
+    random (as before, and as the remake still does) every second joint had a step in it - "not connected at all".
+  * A piece **under a tower keeps its arms** (the remake draws only the post: once the tower is shot down that is a
+    post with a hole on both sides).
+  * An **editor gate** (off the grid, on a tile corner between two pieces three tiles apart) that stands across a
+    corner ends 5 m short of the posts: those get an arm towards it.
+
+## Gates of the Dustriders' walls
+
+`bonegate`: a structure with `wall: {half, thick}` - a line across the way instead of a circle
+(`Enemies.pushFrom`), for the player, his troops and the enemies alike. It is not in the level's collision and not
+masked in the nav grid, so paths lead through it: the Dustriders climb over (`Enemies.hopCells` marks the cells
+under living gates, `Enemy.step` vaults there as over rubble). `locked` (set by the garrison entry) makes a
+structure take no damage until an objective names its type as a target.
+
+## Stomp, catapults on animals
+
+`attack.stomp = {clip, time, hitAt, radius, damage, knock, chance}`: instead of the normal attack, always when three
+or more of the player's side are within the radius - everybody around the feet is hit and thrown back
+(Brachiosaurus `stomp`, T-Rex `attack_2`). `maxAlive` on an enemy type limits how many the waves may have at once.
+
+## How the big ones attack
+
+A bite that only reaches whoever stands still is no attack: at walking pace along the wide paths an Allosaurus never
+caught a player who simply backed off. So (`enemies.js`, values in `config.js`):
+
+* `charge` (speed): they run when the prey is more than 7 u out of reach; `direct` (straight at the target instead of
+  the flow field) up to 48 u when nothing is in the way - the wide paths do not lead everywhere.
+* `attack.start` / `attack.lunge`: the strike begins that far outside the reach and they close at lunge speed until
+  the blow lands. Walking away does not save you, sprinting, the dash or the jetpack do.
+* `attack.arc` (degrees): a sweep - everyone of the player's side in front of the jaws (behind, for the tail:
+  `back`) is hit. `attack.turn`: how fast it can follow its target while striking.
+* They need no attack slot, and the `elite` go for the player himself when he is within 45 u.
+* `allies.vsBig` (0.35): what the rifles and flames of the SEAS line do to them (rockets and the Exo's fists: all).
+  Twenty rifles had an Allosaurus down in ten seconds, before it had bitten anyone.
+* `waves.heavy = {type: share of a wave}`: the big ones join the waves on a count (0.12 = one every eighth wave, the
+  first with the third), never more than `maxAlive`, and from where the mission is heading - as 0.12 of 21 in the
+  mix not one Brachiosaurus came in a whole fight, and one that came from behind died among the arriving troops.
+
+## Structures that live
+
+`turtle` (the transport turtle: `macrolemys_water` + the `aje_transport_turtle` shell on `link_con`, `owned`) plays
+its idle clip and dies with `sink`; `catamaran` has a crew and `ranged` with a `clip`. Buildings that go up after an
+objective (`objective.built`, `Mission.build`, `Level.place`): added to the collision afterwards
+(`CollisionWorld.begin()` / `append()`), masked in the nav grid, rising out of the ground.
+
+## Towers
+
+A structure with `ranged` shoots (`Enemy.step`, structure branch): arrows from its `link_Proj` at the nearest of
+the player's side in range and sight - but not from a district that is still shut. Structures with `solid` push
+everybody on foot out of their footprint (`Enemies.solids`). They do not count against `swarm.max`
+(`Enemies.fighting`).
+
+## Bombardment
+
+`classes.gunner.ultimate`, key G, `Player.ultimate()` / `_bombing()` / `_bomb()`: for `time` seconds every `every`
+seconds a bomb (the rocket model, falling from 75 u up in 0.6 s as a projectile of owner `'sky'`, which only the
+level stops) on a point within `radius` of the Gunner - `aimed` of them on a random enemy in that circle. Each one
+is an explosion that only asks `G.enemies.inRadius`. The cooldown runs for the Gunner even while the Executioner is
+out. `tests/ultimate.js` measures it.
+
+## Before the first frame (engine.warm)
+
+Left alone, three.js uploads every texture and builds every shader in the first frame. On "Holy City defender" that
+one frame took 16.5 s on an RTX 3090, the browser's watchdog took the graphics driver for hung and threw the WebGL
+context away: a white picture with the HUD on it (the session log said `worst frame 16569 ms`, `GPU !! WebGL context
+LOST`). Two things were behind it:
+* every model file brings its own texture objects, so a sheet that 40 models share was uploaded 40 times (~600
+  textures instead of ~150). `THREE.Cache.enabled` makes the loader return one image per file, and `warm()` gives
+  all textures of one image the same `source`, which three.js turns into one texture on the card;
+* `warm()` then uploads the textures a few at a time (`renderer.initTexture`, yielding to the browser in between),
+  builds the shaders with `renderer.compileAsync` and draws one frame - all while the loading screen is up. The log
+  line `WARM` has the numbers.
+If the context is lost all the same, the page says so and offers to start again (`main.js`).
+
+## Checkpoints
+
+An objective with `checkpoint: true` (or `{at: [x, z]}`). `Mission.next()` stores `{mission, index}` in
+`localStorage` when it starts; the end screen after a defeat, the pause screen and the start screen offer it, which
+reloads the page with `?from=<index>`. `Mission.resume(from)` then opens the zones the earlier objectives had
+opened (no effects), removes the garrison structures the earlier destroy objectives would have picked, and starts
+at that objective; the player is put where the objective before it was (`Mission.place`), both characters fresh,
+and a double group of troops arrives. Nothing else is saved - no health, no kills. A new start from the beginning
+and the end of the mission clear it. `tests/checkpoint.js` (`?from=N`, any objective in test mode).
 
 ## The log
 

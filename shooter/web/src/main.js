@@ -25,6 +25,8 @@ import { Mission } from './game/mission.js';
 import { Hud } from './game/hud.js';
 import { Log } from './game/log.js';
 import { Zones } from './game/zones.js';
+import { Allies } from './game/allies.js';
+import { MISSIONS, useMission } from './game/missions.js';
 
 const STEP = 1 / 60;
 const params = new URLSearchParams(location.search);
@@ -46,16 +48,32 @@ class Game {
 
   async load() {
     const hud = this.hud;
-    hud.loading(0, 'Starting');
     const info = await (await fetch('api/info')).json();
+    // which mission: ?mission=<id>, or asked first (tests: the Holy City unless told otherwise)
+    let mid = params.get('mission');
+    if (!mid && !TEST && info.ready) {
+      const list = Object.values(MISSIONS);
+      // (a mission whose map this installation does not have - a fan map of a mod - cannot be chosen)
+      await Promise.all(list.map(async (m) => { try { m.available = (await fetch(m.map)).ok; } catch (e) { m.available = false; } }));
+      this.previous = await this.log.previous();
+      mid = await new Promise((res) => hud.missions(list, res));
+    }
+    this.missionDef = useMission(mid);
+    this.missionObjectives = CFG.mission.objectives; this.missionReserved = CFG.mission.reserved;
+    // ?from=<objective>: take the mission up at that checkpoint (only real checkpoints, except in tests)
+    const f = +params.get('from') || 0, ob = CFG.mission.objectives[f];
+    this.from = f > 0 && ob && (ob.checkpoint || TEST) ? f : 0;
+    this.stored = TEST ? 0 : Mission.stored(CFG.missionId);
+    hud.loading(0, 'Starting');
     this.logDir = info.logs || null;
     if (!info.ready) { this.log.add('STOP', info.reason); hud.error(info.reason); this.error = info.reason; return; }
-    this.previous = TEST ? null : await this.log.previous();
+    if (TEST) this.previous = null; else if (this.previous === undefined) this.previous = await this.log.previous();
     const canvas = document.getElementById('game');
     this.engine = new Engine(canvas, this.settings);
     this.scene = this.engine.scene;
     this.input = new Input(canvas);
     this.log.attach(this);
+    THREE.Cache.enabled = true;          // one image per file, however many models use it (see engine.warm)
     await initAssets('data/assets/');
     Assets.maxAniso = Math.min(8, this.engine.renderer.capabilities.getMaxAnisotropy());
     const gamedata = await (await fetch('data/gamedata.json')).json();
@@ -68,7 +86,9 @@ class Game {
     this.level = await loadLevel(this.scene, { map: CFG.map, gamedata }, (f, t) => hud.loading(f * 0.6, t));
     hud.loading(0.62, 'Finding the streets');
     await new Promise((r) => setTimeout(r, 0));
-    const S = CFG.mission.start;
+    let S = CFG.mission.start;
+    if (!S) { const o = this.level.objects.find((q) => q.type === 'SLOC'); S = CFG.mission.start = { x: o ? o.x : 0, z: o ? o.z : 0, yaw: 0 }; }
+    for (const z of CFG.zones.list) if (!z.seed) z.seed = [S.x, S.z];
     const sy = this.level.collision.groundAt(S.x, S.z, this.level.height(S.x, S.z) + 3);
     this.nav = new NavGrid(this.level.collision, this.level.size, { ...CFG.nav, water: this.level.water });
     this.nav.build([{ x: S.x, y: sy, z: S.z }], this.level.bounds);
@@ -85,12 +105,29 @@ class Game {
     this.enemies.nav = this.nav;
     this.enemies.navBig = this.navBig;
     await this.enemies.load((f, t) => hud.loading(0.8 + f * 0.2, t));
+    if (CFG.allies && CFG.allies.count > 0) { this.allies = new Allies(this); await this.allies.load((f, t) => hud.loading(0.97 + f * 0.03, t)); }
     this.mission = new Mission(this);
+    await this.mission.preload();
 
     this.player.active = params.get('class') || 'gunner';
     this.player.spawn(S.x, S.z, S.yaw);
     this.nav.flowTo(this.player.pos.x, this.player.pos.y, this.player.pos.z);
     this.player.camera(1, this.fx);
+    // the graphics card gets everything before the first frame, in small portions (engine.warm)
+    this.engine.followSun(this.player.pos);
+    const roots = [...this.enemies.templates.values(), ...(this.allies ? this.allies.templates.values() : [])].map((t) => t && t.scene);
+    const warm = await this.engine.warm(roots, (f, t) => hud.loading(f, t));
+    THREE.Cache.clear();                 // (the files themselves are not needed any more)
+    this.log.add('WARM', `${warm.textures} textures of ${warm.images} images in ${warm.texMs} ms, on the card ${this.engine.renderer.info.memory.textures}, shaders ${warm.shaderMs} ms, first frame ${warm.frameMs} ms`);
+    this.warm = warm;
+    // if the driver gives up all the same, say so instead of leaving a white picture
+    canvas.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      if (this.state === 'play') { this.state = 'pause'; this.input.unlock(); }
+      hud.screen(`<div class="panel"><h1>The picture is gone</h1><p>The graphics driver has reset the game's 3D context (it took too long over one frame, or ran out of video memory). Nothing is wrong with the game data.</p>
+        <div class="pick one"><button data-a="reload"><b>Start again</b></button></div><p class="hint">If it happens again: choose Graphics "Medium" on the start screen, and close other programs that use the graphics card.</p>${hud.logNote()}</div>`, 'menu')
+        .querySelector('[data-a=reload]').addEventListener('click', () => this.restart());
+    });
     this.input.onLockChange = (locked) => { if (!locked && this.state === 'play' && !TEST) this.pause(); };
     this.state = 'menu';
     this.ready = true;
@@ -111,7 +148,12 @@ class Game {
     if (lock) this.input.lock();
     this.state = 'play';
     this.log.add('BEGIN', `${cls}, difficulty ${this.settings.difficulty}, quality ${this.settings.quality}`);
-    this.mission.start();
+    // at a checkpoint (?from=<objective>, set by "Continue from the checkpoint")
+    const from = this.from || 0;
+    if (from > 0) { let [x, z, yaw] = Mission.place(from); const c = this.nav.nearest(x, z, null, 10); if (c >= 0) { x = this.nav.cx(c); z = this.nav.cz(c); } P.spawn(x, z, yaw); this.nav.flowTo(P.pos.x, P.pos.y, P.pos.z); }
+    else if (!TEST) Mission.store(CFG.missionId, 0);          // a new attempt from the beginning: the old checkpoint is gone
+    this.mission.start(from);
+    if (from > 0 && this.allies) this.allies.reinforce(CFG.allies.group * 2, [P.pos.x, P.pos.z]);
     if (this.settings.music) try { this.audio.playMusic('combat', 'Aje'); } catch (e) { /* no music files */ }
   }
   pause() {
@@ -120,7 +162,9 @@ class Game {
     this.log.add('PAUSE', this.log.state());
     this.hud.pause(() => { this.hud.screen(''); this.input.lock(); this.state = 'play'; }, () => this.restart());
   }
-  restart() { this.leaving = true; this.log.add('RESTART', ''); location.href = location.pathname + (TEST ? location.search : ''); }
+  // again from the start of this mission (other = true: back to the choice of missions)
+  // from: at that checkpoint (an objective's number)
+  restart(other = false, from = 0) { this.leaving = true; this.log.add('RESTART', from ? 'at checkpoint ' + from : ''); location.href = location.pathname + (TEST ? location.search : other ? '' : '?mission=' + CFG.missionId + (from ? '&from=' + from : '')); }
   gameOver(win) {
     if (this.state === 'end') return;
     this.state = 'end';
@@ -128,7 +172,7 @@ class Game {
     this.input.unlock();
     const M = this.mission, P = this.player;
     this.sfx(win ? 'success' : 'warn', 80, null);
-    setTimeout(() => this.hud.end(win, { kills: M.totalKills, executions: P.stats.executions, time: M.time, damage: P.stats.damageTaken }, () => this.restart()), win ? 1800 : 600);
+    setTimeout(() => this.hud.end(win, { kills: M.ownKills, executions: P.stats.executions, time: M.time, damage: P.stats.damageTaken, checkpoint: M.checkpoint || 0 }, () => this.restart()), win ? 1800 : 600);
   }
   applySettings() {
     const s = this.settings;
@@ -164,7 +208,7 @@ class Game {
     if (d < radius * 0.7) { P.hurt(damage * 0.12 * (1 - d / radius), pos); P.shove((P.pos.x - pos.x) / (d || 1), (P.pos.z - pos.z) / (d || 1), 14); }
   }
   onKill(e, info) {
-    this.mission.onKill(e);
+    this.mission.onKill(e, info);
     if (!e.def.animal && Math.random() < 0.4) this.sfx('deathVoice', 55, e.pos, 0.95 + Math.random() * 0.15);
     if (info && (info.kind === 'bullet' || info.kind === 'fire')) this.sfx('hitFlesh', 45, e.pos);
   }
@@ -182,6 +226,7 @@ class Game {
       if (this.enemies.big > 0) this.navBig.flowTo(P.pos.x, P.onGround ? P.pos.y : null, P.pos.z);
     }
     this.enemies.step(dt);
+    if (this.allies) this.allies.step(dt);
     this.projectiles.step(dt);
     this.mission.step(dt);
   }
@@ -207,6 +252,7 @@ class Game {
     const cam = this.engine.camera;
     this.player.animate(dt);
     this.enemies.animate(dt, cam);
+    if (this.allies) this.allies.animate(dt, cam);
     this.fx.update(dt, this.time);
     this.player.camera(real, this.fx);
     if (this.debugCam) this.debugCam(cam);                 // tests: look from somewhere else
@@ -220,8 +266,6 @@ class Game {
 }
 
 const game = window.G = new Game();
-game.missionObjectives = CFG.mission.objectives;
-game.missionReserved = CFG.mission.reserved;
 let last = 0, fc = 0, ft = 0;
 function loop(now) {
   requestAnimationFrame(loop);

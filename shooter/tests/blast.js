@@ -1,5 +1,5 @@
 // The Executioner's end (evaluated in the page; start with &class=executioner): when it is destroyed it folds down,
-// then blows up - huge damage to the enemies around, none to the Gunner who takes over.
+// then blows up - huge damage to the enemies around, none to the Gunner, who takes over the moment it falls.
 (() => {
   const P = G.player, E = G.enemies, out = {};
   G.mission.step = () => {};
@@ -12,7 +12,8 @@
   out.clipSeconds = +P.ch.anim.duration(P.def.death).toFixed(2);
   const other = Object.values(P.chars).find((c) => c !== P.ch), oh = other.health, oa = other.armor;
   P.hurt(1e6, null, true);
-  out.dead = P.dead; out.blastIn = P.blast ? +P.blast.t.toFixed(2) : null; out.takeOverIn = +P.deathT.toFixed(2);
+  // the Gunner is in at once (the player is not "dead"); the wreck stays where it fell and blows up there
+  out.dead = P.dead; out.blastIn = P.blast ? +P.blast.t.toFixed(2) : null; out.tookOverAtOnce = P.active; out.wreckStands = P.chars.executioner.actor.obj.visible;
   let t = 0, blownAt = null;
   while (t < 6 && (P.dead || P.blast)) { G.test.run(0.1, () => { for (const e of E.list) e.cool = 9; }); t += 0.1; if (blownAt == null && !P.blast) blownAt = +t.toFixed(1); }
   out.blownAtSeconds = blownAt;

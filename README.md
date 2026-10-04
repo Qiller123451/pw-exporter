@@ -8,7 +8,7 @@ Community tools for **ParaWorld** (SEK / Sunflowers, 2006):
 * **ParaWorld Remake** – the game rebuilt for the web browser: skirmish against the computer with all four tribes on
   the original maps or random maps, with the rules, models, sounds and interface of your installation.
 * **ParaWorld Shooter** – a third-person action game made from the same data: the SEAS Gunner and the Executioner
-  MKII against swarms of Dustriders in the Holy City.
+  MKII against swarms of Dustriders in the Holy City – alone, or as part of a full SEAS assault.
 
 ![The launcher](docs/screenshots/11_launcher.png)
 
@@ -91,14 +91,20 @@ How it is built: [remake/docs/ARCHITECTURE.md](remake/docs/ARCHITECTURE.md),
 
 ![The Gunner at the city gate](docs/screenshots/20_shooter.png)
 
-A fast third-person (or first-person) swarm shooter with the models, animations, map and sounds of your
-installation. You fight through the Holy City (campaign mission 5), district by district, against the Dustriders.
+A fast third-person (or first-person) swarm shooter with the models, animations, maps and sounds of your
+installation. Two missions:
+
+* **The Holy City** (campaign mission 5): alone through the ruined city, district by district – 17 objectives.
+* **The Assault** (the fan-made map *Holy City defender* of the MIRAGE mod; greyed out without it): the SEAS land
+  on the north shore and storm the city. Waves of friendly troops fight beside you, the Dustriders' towers shoot
+  back, 24 objectives from the beachhead to the temple.
 
 * Two characters, swapped at any time with `Tab`: the **Gunner** (machine gun, flamethrower, rocket launcher, knife)
   and the **Executioner MKII** (claw combo on the left mouse button, minigun while the right one is held, a ramming
-  dash). Both have jetpacks.
-* Seventeen objectives across the whole city: burn the war camp, sink the canoes at the pier, topple the totems, hold
-  the terrace, hunt down the Stegosaurus and Allosaurus riders, and at the end the T-Rex titan.
+  dash). Both have jetpacks; the Gunner can call a bombardment down around him once a minute (`G`).
+* Objectives of five kinds (reach, kill, hold, destroy, boss): burn the war camp, sink the fleet in the harbour,
+  bring down the war towers, hold the terrace, hunt down the Stegosaurus and Allosaurus riders, and at the end the
+  T-Rex titan.
 * Districts that are not open yet are shut off by rubble and a faint energy wall; the rubble is blown away when the
   next objective opens them.
 * Armour, executions that restore it, damage numbers, three difficulties, a session log for crash reports.
@@ -106,6 +112,7 @@ installation. You fight through the Holy City (campaign mission 5), district by 
 | | |
 |---|---|
 | ![Executioner MKII](docs/screenshots/22_shooter_executioner.png) | ![T-Rex titan](docs/screenshots/23_shooter_boss.png) |
+| ![The Assault: the first wave on the beach](docs/screenshots/25_shooter_assault.png) | ![The Assault: the war towers of the outer line](docs/screenshots/26_shooter_towers.png) |
 
 **Start:** prepare the remake's game data once (launcher → *ParaWorld Remake → Prepare the game data*), then
 double-click **`Start ParaWorld Shooter.bat`** (or run `python -m shooter`). The game opens in the browser – use

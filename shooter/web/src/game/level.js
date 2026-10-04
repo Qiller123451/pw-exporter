@@ -16,6 +16,7 @@ import { HeightField, buildTerrain, fowUniforms, fbm } from '../pw/engine/terrai
 import { PropField, FoliageField, treeSprites, spriteLight } from '../pw/engine/props.js';
 import { buildWater } from '../pw/engine/water.js';
 import { Assets, loadModel, cloneModel } from '../pw/engine/assets.js';
+import { applyState } from '../pw/engine/parts.js';
 import { CollisionWorld } from './collision.js';
 import { glowSprites } from './fx.js';
 import { CFG } from './config.js';
@@ -61,7 +62,9 @@ export async function loadLevel(scene, cfg, progress = () => {}) {
   const gamedata = cfg.gamedata;
   const manifest = Assets.manifest.models;
   const has = (m) => !!(m && manifest[m]);
-  const gfxOf = (cls) => { const c = lc(cls); const g = gamedata.classgfx[c] || c; return has(g) ? g : has(c) ? c : null; };
+  // (CFG.mission.gfx: classes this mission shows with another model - a fan map's own classes the data does not know)
+  const GFX = (CFG.mission && CFG.mission.gfx) || {};
+  const gfxOf = (cls) => { const c = lc(cls); const g = GFX[c] || gamedata.classgfx[c] || c; return has(g) ? g : has(c) ? c : null; };
 
   // ---------------------------------------------------------------- ground
   const W2 = md.hx * 2, H2 = md.hy * 2;                        // terrain extent (m)
@@ -114,7 +117,9 @@ export async function loadLevel(scene, cfg, progress = () => {}) {
     const model = SCENERY.has(o.type) ? gfxOf(o.cls) : null;
     objects.push({ type: o.type, cls: lc(o.cls), name: o.name, model: model && !NO_PROP.test(model) ? model : null, x, y: o.z, z, rot: o.rot, q: o.q, owner: o.owner, attr: o.attr });
   }
-  const names = [...new Set(objects.filter((o) => o.model).map((o) => o.model))];
+  // + the rubble of the zone borders (a map with an intact city has none of its own)
+  const rubble = ((CFG.zones && CFG.zones.rubble) || []).filter(has);
+  const names = [...new Set([...objects.filter((o) => o.model).map((o) => o.model), ...rubble])];
   const templates = new Map();
   let done = 0;
   const queue = names.slice();
@@ -128,6 +133,49 @@ export async function loadLevel(scene, cfg, progress = () => {}) {
   await Promise.all([worker(), worker(), worker(), worker(), worker(), worker()]);
   // the city gate once more with every part on its own (the static version above merges the doors into the walls)
   const doorTpl = CFG.zones && CFG.zones.door && templates.has(CFG.zones.door.model) ? await loadModel(CFG.zones.door.model) : null;
+
+  // Wall pieces (palisades, clay walls): in the game a piece is a post with up to eight arms and shows only the arms
+  // towards its neighbours on the 8 u wall grid (walls, towers, gates). Drawn whole, every piece is a star of all
+  // its arms and all their variants - walls "all over the place". So: these models once more with their arms
+  // tagged, and each piece gets its own copy with the right arms (below).
+  const wallTpl = new Map();
+  for (const n of names) { const t = templates.get(n); if (t && t.fourcc === 'Wall' && !/gate/.test(n)) wallTpl.set(n, await loadModel(n, { static: true, wallArms: true })); }
+  const onGrid = (o) => Math.abs(((o.x % 8) + 8) % 8 - 4) < 0.3 && Math.abs(((o.z % 8) + 8) % 8 - 4) < 0.3 && Math.abs(Math.sin(o.rot || 0)) < 0.02 && Math.cos(o.rot || 0) > 0;
+  const tileKey = (x, z) => Math.round((x - 4) / 8) + ',' + Math.round((z - 4) / 8);
+  const joints = new Map();                                     // tile -> 'wall' | 'tower' | 'gate'
+  const pieces = new Map();                                     // tile -> the wall piece standing there
+  const oldGates = [];                                          // gates off the grid (the map editor's, see below)
+  const isGate = (o) => /wall_gate|palisade_gate|fence_gate|skewer_gate/.test(o.cls || '');
+  for (const o of objects) {
+    if (!o.model) continue;
+    if (!onGrid(o)) { if (isGate(o)) oldGates.push(o); continue; }
+    const kind = wallTpl.has(o.model) ? 'wall' : /tower/.test(o.cls) && o.type === 'BLDG' ? 'tower' : isGate(o) ? 'gate' : null;
+    if (kind === 'wall') pieces.set(tileKey(o.x, o.z), o);
+    if (kind && (kind !== 'wall' || !joints.has(tileKey(o.x, o.z)))) joints.set(tileKey(o.x, o.z), kind);
+  }
+  const DIRS = [[1, 0], [1, -1], [0, -1], [-1, -1], [-1, 0], [-1, 1], [0, 1], [1, 1]];      // 0 E, 1 NE, 2 N ... (north = -z)
+  // -> [arm mask, slope of every arm]. A piece under a tower keeps its arms (the remake draws only the post there:
+  // fine while the tower stands, a post with a hole on either side once it is shot down - and here they all are).
+  // Slopes: the pieces stand at heights in 2 m steps (stored in the map), an arm is level or goes 2 m up or down to
+  // its outer end; of two neighbours 2 m apart the lower one's arm rises, 4 m apart both meet in the middle.
+  const armsOf = (o) => {
+    const i = Math.round((o.x - 4) / 8), j = Math.round((o.z - 4) / 8), at = (a, b) => joints.get(a + ',' + b);
+    let m = 0;
+    const slope = [0, 0, 0, 0, 0, 0, 0, 0];
+    for (let d = 0; d < 8; d++) {
+      const [di, dj] = DIRS[d], n = at(i + di, j + dj);
+      // an editor gate stands on a tile corner between two pieces 3 tiles apart: its ends reach the posts when it
+      // stands straight, across a corner they are 5 m short - an arm towards it
+      if (d % 2 === 1 && oldGates.some((g) => Math.hypot(g.x - (o.x + 12 * di), g.z - (o.z + 12 * dj)) < 2)) { m |= 1 << d; continue; }
+      if (!n || n === 'gate') continue;                         // (a gate's own model reaches over its wing tiles)
+      if (d % 2 === 1 && (at(i + di, j) || at(i, j + dj))) continue;      // no arm across an L corner
+      m |= 1 << d;
+      const p = pieces.get((i + di) + ',' + (j + dj)), dy = p ? p.y - o.y : 0;
+      slope[d] = dy > 3 ? 1 : dy < -3 ? -1 : dy > 1 ? 1 : 0;
+    }
+    return [m, slope];
+  };
+  const hash = (a, b) => { let h = (a * 73856093) ^ (b * 19349663); h = (h ^ (h >>> 13)) * 1274126177; return (h ^ (h >>> 16)) >>> 0; };
 
   progress(0.6, 'Placing the city');
   const props = new PropField(scene);
@@ -169,7 +217,22 @@ export async function loadLevel(scene, cfg, progress = () => {}) {
     // the map's boats: the game floats them, the map file stores them on the sea bed - placed like scenery they are
     // wrecks with only the sails out of the water, right beside the boats the mission wants sunk. Left out.
     if (o.type === 'SHIP' && !(RS && RS.test(o.model))) { o.model = null; o.solid = null; continue; }
-    if (RS && RS.test(o.model)) { mapTargets.push({ model: o.model, x: o.x, y, z: o.z, rot: o.rot }); o.solid = 'target'; continue; }
+    if (RS && RS.test(o.model)) { mapTargets.push({ model: o.model, cls: o.cls, x: o.x, y, z: o.z, rot: o.rot, ship: o.type === 'SHIP' }); o.solid = 'target'; continue; }
+    if (wallTpl.has(o.model) && onGrid(o)) {
+      const wt = wallTpl.get(o.model), w = cloneModel(wt);
+      const i = Math.round((o.x - 4) / 8), j = Math.round((o.z - 4) / 8);
+      [w.userData.armMask, w.userData.slope] = armsOf(o);
+      // one geometry variant per piece: the post's own, and for every arm one that the neighbour's arm shares
+      w.userData.variant = [hash(i, j), ...DIRS.map(([di, dj]) => hash(2 * i + di, 2 * j + dj))];
+      applyState(w, 4, 0, 1);
+      const mtx = new THREE.Matrix4().makeTranslation(o.x, y, o.z);
+      collision.addModel(w, mtx);                               // (only the arms that are shown)
+      w.position.set(o.x, y, o.z);
+      w.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } });
+      scene.add(w);
+      o.solid = 'wall'; o.arms = w.userData.armMask;
+      continue;
+    }
     props.addKind(o.model, tpl, { castShadow: !veg || tree });
     if (/barricade/.test(o.model)) {
       const cut = nearCut(o.x, o.z);
@@ -207,12 +270,44 @@ export async function loadLevel(scene, cfg, progress = () => {}) {
       o.solid = 'mesh';
     }
   }
+  for (const m of rubble) if (templates.has(m)) props.addKind(m, templates.get(m), { castShadow: true });
   showAll(props);
   for (const [uri, list] of glows) scene.add(glowSprites(spriteTexture(uri), list));
   foliage.build();
   collision.build();
 
+  // buildings put up during the mission (Mission.build): [{tpl, x, z, yaw, addon: {tpl, link}}] - drawn, solid, and
+  // closed for the path finding. Returns the placed objects [{obj, x, y, z, r, h}].
+  const place = (list, nav) => {
+    const out = [];
+    collision.begin();
+    for (const b of list) {
+      const obj = cloneModel(b.tpl);
+      const y = b.y ?? height(b.x, b.z);
+      obj.position.set(b.x, y, b.z); obj.rotation.y = (b.yaw || 0) * Math.PI / 180;
+      obj.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } });
+      obj.updateMatrixWorld(true);
+      collision.addModel(b.tpl.scene, obj.matrix);
+      if (b.addon) {
+        let link = null;
+        obj.traverse((o) => { if (o.name === 'link_' + b.addon.link) link = o; });
+        if (link) { const a = cloneModel(b.addon.tpl); if (a.children[0]) a.children[0].rotation.set(0, 0, 0); a.traverse((m) => { if (m.isMesh) m.castShadow = true; }); link.add(a); }
+      }
+      scene.add(obj);
+      const size = new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3()), r = Math.max(size.x, size.z) / 2;
+      // no paths through it
+      if (nav) {
+        const mask = nav.mask || (nav.mask = new Uint8Array(nav.y.length));
+        for (let dz = -r; dz <= r; dz += nav.cell) for (let dx = -r; dx <= r; dx += nav.cell) { if (dx * dx + dz * dz > r * r * 0.8) continue; const c = nav.index(b.x + dx, b.z + dz); if (c >= 0) mask[c] = 1; }
+      }
+      out.push({ obj, x: b.x, y, z: b.z, r, h: size.y });
+    }
+    collision.append();
+    return out;
+  };
+
   return {
+    place,
     gateProps, doorGate, mapTargets,
     md, size, origin: [ox, oy], toGame, height, hf, water: md.water, terrain, waterMesh: water, objects, templates, props, foliage, collision,
     bounds: { x0: -ox + 8, x1: ox - 8, z0: -oy + 8, z1: oy - 8 },
