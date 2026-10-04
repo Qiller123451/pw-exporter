@@ -144,6 +144,9 @@ class ModelIndex:
         inst = self.install
         if not hasattr(inst, 'chain_of_folder'):          # a plain Install: the converter's own search order
             return [], None
+        # a model of the loaded configuration (the top mod, the copy the game loads first): use the full chain.
+        # another mod's copy picked in the viewer ("Mod of this model"): use that mod's own chain (its folder,
+        # then what it requires) — otherwise e.g. the Base copy under MIRAGE would still pull MIRAGE textures.
         chain = inst.mods if (mod or '').lower() == inst.mods[-1].lower() else inst.chain_of_folder(mod)
         chain = list(reversed(chain))
         roots = []
