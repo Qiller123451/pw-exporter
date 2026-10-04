@@ -144,7 +144,7 @@ class ModelIndex:
         inst = self.install
         if not hasattr(inst, 'chain_of_folder'):          # a plain Install: the converter's own search order
             return [], None
-        chain = inst.mods if (mod or '').lower() in [m.lower() for m in inst.mods] else inst.chain_of_folder(mod)
+        chain = inst.mods if (mod or '').lower() == inst.mods[-1].lower() else inst.chain_of_folder(mod)
         chain = list(reversed(chain))
         roots = []
         for m in chain:
