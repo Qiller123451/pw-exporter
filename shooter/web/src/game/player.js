@@ -12,6 +12,7 @@
 import * as THREE from 'three';
 import { CFG } from './config.js';
 import { Actor, BodyAnim, loadActor, borrowClips, forward, wrapPi } from './actors.js';
+import { loadRides } from './rides.js';
 
 const DEG = Math.PI / 180;
 const UP = new THREE.Vector3(0, 1, 0);
@@ -32,9 +33,11 @@ export class Player {
     this.recoil = 0; this.fov = CFG.camera.fov; this.camBack = 0;
     this.invulnerable = 0; this.swapCd = 0; this.busy = 0; this.dead = false; this.aimPoint = new THREE.Vector3();
     this.stats = { shots: 0, executions: 0, damageTaken: 0, swaps: 0, jumps: 0 };
+    this.rides = new Map(); this.ride = null;     // what the mission lets the player ride (rides.js), and the one he is on
   }
   get ch() { return this.chars[this.active]; }
-  get def() { return this.ch.def; }
+  // (on a ride its measures are what the world sees: the enemies aim at a mammoth's height, not a man's)
+  get def() { return this.ride ? this.ride.def : this.ch.def; }
 
   async load(progress = () => {}) {
     const G = this.g;
@@ -70,6 +73,7 @@ export class Player {
         jet: def.jet.charges, jetTimer: 0, dashCd: 0, meleeTpl, combo: 0, comboT: 0, stepDist: 0 };
     }
     for (const c of Object.values(this.chars)) this._equip(c);
+    this.rides = await loadRides(G);
   }
 
   _equip(c) {
@@ -119,6 +123,7 @@ export class Player {
 
   // ---------------------------------------------------------------- simulation step
   step(dt) {
+    if (this.ride) { if (this.bombing) this._bombing(dt); this.swapCd = Math.max(0, this.swapCd - dt); for (const ch of Object.values(this.chars)) ch.ultCd = Math.max(0, (ch.ultCd || 0) - dt); return this.ride.step(dt); }
     const G = this.g, c = this.ch, def = c.def, I = this.intent, P = CFG.physics, col = G.level.collision;
     this.invulnerable = Math.max(0, this.invulnerable - dt);
     this.swapCd = Math.max(0, this.swapCd - dt);
@@ -165,8 +170,8 @@ export class Player {
       G.fx.dust(this.pos, def.radius * 2, 4);
       G.sfx('swing', 40, this.pos);
     }
-    if (I.jump && this.onGround && this.busy <= 0) { this.vel.y = def.jump; this.onGround = false; this.airTime = 0; }
-    if (I.jet && c.jet >= 1 && this.busy <= 0) this._jet(wl > 0 ? wx : f.x, wl > 0 ? wz : f.z);
+    if (I.jump && this.onGround && this.busy <= 0 && !this.steep) { this.vel.y = def.jump; this.onGround = false; this.airTime = 0; }
+    if (I.jet && c.jet >= 1 && this.busy <= 0 && !(this.steep && this.onGround)) this._jet(wl > 0 ? wx : f.x, wl > 0 ? wz : f.z);
     if (I.execute && this.busy <= 0) this._execute();
     if (I.melee && this.busy <= 0) {
       if (!this.onGround && this.jetting) this.slamming = true;          // dive from a jetpack jump
@@ -253,11 +258,28 @@ export class Player {
         if (d < 0) { v.x -= col.pushNx * d; v.z -= col.pushNz * d; }
       }
     }
+    // Mountains (missions that set physics.maxSlope - a map whose mountains are its border): bare ground steeper
+    // than that cannot be walked up, and one slides down it - no footing for a jump or the jetpack either. Only
+    // the terrain itself: stairs and roofs are built. (Before the border check below: a slide ends at it too.)
+    this.steep = false;
+    if (P.maxSlope && this.onGround) {
+      const L = G.level, th = L.height(p.x, p.z);
+      if (Math.abs(th - p.y) < 0.8) {
+        const gx = (L.height(p.x + 1.2, p.z) - L.height(p.x - 1.2, p.z)) / 2.4, gz = (L.height(p.x, p.z + 1.2) - L.height(p.x, p.z - 1.2)) / 2.4, sl = Math.hypot(gx, gz);
+        if (sl > P.maxSlope) {
+          this.steep = true;
+          if (th > L.height(x0, z0) + 0.02) { p.x = x0; p.z = z0; }          // no step uphill
+          const k = (5 + Math.min(1, (sl - P.maxSlope) * 2.5) * 13) * dt / sl;
+          p.x -= gx * k; p.z -= gz * k; v.x *= 0.9; v.z *= 0.9;                // and down it goes
+          if (this.dashT > 0) this.dashT = 0;
+        }
+      }
+    }
     const b = G.level.bounds;
     p.x = Math.max(b.x0, Math.min(b.x1, p.x)); p.z = Math.max(b.z0, Math.min(b.z1, p.z));
     // the border of the open districts holds at any height (a jetpack jump ends there too): slide along it
-    if (Z && !Z.allowedAt(p.x, p.z) && Z.allowedAt(x0, z0)) {
-      if (Z.allowedAt(x0, p.z)) { p.x = x0; v.x = 0; } else if (Z.allowedAt(p.x, z0)) { p.z = z0; v.z = 0; } else { p.x = x0; p.z = z0; v.x = v.z = 0; }
+    if (Z && !Z.walkAt(p.x, p.z) && Z.walkAt(x0, z0)) {
+      if (Z.walkAt(x0, p.z)) { p.x = x0; v.x = 0; } else if (Z.walkAt(p.x, z0)) { p.z = z0; v.z = 0; } else { p.x = x0; p.z = z0; v.x = v.z = 0; }
       if (this.dashT > 0) this.dashT = 0;
       Z.touch(p);
     }
@@ -285,7 +307,13 @@ export class Player {
       p.y += v.y * dt;
       if (p.y <= ground && v.y <= 0) { p.y = ground; this._land(-v.y); }
     }
-    if (this.onGround && col.groundKind !== undefined && p.y > G.level.water + 0.5) { this.safeT = (this.safeT || 0) + dt; if (this.safeT > 0.8) { this.safeT = 0; this.safe.copy(p); } }
+    // Caught on a mountainside (sliding, no way up, the border below): after two seconds without getting anywhere,
+    // back to the last place one could stand.
+    if (this.steep) {
+      if (!this.steepP || Math.hypot(p.x - this.steepP.x, p.z - this.steepP.z) > 2) { this.steepP = { x: p.x, z: p.z }; this.steepT = 0; }
+      if ((this.steepT += dt) > 2 && this.safe.lengthSq() > 0) { p.copy(this.safe); v.set(0, 0, 0); this.onGround = true; this.steepT = 0; this.steepP = null; }
+    } else { this.steepP = null; this.steepT = 0; }
+    if (this.onGround && !this.steep && col.groundKind !== undefined && p.y > G.level.water + 0.5 && (!Z || Z.walkAt(p.x, p.z))) { this.safeT = (this.safeT || 0) + dt; if (this.safeT > 0.8) { this.safeT = 0; this.safe.copy(p); } }
     // fell into the sea or out of the world: back to the last safe spot
     if (p.y < G.level.water - 2.5) { p.copy(this.safe); v.set(0, 0, 0); this.onGround = true; this.hurt(8, null, true); }
   }
@@ -547,6 +575,7 @@ export class Player {
 
   swap() {
     const G = this.g;
+    if (this.ride) return false;
     const ids = Object.keys(this.chars), other = this.chars[ids[(ids.indexOf(this.active) + 1) % ids.length]];
     if (!other.alive || (this.swapCd > 0 && !this.dead) || this.busy > 0) return false;
     const cur = this.ch;
@@ -568,6 +597,46 @@ export class Player {
     return true;
   }
 
+  // ---------------------------------------------------------------- rides (rides.js)
+  // get on a ride of this mission: from now on its step / animate / camera run instead of the character's
+  mount(id) {
+    const G = this.g, R = this.rides.get(id);
+    if (!R || this.ride || this.dead) return false;
+    const c = this.ch;
+    c.actor.obj.visible = false; c.anim.unlock(); c.anim.upperClip(null);
+    this.jetting = false; this.slamming = false; this.dashT = 0; this.upperHold = null; this.pending = null; this.busy = 0; this.firing = false; this.aiming = false; this.sprinting = false;
+    this.fpWas = this.firstPerson; this.firstPerson = false;
+    this.ride = R;
+    R.mount(this);
+    this.invulnerable = Math.max(this.invulnerable, 1.5);
+    G.fx.ring(this.pos, R.def.radius * 2.5, [0.6, 0.85, 1, 0.9]);
+    G.sfx('swap', 60, null);
+    G.log.add('RIDE', 'mounted ' + R.def.name);
+    return true;
+  }
+  // get off: the character stands beside it (stay: the ride remains where it is)
+  dismount(stay = true) {
+    const G = this.g, R = this.ride;
+    if (!R) return false;
+    this.ride = null;
+    R.dismount(stay);
+    const side = R.def.radius + 2.5, nav = G.nav;
+    let x = this.pos.x + Math.cos(R.yaw) * side, z = this.pos.z - Math.sin(R.yaw) * side;
+    const cell = nav.nearest(x, z, null, 14);
+    if (cell >= 0) { x = nav.cx(cell); z = nav.cz(cell); }
+    this.pos.set(x, G.level.collision.groundAt(x, z, G.level.height(x, z) + 3), z);
+    this.safe.copy(this.pos);
+    this.vel.set(0, 0, 0); this.onGround = true; this.airTime = 0; this.bodyYaw = this.yaw; this.pitch = 0;
+    this.firstPerson = !!this.fpWas; this.camBack = 0; this.firing = false; this.sprinting = false;
+    this.intent = {};
+    const c = this.ch;
+    c.actor.obj.visible = true; c.anim.unlock(); c.anim.legs(c.def.idleClip, { restart: true });
+    this.invulnerable = Math.max(this.invulnerable, 2);
+    this._fp = null; this._place();
+    G.log.add('RIDE', 'left ' + R.def.name);
+    return true;
+  }
+
   // ---------------------------------------------------------------- damage
   // closest hit of a ray on the player's body (for enemy projectiles): distance or Infinity
   rayHit(o, d, max, pad = 0) {
@@ -583,6 +652,7 @@ export class Player {
     return Math.max(0, t - r);
   }
   hurt(amount, from = null, raw = false) {
+    if (this.ride) return this.ride.hurt(amount, from);
     const G = this.g, c = this.ch;
     if (this.dead || (!raw && this.invulnerable > 0)) return;
     const PR = raw ? null : CFG.protect, d = c.def;
@@ -622,7 +692,7 @@ export class Player {
     if (c.health <= 0) this._die();
   }
   // shoved by a big hit
-  shove(dx, dz, speed) { this.vel.x += dx * speed; this.vel.z += dz * speed; if (this.onGround && speed > 20) { this.vel.y = 9; this.onGround = false; } }
+  shove(dx, dz, speed) { if (this.ride) return; this.vel.x += dx * speed; this.vel.z += dz * speed; if (this.onGround && speed > 20) { this.vel.y = 9; this.onGround = false; } }
   _die() {
     const G = this.g, c = this.ch;
     c.alive = false; c.health = 0; this.busy = 0; this.pending = null;
@@ -651,6 +721,7 @@ export class Player {
   }
   // ---------------------------------------------------------------- the Gunner's ultimate: bombardment
   ultimate() {
+    if (this.ride) return false;
     const G = this.g, c = this.ch, U = c.def.ultimate;
     if (!U || this.dead || G.state !== 'play') return false;
     if (c.ultCd > 0) { G.sfx('error', 35, null); return false; }
@@ -740,6 +811,8 @@ export class Player {
 
   // ---------------------------------------------------------------- per frame
   animate(dt) {
+    for (const r of this.rides.values()) if (r !== this.ride) r.idle(dt);
+    if (this.ride) return this.ride.animate(dt);
     if (this.wreck && this.wreck.ch !== this.ch) this.wreck.ch.anim.update(dt);
     const c = this.ch, def = c.def, a = c.anim, v = this.vel;
     const speed = Math.hypot(v.x, v.z);
@@ -819,6 +892,7 @@ export class Player {
   }
 
   camera(dt, fx) {
+    if (this.ride) return this.ride.camera(dt, fx);
     const G = this.g, cam = G.engine.camera, def = this.def, C = CFG.camera, col = G.level.collision;
     const pitch = this.pitch + this.recoil * 0.05;
     const cp = Math.cos(pitch), sp = Math.sin(pitch);

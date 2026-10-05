@@ -234,7 +234,9 @@ The converted models keep the game's part flags (`pw/engine/parts.js`); the shoo
 * **Ridden animals**: `applyMask(model, animalMask({owned, armor, hp}))` - saddle and harness for everything that
   carries a rider or has `owned: true` (the default look of a model is the wild animal), armour with `armor: true`,
   and the wound parts as the health drops.
-* **Wall pieces** (`level.js`): a wall model is a post with eight arms. Pieces on the 8 u wall grid get their own
+* **Wall pieces** (`level.js`): a wall model is a post with eight arms. (Kind `Wall` in the data - but the Norse
+  stone walls `hu_re_enforced_wall` / `hu_small_wall` are `Bldg` and built the same way: `isWallPiece`. Parts of
+  such a model without any state flag are dropped: the palisade has two, lying flat beside every post.) Pieces on the 8 u wall grid get their own
   copy with `userData.armMask` from the neighbouring wall / tower / gate tiles (no arm across an L corner, none
   into a gate that stands on the grid); only the shown arms go into the collision. Rules: `claude/spec_walls.md`.
   * **The four "variants" of an arm are slopes, not looks.** Wall pieces stand at heights in 2 m steps (the `y`
@@ -293,6 +295,18 @@ A structure with `ranged` shoots (`Enemy.step`, structure branch): arrows from i
 the player's side in range and sight - but not from a district that is still shut. Structures with `solid` push
 everybody on foot out of their footprint (`Enemies.solids`). They do not count against `swarm.max`
 (`Enemies.fighting`).
+
+## Gun towers of the base
+
+`objective.built: {model: 'seas_turret_tower', addon: ['seas_turret', 'we'], gun: 'turret'}` - a building put up by
+the mission whose turret is manned (`Mission._guns`, values in `CFG.allies.guns`): every 0.4 s it looks for the
+nearest Dustrider in range and in sight (the ray starts `forward` outside the tower's own walls), turns the turret
+on it (`turn` rad/s), and fires a `seas_turret_bullet` that bursts like the troops' rockets (`Allies.blast`: no harm
+to the player's side, counts as the troops' kill). They cannot be destroyed.
+
+The turret hangs on the tower's `link_we`, and **a link keeps the game's axes: z is up, y is not** (the model's own
+root correction is taken off when it is put on a link). So it turns about its local z; about y it rolled over
+sideways. `guns.turret.barrel` names the bone at the muzzle end, from which the direction the gun points is taken.
 
 ## Bombardment
 
@@ -355,3 +369,107 @@ up on still poses - that was the "spinning torso" bug.
 
 URL switches: `?test` (no mouse capture needed), `&autostart`, `&class=executioner`, `&quality=low|medium|high`,
 `&difficulty=easy|normal|hard`.
+
+## Maps of the game's own making (mapgen.js, maps/)
+
+A mission whose `map` is `gen:<name>` has no map file: `level.js` imports `maps/<name>.js` and calls `build()`, which
+returns the same thing the map reader does (heights on the 2 m grid, a material per 4 m tile, water level, objects).
+`MapGen` makes it from a description of the walkable country:
+
+* `disc(x, z, r, h)` and `path([[x, z, h, r] ...])` are the **floors**. Everything else is mountain: at a distance
+  `d` outside a floor the ground has risen by `(d / f) ^ p` of the way up to the mountains (`f` = width of the foot,
+  `p` = 2.2: gentle and wooded at first, a wall further out; 1.7 and a narrow foot for a canyon). The mountains
+  stand on the level of the floors near them (inverse-distance mean), so a plateau 40 m up has walls like a beach.
+* Land ends `coast.reach` beyond the outermost floors; floors marked `sea` carve bays.
+* `wall(model, corners, {gate})` puts pieces on the 8 u wall grid at heights in 2 m steps - what `level.js` needs
+  to grow their arms. A wall must reach from mountain to mountain: the walkable foot of a wide place is ~30 m
+  deeper than its floor (that is where the first wall of the pass could be walked round; it now stands where the
+  canyon is narrow).
+* `scatter({models, n, where})` for trees and rocks; `keep` circles (roads, squares, buildings) stay free.
+* An object's `cls` may differ from its model (`CFG.mission.gfx` maps it): two kinds of gate share one model, the
+  garrison tells them apart by `cls`.
+* `md.textures`: the 8 ground textures, from any setting (Iron Winter: 5 of Northland, 3 of Icewaste).
+* `tests/mapview.mjs` draws a generated map under Node (the module has no imports); `tests/views.mjs` takes several
+  pictures of one loaded game.
+
+* `lower(x, z, r, k)`: mountains within `r` reach only the share `k` of their height - the seaward cliffs of the
+  fortress cape, so that the gunship looks into the yard. Never where a zone border depends on the height: the
+  first try lowered them all round, and the ridge between the fortress and the lake could be walked over.
+
+The player's border on such a map is the mountains, and three rules make it one:
+
+* `physics.maxSlope` (mission) - bare terrain steeper than that cannot be walked up and one slides off it; no jump
+  and no jetpack from there.
+* `physics.leash` (metres) - `Zones.walkAt()`: never further than that from a cell of the nav grid, and never more
+  than 5 m below it. The zones alone do not hold: a mountainside belongs to the zone at its foot, and where a
+  plateau ends above a bay there is no mountain at all (the fortress yard's west edge: 56 m straight down to a
+  shore nobody comes back from - the test bot found it).
+* `nav: { drop: 1.1 }` - the city's nav grid lets walkers jump 6 m down a ledge; on a height field that makes every
+  slope above a shore a one-way street, and part of the field. Here nothing is "walkable" that cannot be walked
+  back.
+* Whoever still hangs on a slope for two seconds without getting anywhere is put back where he last stood on
+  ground of the field.
+
+## Another enemy (faction)
+
+A mission may bring its own enemy types (`enemies`, merged into `CFG.enemies`) with `faction: 'hu'`; `Enemies.load`
+loads only the faction the mission names. `machine: true` on a type: sparks instead of blood, it blows up when it
+dies, and the troops' rifles do little to it (as to the big beasts). `armour: 0.08` on a structure: every blow that
+is not a `siege` blow counts for that share - the gate of the pass.
+
+## Rides (rides.js)
+
+`CFG.rides` (from the mission): things the player controls for a stretch. While one is mounted `Player.step /
+animate / camera / hurt` are the ride's, and `Player.def` is its measures; everything else (enemies, allies, zones)
+keeps looking at `Player.pos`.
+
+* `kind: 'beast'` - goes where it faces, turns `turn` rad/s; tusks (cone), stamp (radius), charge (tramples, and
+  rams structures it runs into: `kind: 'siege'`), trumpet (`Enemy.hold`). Walks over what is lower than its belly.
+  Dead: the rider is thrown off; `Mission` brings another after 6 s while the objective still asks for it.
+* `kind: 'gunship'` - `objective.flight = {speed, out, home, free | loop}`. With `free = {area, ceiling, floor,
+  climb, boost}` (Iron Winter) it lifts off along `out` and is then flown by the player (`Gunship._free`): W A S D
+  over the ground the way the camera looks, Space / C up and down, the body turns to where one looks and banks. It
+  stays inside the polygon `area` (`Zones.fence()` draws the districts' energy wall round it, seen from 120 u),
+  above the ground under it and ahead of it (`floor`) and under `ceiling`. `land()` (the targets are gone) builds a
+  course home from where it is. With `loop` instead it flies on rails (Catmull-Rom courses sampled by distance,
+  `Course`) - the first version; Kacper: "give the player control over the unit and not have it on a railroad".
+  Guns fire along the camera's aim (`Player._aim`, `_bullet`). Dead: it spins down and the mission is lost (the
+  checkpoint is at its start).
+* `objective.ride = id` mounts (where the ride is `park`ed, or `rideAt`); the first objective without it dismounts.
+  `mission.parked` puts a ride in the world from the start; `objective.arrives` lets one fly in during a hold.
+* The HUD's three panels come from `ride.hud()`.
+
+## Things that hang on other things (bone names)
+
+Riders, flags and build-ups are added under a link of the model that carries them (`Actor.attach`, `addAddon`).
+A clip finds its bones by name, searching the whole tree - and men and beasts share bone names (hashes of
+"L Thigh" ...). The mammoth's walk therefore moved the legs of the man on its back, which come first in the tree,
+and its own hind legs stood still. `actors.js` replaces `THREE.PropertyBinding.findNode`: subtrees marked
+`userData.attached` are not searched (their own clips start at their own root and still find them).
+
+## Gates: open or shut
+
+A gate model has its leaves twice: plain meshes standing open (attribute bit 14) and skinned ones shut / swinging
+(bits 15, 16; the `open` / `close` clips move those). `parts.js` puts that into the part signature (`hasDoors`,
+`staticSig(a, doors)`), `applyState` shows one set - shut unless `root.userData.doorOpen`. Before, both were drawn
+on every map. The city gate that is blown open (`Zones.setOpen`) switches to the open leaves.
+
+## Ships that sail, shots on the move, several build-ups
+
+* A structure with `sail: {speed, keep, wake, depth, turn, clip, bow}` (`Enemy.sail`) makes for whoever it shoots
+  at until it lies `keep` off, over water at least `depth` deep, round headlands (first free heading of 0, ±0.5,
+  ±1, ±1.5 rad). `bow`: the dragon boat's model looks along -z (π).
+* `ranged.moving`: the build-up shoots while its carrier walks (steam tank, titan) instead of the carrier stopping.
+* `addon` may be a list (the titan's two ballistas, links `con2` / `con3`): they fire in turn. What the game mounts
+  on a unit is in `gamedata.json` → `composites` (`hu_steam_tank`, `hu_triceratops` ...).
+
+## Music
+
+`audio.playList(key, tracks)`: shuffled, cross-faded, no track twice in a row, missing files skipped.
+`Game.music('fight' | 'boss' | 'ride')` picks the list from `CFG.tracks[CFG.music]`; `Mission.next` asks with every
+objective.
+
+## Weather (weather.js)
+
+`CFG.weather.snow = {from, full}`: one cloud of points in a box around the camera, wrapped at the box's edges; how
+much of it is drawn goes by the height of the ground under the camera.

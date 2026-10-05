@@ -256,9 +256,17 @@ Click one to load it:
   big forests are drawn with the models' simpler levels of detail. Details: [MAP_FORMAT.md](MAP_FORMAT.md).
 
   ![Forest blocks](screenshots/17_forest_blocks.png)
+* **Light effects** (light cones, glowing windows, lava and fire glow, weapon trails; GSF material flag `0x4`) are
+  added to the picture as light, in the model view and on maps. Exported files keep them as ordinary surfaces with
+  the flag in the material extras (`gsf_flags`): glTF has no additive material.
 * **Ground tiles of the game** (on by default): the ground is drawn with the setting's pre-blended transition tiles
-  exactly as the game picks them (`Texture/Scape/<Setting>/ScapeTexture5.dat`); off shows a smooth blend of the
-  material textures (sharper up close). The map exports use the game's tiles.
+  exactly as the game picks them (`Texture/Scape/<Setting>/ScapeTexture<Q>.dat`). From afar the viewer shows one
+  picture of the whole map; close up it takes every tile straight from the game's atlas pages, so the ground is as
+  sharp as in the game. **Ground detail** below it picks the game's level, 5 (finest, about 64 px per 4 m tile) down
+  to 1 (10 px) - the levels of the game's texture quality setting, as far as the installation has them. Off shows a
+  smooth blend of the material textures. Every setting uses its own set (Cave2, the volcano of the last campaign
+  map, too); only an installation without a setting's folder borrows another one. The map exports use the game's
+  tiles at the finest level.
 * **Walls** are joined like in the game: every wall piece shows only the arms towards its neighbouring pieces, towers
   and gates (and one of the model's variants per arm) – in the 3D view and in the map exports.
 

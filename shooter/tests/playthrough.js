@@ -23,7 +23,7 @@
   }
   let objIndex = M.index, objStart = 0;
   const bot = (g, t) => {
-    if (o.god) { for (const c of Object.values(P.chars)) { c.health = c.def.health; c.alive = true; } }
+    if (o.god) { for (const c of Object.values(P.chars)) { c.health = c.def.health; c.alive = true; } if (P.ride && !P.ride.dead) P.ride.hp = P.ride.def.health; }
     if (M.index !== objIndex) { times.push({ objective: objIndex, seconds: +(g.time - objStart).toFixed(0), kills: M.totalKills }); objIndex = M.index; objStart = g.time; }
     if (G.zones && !G.zones.allowedAt(P.pos.x, P.pos.z)) outside++;        // must never happen: the border holds
     const ob = M.obj;
@@ -39,6 +39,31 @@
       const d = e.pos.distanceTo(P.pos) - e.def.radius - (e.def.elite ? 20 : 0) + (e.def.structure ? 8 : 0);
       if (d < 18 && !e.def.structure) near++;
       if (d < bd) { bd = d; best = e; }
+    }
+    // on a ride (rides.js): the mammoth goes for the nearest target and strikes; the gunship's guns follow it
+    if (P.ride) {
+      const R = P.ride, tg = M.targets.filter((q) => q.alive).sort((a, b) => a.pos.distanceTo(P.pos) - b.pos.distanceTo(P.pos))[0] || best;
+      for (const k of ['KeyW', 'KeyS', 'KeyA', 'KeyD', 'ShiftLeft']) I.release(k);
+      if (!tg) { I.mouseUp(0); I.mouseUp(2); return; }
+      if (R.fly) {
+        const cp = g.engine.camera.position, dx = tg.pos.x - cp.x, dz = tg.pos.z - cp.z, dy = tg.pos.y + tg.def.height * 0.5 - cp.y, d = tg.pos.distanceTo(P.pos);
+        P.yaw = Math.atan2(-dx, -dz); P.pitch = Math.atan2(dy, Math.hypot(dx, dz));
+        if (d < 190) I.mouseDown(0); else I.mouseUp(0);
+        if (d < 240) I.mouseDown(2); else I.mouseUp(2);
+        // free flight: towards the target, circle it at 60..110, 35 above it
+        I.release('Space'); I.release('KeyC');
+        if (R.leg === 'free') { if (d > 110) I.press('KeyW'); else if (d < 60) I.press('KeyS'); I.press('KeyD'); if (P.pos.y < tg.pos.y + 30) I.press('Space'); else if (P.pos.y > tg.pos.y + 45) I.press('KeyC'); }
+        return;
+      }
+      const d = Math.hypot(tg.pos.x - P.pos.x, tg.pos.z - P.pos.z) - tg.def.radius - R.def.radius;
+      if (d < 7) { P.yaw = Math.atan2(-(tg.pos.x - P.pos.x), -(tg.pos.z - P.pos.z)); I.mouseDown(0); if (Math.random() < 0.03) I.mouseDown(2); else I.mouseUp(2); if (d > 2) I.press('KeyW'); return; }
+      I.mouseUp(0); I.mouseUp(2);
+      const key = M.index * 1000 + 7;
+      if (flowFor !== key || g.time - lastT > 2) { flowFor = key; lastT = g.time; nav.flowTo(tg.pos.x, null, tg.pos.z, 3000); }
+      nav.dir(P.pos.x, P.pos.z, dir);
+      if (dir.x || dir.z) P.yaw = Math.atan2(-dir.x, -dir.z); else P.yaw = Math.atan2(-(tg.pos.x - P.pos.x), -(tg.pos.z - P.pos.z));
+      I.press('KeyW'); if (d > 30) I.press('ShiftLeft');
+      return;
     }
     const c = P.ch;
     // character and weapon

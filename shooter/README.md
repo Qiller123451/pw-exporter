@@ -65,7 +65,45 @@ T-Rex titan before the temple. The towers of the city shoot at whoever is near u
 |---|---|
 | ![The Assault: the first wave on the beach](../docs/screenshots/25_shooter_assault.png) | ![The Assault: the war towers of the outer line](../docs/screenshots/26_shooter_towers.png) |
 
-### In both
+### Iron Winter
+
+A mission on **a map of the game's own making**: no ParaWorld map file is read, the island is built when the mission
+loads (`web/src/game/mapgen.js`, the layout in `maps/frost.js`) - so it needs nothing but the game. And the enemy is
+new: the **Norsemen** (swordsmen, spear throwers, bowmen, crossbowmen, pikemen, berserkers, cutthroats, sabre-tooths
+from the kennels, boar riders, rhinos with ballistas, war mammoths with log cannons).
+
+The SEAS want the rune gate the Norsemen keep in a fortress on the northern cape. The way there, 18 objectives:
+
+* **The beach** - land beside the hovercraft, clear the shore, bring down the watchtowers and the dragon boat in the
+  bay, break the palisade (its towers first, then the gate).
+* **The village** - burn the smithy, the kennels and the mead hall, hold the square against the counterattack. Exo
+  enforcers join your waves here.
+* **The war mammoth** - the gate of the pass is stone and iron: bullets, flames and rockets hardly scratch it. In
+  the pens east of the village stands a war mammoth. **You ride it**: left button = tusks (an arc in front), right
+  button = stamp (everything around), Shift + W = charge (tramples men, rams towers and gates), G = trumpet (stuns
+  what stands near). It turns slowly and walks where it faces. If it falls, another is brought up.
+* **The pass** - on foot again, up through the canyon into the snow: an ambush at the old ruins, watchtowers.
+* **The frozen lake** - a steam tank, then hold the landing zone until the helicopter is down.
+* **The gunship** - the helicopter lifts off, then **it is yours**: W A S D = fly the way you look, Space = up,
+  C = down, Shift = faster; left button = twin guns (they overheat), right button = rockets. Destroy the eight
+  ballista towers, the dragon boats in the cove and the gate of the fortress; the ballistas shoot back, and a
+  gunship that is shot down is the end. Its field is the cape and the sea around it - a faint energy wall shows
+  where it ends. When the targets are gone the pilot takes it in and lands inside.
+* **The fortress** - the temple and the longhouse of the guard, the Triceratops titan, and a last stand at the rune
+  gate while the engineers make it yours.
+
+Checkpoints: at the pens (the village is taken) and at the landing zone (the helicopter has come).
+It snows from the pass upwards.
+
+| | |
+|---|---|
+| ![Before the palisade](../docs/screenshots/27_shooter_frost.png) | ![On the war mammoth, before the gate of the pass](../docs/screenshots/28_shooter_mammoth.png) |
+| ![The gunship over the cape](../docs/screenshots/29_shooter_gunship.png) | ![The Triceratops titan in the fortress](../docs/screenshots/30_shooter_titan.png) |
+
+### In all of them
+
+**Music.** The game's fight songs, shuffled: those of the enemy's tribe and of the SEAS while you fight, others for
+a boss and for a ride (`CFG.tracks`).
 
 **Checkpoints.** Each mission has two: in The Holy City at "Break into the lower city" and "On to the triumphal
 arch", in The Assault when the gate is down ("into the city") and at "On to the triumphal arch". Reaching one is

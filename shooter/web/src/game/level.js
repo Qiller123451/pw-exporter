@@ -57,8 +57,10 @@ function showAll(props) {
 
 export async function loadLevel(scene, cfg, progress = () => {}) {
   progress(0.02, 'Reading the map');
-  const buf = await (await fetch(cfg.map)).arrayBuffer();
-  const md = await parseUla(buf, cfg.map.split('/').pop());
+  // a map of the game's own making ("gen:<name>" -> maps/<name>.js, see mapgen.js) or one of ParaWorld's map files
+  let md;
+  if (cfg.map.startsWith('gen:')) md = (await import('./maps/' + cfg.map.slice(4) + '.js')).build();
+  else md = await parseUla(await (await fetch(cfg.map)).arrayBuffer(), cfg.map.split('/').pop());
   const gamedata = cfg.gamedata;
   const manifest = Assets.manifest.models;
   const has = (m) => !!(m && manifest[m]);
@@ -99,7 +101,8 @@ export async function loadLevel(scene, cfg, progress = () => {}) {
   fowUniforms.fowOn.value = 0;                                  // no fog of war in this game
   const tl = new THREE.TextureLoader();
   const ld = (f) => tl.loadAsync(Assets.base + 'terrain/' + f).then((t) => { t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; return t; });
-  const textures = await Promise.all([0, 1, 2, 3, 4, 5, 6, 7].map((k) => ld(`${md.setting}/scape_${k}.jpg`)));
+  // (md.textures: a generated map's own choice of 8 ground textures, from any of the settings)
+  const textures = await Promise.all([0, 1, 2, 3, 4, 5, 6, 7].map((k) => ld(md.textures ? md.textures[k] : `${md.setting}/scape_${k}.jpg`)));
   const terrain = await buildTerrain(hf, splat, textures, { scales: [0, 1, 2, 3, 4, 5, 6, 7].map(() => [1 / 24, 1 / 24]) });
   scene.add(terrain);
   let water = null;
@@ -138,8 +141,11 @@ export async function loadLevel(scene, cfg, progress = () => {}) {
   // towards its neighbours on the 8 u wall grid (walls, towers, gates). Drawn whole, every piece is a star of all
   // its arms and all their variants - walls "all over the place". So: these models once more with their arms
   // tagged, and each piece gets its own copy with the right arms (below).
+  // (which models: the game's 'Wall' kind - but the Norsemen's stone walls are plain buildings ('Bldg') in the
+  // data and are built the same way, a post with eight arms; left out, the wall of the pass was a row of stars)
+  const isWallPiece = (n, t) => !/gate/.test(n) && (t.fourcc === 'Wall' || (t.fourcc === 'Bldg' && /^(hu|aje|ninigi|seas)_\w*(wall|palisade|skewer)$/.test(n)));
   const wallTpl = new Map();
-  for (const n of names) { const t = templates.get(n); if (t && t.fourcc === 'Wall' && !/gate/.test(n)) wallTpl.set(n, await loadModel(n, { static: true, wallArms: true })); }
+  for (const n of names) { const t = templates.get(n); if (t && isWallPiece(n, t)) wallTpl.set(n, await loadModel(n, { static: true, wallArms: true })); }
   const onGrid = (o) => Math.abs(((o.x % 8) + 8) % 8 - 4) < 0.3 && Math.abs(((o.z % 8) + 8) % 8 - 4) < 0.3 && Math.abs(Math.sin(o.rot || 0)) < 0.02 && Math.cos(o.rot || 0) > 0;
   const tileKey = (x, z) => Math.round((x - 4) / 8) + ',' + Math.round((z - 4) / 8);
   const joints = new Map();                                     // tile -> 'wall' | 'tower' | 'gate'
@@ -207,7 +213,7 @@ export async function loadLevel(scene, cfg, progress = () => {}) {
     if (!o.model || !templates.has(o.model)) { o.model = null; continue; }
     const tpl = templates.get(o.model);
     const veg = o.type === 'VGTN' || o.type === 'TREE';
-    const tree = veg && /tree|palm|acacia|koekerboom/.test(o.model);
+    const tree = veg && /tree|palm|acacia|koekerboom|larch|birch|beech|oak|maple|poplar/.test(o.model);
     // trees stand on the ground, everything else at its stored height (bridges, roofs, things on tables)
     const y = o.type === 'TREE' ? height(o.x, o.z) : o.y;
     o.y = y;
@@ -277,7 +283,7 @@ export async function loadLevel(scene, cfg, progress = () => {}) {
   collision.build();
 
   // buildings put up during the mission (Mission.build): [{tpl, x, z, yaw, addon: {tpl, link}}] - drawn, solid, and
-  // closed for the path finding. Returns the placed objects [{obj, x, y, z, r, h}].
+  // closed for the path finding. Returns the placed objects [{obj, x, y, z, r, h, addon}].
   const place = (list, nav) => {
     const out = [];
     collision.begin();
@@ -288,10 +294,11 @@ export async function loadLevel(scene, cfg, progress = () => {}) {
       obj.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } });
       obj.updateMatrixWorld(true);
       collision.addModel(b.tpl.scene, obj.matrix);
+      let addon = null;
       if (b.addon) {
         let link = null;
         obj.traverse((o) => { if (o.name === 'link_' + b.addon.link) link = o; });
-        if (link) { const a = cloneModel(b.addon.tpl); if (a.children[0]) a.children[0].rotation.set(0, 0, 0); a.traverse((m) => { if (m.isMesh) m.castShadow = true; }); link.add(a); }
+        if (link) { const a = addon = cloneModel(b.addon.tpl); a.userData.attached = true; if (a.children[0]) a.children[0].rotation.set(0, 0, 0); a.traverse((m) => { if (m.isMesh) m.castShadow = true; }); link.add(a); }
       }
       scene.add(obj);
       const size = new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3()), r = Math.max(size.x, size.z) / 2;
@@ -300,7 +307,7 @@ export async function loadLevel(scene, cfg, progress = () => {}) {
         const mask = nav.mask || (nav.mask = new Uint8Array(nav.y.length));
         for (let dz = -r; dz <= r; dz += nav.cell) for (let dx = -r; dx <= r; dx += nav.cell) { if (dx * dx + dz * dz > r * r * 0.8) continue; const c = nav.index(b.x + dx, b.z + dz); if (c >= 0) mask[c] = 1; }
       }
-      out.push({ obj, x: b.x, y, z: b.z, r, h: size.y });
+      out.push({ obj, x: b.x, y, z: b.z, r, h: size.y, addon });
     }
     collision.append();
     return out;

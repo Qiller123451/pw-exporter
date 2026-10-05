@@ -20,6 +20,7 @@
 // The Dustriders are not held back: they come over the barricades (enemies.js lets them leap where closedAt()).
 import * as THREE from 'three';
 import { CFG } from './config.js';
+import { applyState } from '../pw/engine/parts.js';
 
 const DX = [1, 0, -1, 0], DZ = [0, 1, 0, -1];
 const NEVER = 255;
@@ -95,6 +96,10 @@ export class Zones {
     cutCells.forEach((c, k) => { zone[c] = lab[k]; });
     // everything else: the zone of the nearest labelled cell
     let qh = 0, qt = 0;
+    // (far: how many cells from there - physics.leash keeps the player near the ground one can walk on)
+    const far = this.far = new Uint8Array(N);
+    const base = this.base = new Float32Array(N);                    // ... and how high that ground lies
+    for (let c = 0; c < N; c++) base[c] = Y[c] === Y[c] ? Y[c] : 0;
     for (let c = 0; c < N; c++) if (zone[c] !== 254) queue[qt++] = c;
     while (qh < qt) {
       const c = queue[qh++];
@@ -102,7 +107,7 @@ export class Zones {
         const i = c % n + DX[d], j = Math.floor(c / n) + DZ[d];
         if (i < 0 || j < 0 || i >= n || j >= n) continue;
         const e = j * n + i;
-        if (zone[e] === 254) { zone[e] = zone[c]; queue[qt++] = e; }
+        if (zone[e] === 254) { zone[e] = zone[c]; far[e] = Math.min(255, far[c] + 1); base[e] = base[c]; queue[qt++] = e; }
       }
     }
     this._gates();
@@ -111,6 +116,17 @@ export class Zones {
   }
   zoneAt(x, z) { const c = this.g.nav.index(x, z); return c < 0 ? NEVER : this.zone[c]; }
   allowedAt(x, z) { return this.zoneAt(x, z) <= this.open; }
+  // ... and for somebody on foot (or on a beast) on a map whose mountains are its border (physics.leash, metres):
+  // no further than that from ground one can walk on, and not down a cliff from it. Zones alone do not hold there - a mountainside belongs to
+  // the zone at its foot, and behind a low ridge lies a shore nobody comes back from.
+  walkAt(x, z) {
+    const c = this.g.nav.index(x, z);
+    if (c < 0 || this.zone[c] > this.open) return false;
+    const l = CFG.physics.leash;
+    if (!l || !this.far || !this.far[c]) return true;
+    // ... and not down a cliff: the ground here no more than 5 m below it
+    return this.far[c] * this.g.nav.cell <= l && this.g.level.height(x, z) > this.base[c] - 5;
+  }
   // a cell of a cut that is still shut (the Dustriders leap over these)
   closedAt(c) { return c >= 0 && this.cutOf[c] >= 0 && this.zone[c] > this.open; }
 
@@ -223,11 +239,12 @@ export class Zones {
       if (!g.closed || g.need > this.open) continue;
       g.closed = false; n++;
       if (g.door) {
-        // the doors are blown out of the gate
+        // the gate is blown open
         const nav = G.nav, D = G.level.doorGate;
         for (const cc of g.cells) nav.mask[cc] = 0;
-        if (D && D.doors.some((m) => m.visible)) {
-          for (const m of D.doors) m.visible = false;
+        if (D && !D.obj.userData.doorOpen) {
+          // (its leaves: the shut ones go, the ones standing open show - parts.js)
+          D.obj.userData.doorOpen = true; applyState(D.obj, 4, 0, 1);
           if (fx) {
             const p = new THREE.Vector3(g.x, g.y + 5, g.z);
             G.fx.explosion(p, 12); G.fx.dust(p, 9, 16); G.sfx('explode', 100, p, 0.7);
@@ -307,15 +324,37 @@ export class Zones {
     this.wallQuads = pos.length / 18;
   }
   // the player ran into the border
-  touch(p) {
+  touch(p, note) {
     this.touchP.set(p.x, p.y + 3, p.z); this.touchT = 1;
-    if (this.noteT <= 0) { this.noteT = 4; this.g.hud.note(CFG.zones.note || 'This part of the city is still held - finish the objective first'); this.g.sfx('error', 35, null); }
+    if (this.noteT <= 0) { this.noteT = 4; this.g.hud.note(note || CFG.zones.note || 'This part of the city is still held - finish the objective first'); this.g.sfx('error', 35, null); }
   }
+  // The same wall round a field in the air (the gunship's): along the closed line of points [[x, z] ...], from y0
+  // up to y1, seen from further off than the one in the streets.
+  fence(poly, y0, y1) {
+    this.unfence();
+    if (!this.mat) return;
+    const pos = [], uv = [];
+    for (let k = 0; k < poly.length; k++) {
+      const a = poly[k], b = poly[(k + 1) % poly.length];
+      pos.push(a[0], y0, a[1], b[0], y0, b[1], b[0], y1, b[1], a[0], y0, a[1], b[0], y1, b[1], a[0], y1, a[1]);
+      uv.push(0, 0, 1, 0, 1, 0.45, 0, 0, 1, 0.45, 0, 0.45);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    this.fenceMat = this.mat.clone();
+    this.fenceMat.uniforms.uNear.value = CFG.zones.fenceNear || 120;
+    this.fenceMesh = new THREE.Mesh(geo, this.fenceMat);
+    this.fenceMesh.frustumCulled = false; this.fenceMesh.renderOrder = 20;
+    this.g.scene.add(this.fenceMesh);
+  }
+  unfence() { if (this.fenceMesh) { this.fenceMesh.geometry.dispose(); this.fenceMesh.removeFromParent(); this.fenceMat.dispose(); this.fenceMesh = this.fenceMat = null; } }
   update(dt, time) {
     if (!this.mat) return;
     const u = this.mat.uniforms, P = this.g.player;
     u.uPlayer.value.copy(P.pos); u.uTime.value = time;
     this.touchT = Math.max(0, this.touchT - dt * 1.6); this.noteT -= dt;
     u.uTouch.value.set(this.touchP.x, this.touchP.y, this.touchP.z, this.touchT);
+    if (this.fenceMat) { const f = this.fenceMat.uniforms; f.uPlayer.value.copy(P.pos); f.uTime.value = time; f.uTouch.value.copy(u.uTouch.value); }
   }
 }

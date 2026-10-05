@@ -214,6 +214,40 @@ export class Audio {
     };
     step();
   }
+  // A play list (the shooter): the tracks in a shuffled order, one after the other with a cross-fade, never the same
+  // one twice in a row; a file that is missing is skipped. `key` names the list - asking for the one that plays
+  // changes nothing, another one fades over to its first track.
+  playList(key, tracks) {
+    if (!tracks || !tracks.length || this.musicMode === 'list:' + key) return;
+    this.musicMode = 'list:' + key;
+    let queue = [], fails = 0;
+    const next = () => {
+      if (this.musicMode !== 'list:' + key) return;
+      if (!queue.length) {
+        queue = tracks.slice();
+        for (let i = queue.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [queue[i], queue[j]] = [queue[j], queue[i]]; }
+        if (queue.length > 1 && queue[0] === this.lastTrack) queue.push(queue.shift());
+      }
+      const track = this.lastTrack = queue.shift();
+      const el = new window.Audio(this.base + 'music/' + track + '.mp3');
+      el.loop = false; el.volume = 0;
+      el.addEventListener('ended', () => { if (this.music === el) next(); });
+      el.addEventListener('error', () => { if (this.music === el && ++fails <= tracks.length) next(); });
+      el.addEventListener('playing', () => { fails = 0; });
+      const old = this.music;
+      this.music = el; this.musicTrack = track;
+      el.play().catch(() => {});
+      const target = () => (this.muted ? 0 : this.vol.music * this.vol.master), t0 = performance.now();
+      const step = () => {
+        const k = Math.min(1, (performance.now() - t0) / 3000);
+        if (this.music === el) el.volume = target() * k;
+        if (old) old.volume = Math.max(0, old.volume * (1 - k));
+        if (k < 1) requestAnimationFrame(step); else if (old) old.pause();
+      };
+      step();
+    };
+    next();
+  }
   // called for every hit on the player's units/buildings
   combatEvent(time) {
     this.combatHits.push(time);

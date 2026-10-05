@@ -107,18 +107,20 @@ export class Hud {
   update(dt, fps) {
     const G = this.g, P = G.player, M = G.mission, cam = G.engine.camera;
     if (!P || !P.ch) return;
+    // on a ride (rides.js) the three panels are its own
+    const R = P.ride ? P.ride.hud() : null;
     const c = P.ch;
     // the Executioner has no weapon switching: the panel always shows the minigun and its ammunition
     const gun = c.def.aimToShoot ? c.weapons.find((x) => x.def.kind !== 'melee') : null;
     const w = P.weapon, wd = w.def;
     // crosshair: opens with the weapon's spread
     const spread = wd.kind === 'bullet' ? (P.aiming ? wd.spreadAim : wd.spread) * (1 + P.recoil) : wd.kind === 'flame' ? 3 : wd.kind === 'melee' ? 2.5 : 0.6;
-    const px = 6 + spread * 7 + (P.sprinting ? 10 : 0);
+    const px = R ? R.gap : 6 + spread * 7 + (P.sprinting ? 10 : 0);
     this.cross.style.setProperty('--gap', px.toFixed(1) + 'px');
-    this.cross.classList.toggle('melee', wd.kind === 'melee');
+    this.cross.classList.toggle('melee', R ? !!R.melee : wd.kind === 'melee');
     if (this.hitT > 0) { this.hitT -= dt; if (this.hitT <= 0) this.hitm.className = 'hitm'; }
     if (this.vignT > 0) { this.vignT -= dt; if (this.vignT <= 0) this.vign.className = 'vign'; }
-    this.vign.classList.toggle('low', c.health < c.def.health * 0.3);
+    this.vign.classList.toggle('low', P.ride ? P.ride.hp < P.ride.def.health * 0.3 : c.health < c.def.health * 0.3);
     if (this.comboT > 0) { this.comboT -= dt; if (this.comboT <= 0) this.combo = 0; }
     if (this.bannerT > 0) { this.bannerT -= dt; if (this.bannerT <= 0) this.bannerEl.classList.remove('on'); }
 
@@ -131,6 +133,7 @@ export class Hud {
       html += `<div class="ch${act ? ' act' : ''}${ch.alive ? '' : ' dead'}"><b>${d.name}</b><div class="arm">${pips.join('')}</div>` +
         `<div class="hp"><s style="width:${(Math.max(0, ch.health) / d.health * 100).toFixed(0)}%"></s></div>${act ? '' : `<small>${ch.alive ? 'Tab' + (P.swapCd > 0 ? ' ' + P.swapCd.toFixed(1) : '') : 'down'}</small>`}</div>`;
     }
+    if (R) html = R.chars;
     if (html !== this._chars) { this.chars.innerHTML = html; this._chars = html; }
 
     // weapon
@@ -142,14 +145,14 @@ export class Hud {
     const list = gun
       ? `<span class="${wd.kind === 'melee' ? 'on' : ''}">LMB Claws</span><span class="${wd.kind === 'melee' ? '' : 'on'}">RMB + LMB Minigun</span>`
       : c.weapons.map((x, i) => `<span class="${i === c.wi ? 'on' : ''}">${i + 1} ${x.def.name}</span>`).join('');
-    const wh = `<div class="wn">${gun ? gun.def.name : wd.name}</div><div class="am">${ammo}</div><div class="wl">${list}</div>`;
+    const wh = R ? R.weapon : `<div class="wn">${gun ? gun.def.name : wd.name}</div><div class="am">${ammo}</div><div class="wl">${list}</div>`;
     if (wh !== this._weapon) { this.weapon.innerHTML = wh; this._weapon = wh; }
 
     // abilities
     const jet = [];
     for (let i = 0; i < c.def.jet.charges; i++) jet.push(`<u class="${i < c.jet ? 'on' : ''}"></u>`);
     const U = c.def.ultimate, ucd = Math.ceil(c.ultCd || 0);
-    const ah = `<div><em>Q</em> Jetpack ${jet.join('')}</div><div class="${c.dashCd > 0 ? 'cd' : ''}"><em>Ctrl</em> Dash</div>`
+    const ah = R ? R.abil : `<div><em>Q</em> Jetpack ${jet.join('')}</div><div class="${c.dashCd > 0 ? 'cd' : ''}"><em>Ctrl</em> Dash</div>`
       + (U ? `<div class="ult ${ucd > 0 ? 'cd' : 'ready'}"><em>G</em> ${U.name}${ucd > 0 ? ' <b>' + ucd + ' s</b>' : ''}</div>` : '');
     if (ah !== this._abil) { this.abil.innerHTML = ah; this._abil = ah; }
 
@@ -234,7 +237,7 @@ export class Hud {
   // the first screen: which mission (missions whose map the installation does not have are greyed out)
   missions(list, onPick) {
     const o = this.screen(`<div class="panel"><h1>ParaWorld Shooter</h1><p class="sub">Choose the mission</p>
-      <div class="pick missions">${list.map((m) => `<button data-m="${m.id}"${m.available === false ? ' disabled' : ''}><b>${m.title}</b><span>${m.blurb}</span>${m.needs ? `<small>${m.available === false ? 'Not available: ' : ''}${m.needs}</small>` : ''}</button>`).join('')}</div>
+      <div class="pick missions">${list.map((m) => `<button data-m="${m.id}"${m.available === false ? ' disabled' : ''}><b>${m.title}</b><span>${m.blurb}</span>${m.needs || m.note ? `<small>${m.available === false ? 'Not available: ' : ''}${m.needs || m.note}</small>` : ''}</button>`).join('')}</div>
       ${this.logNote(this.g.previous)}</div>`, 'menu');
     this.show(false);                         // nothing of the game is there yet
     for (const b of o.querySelectorAll('[data-m]')) b.addEventListener('click', () => { this.show(true); onPick(b.dataset.m); });
@@ -246,6 +249,7 @@ export class Hud {
       <div class="pick"><button data-c="gunner"><b>Gunner</b><span>Machine gun, flamethrower, rocket launcher. Fast.</span></button>
       <button data-c="executioner"><b>Executioner MKII</b><span>Claws and minigun. Big and tough.</span></button></div>
       ${this.g.from ? `<p class="cp">You start at the checkpoint: <b>${CFG.mission.objectives[this.g.from].text}</b> &nbsp; <a href="#" data-a="scratch">from the beginning instead</a></p>` : this.g.stored ? `<p class="cp">A checkpoint is saved: <b>${CFG.mission.objectives[this.g.stored].text}</b> &nbsp; <a href="#" data-a="cp">continue there</a></p>` : ''}
+      ${CFG.rides ? `<p class="cp">In this mission you also ride: ${Object.values(CFG.rides).map((r) => `<b>${r.name}</b> (${r.keys})`).join(' &nbsp; ')}</p>` : ''}
       <p class="hint">Pick who goes in first. Tab swaps between them at any time. &nbsp; <a href="#" data-a="other">Another mission</a></p>
       <div class="cols">${this.keysTable()}${this.settingsHtml()}</div>${this.logNote(this.g.previous)}</div>`, 'menu');
     this.bindSettings();
@@ -268,7 +272,7 @@ export class Hud {
   end(win, stats, onRestart) {
     const t = Math.round(stats.time);
     const o = this.screen(`<div class="panel"><h1>${win ? (CFG.mission.won || 'The Holy City is taken') : 'You have fallen'}</h1>
-      <p class="sub">${win ? 'Mission complete' : 'The Dustriders hold the city'}</p>
+      <p class="sub">${win ? 'Mission complete' : CFG.mission.lost || 'The Dustriders hold the city'}</p>
       <table class="keys stats"><tr><th>Kills</th><td>${stats.kills}</td></tr><tr><th>Executions</th><td>${stats.executions}</td></tr>
       <tr><th>Time</th><td>${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}</td></tr><tr><th>Damage taken</th><td>${Math.round(stats.damage)}</td></tr></table>
       <div class="pick one">${!win && stats.checkpoint ? `<button data-a="cp"><b>Continue from the checkpoint</b><span>${CFG.mission.objectives[stats.checkpoint].text}</span></button>` : ''}<button data-a="restart"><b>${win ? 'Play again' : 'From the beginning'}</b></button><button data-a="other"><b>Another mission</b></button></div></div>`, 'menu');

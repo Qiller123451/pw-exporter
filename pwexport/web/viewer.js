@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as P from './parts.js';
+import { applyGsfMaterials } from './materials.js';
 
 const loader = new GLTFLoader();
 const cache = new Map();          // url -> Promise<gltf>
@@ -13,6 +14,7 @@ export function loadGltf(url) {
     // original node names (GLTFLoader tidies names; the exporter needs them as written)
     const json = g.parser.json;
     for (const [obj, a] of g.parser.associations) if (a && a.nodes !== undefined && obj.userData) obj.userData.nodeName = json.nodes[a.nodes].name;
+    applyGsfMaterials(g.scene);          // light effects are added, not painted (materials.js)
     return g;
   }));
   return cache.get(url);
@@ -243,6 +245,7 @@ export class Viewer {
         if (!('origMap' in m.userData)) m.userData.origMap = m.map || null;
         const want = on ? m.userData.origMap : null;
         if (m.map !== want) { m.map = want; m.needsUpdate = true; }
+        if (m.userData.glow && !m.userData.baseColor) m.color.setScalar(want ? 1 : 0.12);       // an added white sheet would blind
       }
     });
   }

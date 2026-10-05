@@ -27,6 +27,7 @@ import { Log } from './game/log.js';
 import { Zones } from './game/zones.js';
 import { Allies } from './game/allies.js';
 import { MISSIONS, useMission } from './game/missions.js';
+import { Weather } from './game/weather.js';
 
 const STEP = 1 / 60;
 const params = new URLSearchParams(location.search);
@@ -54,7 +55,7 @@ class Game {
     if (!mid && !TEST && info.ready) {
       const list = Object.values(MISSIONS);
       // (a mission whose map this installation does not have - a fan map of a mod - cannot be chosen)
-      await Promise.all(list.map(async (m) => { try { m.available = (await fetch(m.map)).ok; } catch (e) { m.available = false; } }));
+      await Promise.all(list.map(async (m) => { try { m.available = m.map.startsWith('gen:') || (await fetch(m.map)).ok; } catch (e) { m.available = false; } }));
       this.previous = await this.log.previous();
       mid = await new Promise((res) => hud.missions(list, res));
     }
@@ -108,6 +109,7 @@ class Game {
     if (CFG.allies && CFG.allies.count > 0) { this.allies = new Allies(this); await this.allies.load((f, t) => hud.loading(0.97 + f * 0.03, t)); }
     this.mission = new Mission(this);
     await this.mission.preload();
+    if (CFG.weather) this.weather = new Weather(this);
 
     this.player.active = params.get('class') || 'gunner';
     this.player.spawn(S.x, S.z, S.yaw);
@@ -116,6 +118,7 @@ class Game {
     // the graphics card gets everything before the first frame, in small portions (engine.warm)
     this.engine.followSun(this.player.pos);
     const roots = [...this.enemies.templates.values(), ...(this.allies ? this.allies.templates.values() : [])].map((t) => t && t.scene);
+    for (const r of this.player.rides.values()) roots.push(r.actor.obj);          // (what the player will ride: no hitch when he mounts)
     const warm = await this.engine.warm(roots, (f, t) => hud.loading(f, t));
     THREE.Cache.clear();                 // (the files themselves are not needed any more)
     this.log.add('WARM', `${warm.textures} textures of ${warm.images} images in ${warm.texMs} ms, on the card ${this.engine.renderer.info.memory.textures}, shaders ${warm.shaderMs} ms, first frame ${warm.frameMs} ms`);
@@ -154,7 +157,13 @@ class Game {
     else if (!TEST) Mission.store(CFG.missionId, 0);          // a new attempt from the beginning: the old checkpoint is gone
     this.mission.start(from);
     if (from > 0 && this.allies) this.allies.reinforce(CFG.allies.group * 2, [P.pos.x, P.pos.z]);
-    if (this.settings.music) try { this.audio.playMusic('combat', 'Aje'); } catch (e) { /* no music files */ }
+    this.music(this.mission.obj && this.mission.obj.type === 'boss' ? 'boss' : this.mission.obj && this.mission.obj.ride ? 'ride' : 'fight');
+  }
+  // the music for what is going on: 'fight' | 'boss' | 'ride' (CFG.tracks; the mission asks with every new objective)
+  music(kind) {
+    if (!this.settings.music) return;
+    const T = CFG.tracks[CFG.music] || CFG.tracks.Aje;
+    try { this.audio.playList(kind, T[kind] || T.fight); } catch (e) { /* no music files */ }
   }
   pause() {
     if (this.state !== 'play') return;
@@ -257,6 +266,7 @@ class Game {
     this.player.camera(real, this.fx);
     if (this.debugCam) this.debugCam(cam);                 // tests: look from somewhere else
     this.level.update(cam, this.time);
+    if (this.weather) this.weather.update(cam, real);
     this.zones.update(real, performance.now() / 1000);
     this.engine.followSun(this.player.pos);
     this.audio.listener.copy(cam.position); this.audio.yaw = this.player.yaw;

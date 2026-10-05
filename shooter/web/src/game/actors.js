@@ -29,6 +29,25 @@ export function linksOf(root) {
 }
 
 // a model instance standing at `obj` (a group at the feet)
+// A clip finds its bones by name, and searches the whole model for them - riders and build-ups included once they
+// hang on a link. Men and beasts share bone names (the names are hashes of "L Thigh" and the like): the walk of a
+// mammoth then swung the legs of the man on its back, and its own hind legs, further down the tree, stood still.
+// So: what is attached (userData.attached) is not searched; its own clips start at its own root and still find it.
+THREE.PropertyBinding.findNode = function (root, nodeName) {
+  if (nodeName === undefined || nodeName === '' || nodeName === '.' || nodeName === -1 || nodeName === root.name || nodeName === root.uuid) return root;
+  if (root.skeleton) { const b = root.skeleton.getBoneByName(nodeName); if (b !== undefined) return b; }
+  const search = (children) => {
+    for (const c of children) {
+      if (c.userData.attached) continue;
+      if (c.name === nodeName || c.uuid === nodeName) return c;
+      const r = search(c.children);
+      if (r) return r;
+    }
+    return null;
+  };
+  return search(root.children);
+};
+
 export class Actor {
   constructor(tpl, opts = {}) {
     this.tpl = tpl;
@@ -54,6 +73,7 @@ export class Actor {
     const o = cloneModel(tpl);
     if (o.children[0]) o.children[0].rotation.set(0, 0, 0);     // the link's frame is already the model's Z-up frame
     o.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.frustumCulled = false; } });
+    o.userData.attached = true;
     l.add(o);
     this.held.set(link, o);
     return o;
@@ -67,9 +87,19 @@ export class Actor {
 }
 
 // Something built onto a model with its own animation and crew - a turret, a catapult:
-//   addon = {model, link, clip, crew: [[model, link on the addon, idle clip, clip when it fires]]}
+//   addon = {model, link, clip, crew: [[model, link on the addon, idle clip, clip when it fires]]}  (or a list of them)
 // Returns {obj, links, fire(), update(dt), muzzle(out)} (or null); fire() plays the addon's and the crew's clips once.
 export function addAddon(actor, A, templates) {
+  // several of them (the two ballistas of the titan): they take turns
+  if (Array.isArray(A)) {
+    const list = A.map((x) => addAddon(actor, x, templates)).filter(Boolean);
+    if (!list.length) return null;
+    let k = 0;
+    return { obj: list[0].obj, links: list[0].links, list,
+      fire() { k = (k + 1) % list.length; list[k].fire(); },
+      update(dt) { for (const x of list) x.update(dt); },
+      muzzle(out) { return list[k].muzzle(out); } };
+  }
   const t = templates.get(A.model), obj = t && actor.attach(A.link, t);
   if (!obj) return null;
   const links = linksOf(obj), anim = new AnimCtl(obj, t.clips), crew = [];
@@ -79,6 +109,7 @@ export function addAddon(actor, A, templates) {
     const o = cloneModel(ct);
     if (o.children[0]) o.children[0].rotation.set(0, 0, 0);
     o.traverse((x) => { if (x.isMesh) { x.castShadow = true; x.frustumCulled = false; } });
+    o.userData.attached = true;
     l.add(o);
     const an = new AnimCtl(o, ct.clips), c = an.pick(idle, 'standanim');
     if (c) an.play(c, { loop: true });

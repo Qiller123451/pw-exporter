@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as P from './parts.js';
+import { applyGsfMaterials } from './materials.js';
 
 const loader = new GLTFLoader();
 const texLoader = new THREE.TextureLoader();
@@ -38,7 +39,8 @@ export class MapView {
     if (this.layers.terrain && this.mats) this.layers.terrain.material = on && !this.groundFailed ? this.mats.tiles : this.mats.blend;
   }
   // ---------------------------------------------------------------- terrain
-  async load(info, onProgress = () => {}) {
+  // q = the game's ground detail 1 .. 5 (0 / undefined = the finest the installation has)
+  async load(info, onProgress = () => {}, q = 0) {
     this.info = info;
     const step = Math.max(1, Math.ceil(Math.max(info.grid[0], info.grid[1]) / 768));   // at most ~768 x 768 vertices
     const [hb, mb] = await Promise.all([
@@ -96,21 +98,9 @@ export class MapView {
           diffuseColor.rgb *= c;`);
     };
     mat.customProgramCacheKey = () => 'pw-map-terrain';
-    // the game's look: every 4 m tile from the setting's pre-blended transition tiles (server side, scape.bake)
-    // The server draws that picture when a map is first opened (some seconds for a big map): wait for it, so the
-    // "loading" spinner stays up instead of a black map. A picture that cannot be made must not leave the map black
-    // either: then the blended materials are shown.
-    const gtex = await new Promise((done) => {
-      const t = texLoader.load('/api/map/ground?id=' + encodeURIComponent(info.id), () => done(t), undefined, () => {
-        console.warn('map ground texture failed to load');
-        this.groundFailed = true;
-        if (this.api.toast) this.api.toast('The ground picture of this map could not be made; showing the plain materials.');
-        done(t);
-      });
-    });
+    this.mats = { tiles: null, blend: mat };
+    await this.loadGround(q);
     if (this.cancelled) return;
-    gtex.colorSpace = THREE.SRGBColorSpace; gtex.anisotropy = 8;
-    this.mats = { tiles: new THREE.MeshLambertMaterial({ map: gtex }), blend: mat };
     const terrain = new THREE.Mesh(geo, this.tiles === false || this.groundFailed ? mat : this.mats.tiles);
     terrain.name = 'terrain'; terrain.receiveShadow = true; terrain.userData.own = true;
     this.layers.terrain = terrain;
@@ -124,6 +114,104 @@ export class MapView {
     }
     this.markers();
     onProgress(0.2);
+  }
+
+  // The game's look: every 4 m tile is one of the setting's pre-blended transition tiles. The server draws the
+  // whole map that way into one picture (scape.bake; some seconds for a big map the first time) - at most 4 pixels
+  // per metre, which is right from afar. Close up the shader takes the tiles straight from the game's atlas pages
+  // instead (groundDetail), so the ground is as sharp as the chosen detail level is in the game.
+  // Waits for the picture, so the "loading" spinner stays up instead of a black map; a picture that cannot be made
+  // must not leave the map black either: then the blended materials are shown.
+  async loadGround(q = 0) {
+    const id = encodeURIComponent(this.info.id);
+    const gi = await this.api.get('/api/map/groundinfo?id=' + id + (q ? '&q=' + q : '')).catch(() => ({ q: 0, qualities: [] }));
+    if (this.cancelled) return;
+    this.ground = gi;
+    this.groundFailed = false;
+    const gtex = await new Promise((done) => {
+      const t = texLoader.load('/api/map/ground?id=' + id + (gi.q ? '&q=' + gi.q : ''), () => done(t), undefined, () => {
+        console.warn('map ground texture failed to load');
+        this.groundFailed = true;
+        if (this.api.toast) this.api.toast('The ground picture of this map could not be made; showing the plain materials.');
+        done(t);
+      });
+    });
+    if (this.cancelled) return;
+    gtex.colorSpace = THREE.SRGBColorSpace; gtex.anisotropy = 8;
+    const old = this.mats.tiles;
+    const tiles = new THREE.MeshLambertMaterial({ map: gtex });
+    if (gi.q && gi.inner > gi.px && gi.pages <= 8 && !this.groundFailed) this.groundDetail(tiles, gi).catch((e) => console.warn('ground detail', e));
+    this.mats.tiles = tiles;
+    if (this.layers.terrain) this.setTiles(this.tiles !== false);
+    if (old) { if (old.map) old.map.dispose(); (old.userData.textures || []).forEach((t) => t.dispose()); old.dispose(); }
+  }
+
+  // close-up ground: per fragment, the tile of the 4 m square it lies in (tile layout from the server, one texel
+  // per tile) is looked up in the atlas pages. Texture gradients come from the unbroken map coordinates, so the
+  // mip level is right across tile edges; it is kept within the tiles' mip-map border, and where the picture of
+  // the whole map is as detailed as the screen needs (lod >= uLod), that picture is used.
+  async groundDetail(mat, gi) {
+    const info = this.info, id = encodeURIComponent(info.id);
+    const tb = await this.api.raw('/api/map/tiles?id=' + id + '&q=' + gi.q);
+    if (this.cancelled) return;
+    const [nx, ny] = tb.grid, ids = new Uint16Array(tb.data), px = new Uint8Array(nx * ny * 4);
+    for (let i = 0; i < nx * ny; i++) { px[i * 4] = ids[i] & 255; px[i * 4 + 1] = ids[i] >> 8; px[i * 4 + 3] = 255; }
+    const idTex = new THREE.DataTexture(px, nx, ny, THREE.RGBAFormat, THREE.UnsignedByteType);
+    idTex.magFilter = idTex.minFilter = THREE.NearestFilter; idTex.generateMipmaps = false; idTex.needsUpdate = true;
+    const on = { value: 0 }, aniso = { value: 4 };
+    let left = gi.pages;
+    const pages = [];
+    for (let n = 0; n < gi.pages; n++) {
+      const t = texLoader.load(`/api/map/groundpage?id=${id}&q=${gi.q}&n=${n}&v=${encodeURIComponent(gi.ver)}`, () => { if (--left === 0) on.value = 1; });
+      t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = aniso.value;
+      pages.push(t);
+    }
+    mat.userData.textures = [idTex, ...pages];
+    mat.userData.aniso = aniso;
+    mat.userData.detail = on;            // {value: 1} once the atlas pages are there (0 = the whole-map picture only)
+    // mip levels of the atlas that stay inside a tile's border (b px: level log2(b) + 1), and the level at which the
+    // whole-map picture (gi.px pixels per tile) has the same detail
+    const safe = Math.log2(Math.max(1, gi.border)) + 1, swap = Math.min(Math.log2(gi.inner / gi.px), safe);
+    mat.onBeforeCompile = (sh) => {
+      Object.assign(sh.uniforms, { tIds: { value: idTex }, uOn: on, uAniso: aniso, uMap: { value: new THREE.Vector2(info.w, info.h) },
+        uGrid: { value: new THREE.Vector2(nx, ny) }, uTile: { value: new THREE.Vector4(gi.tile / gi.page, gi.inner / gi.page, gi.border / gi.page, gi.page) },
+        uPer: { value: gi.per_row }, uLod: { value: new THREE.Vector2(swap, safe) } });
+      pages.forEach((t, n) => { sh.uniforms['pg' + n] = { value: t }; });
+      sh.vertexShader = 'varying vec3 vW;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvW = (modelMatrix * vec4(position, 1.0)).xyz;');
+      const pick = pages.map((_, n) => `${n ? 'else ' : ''}${n < pages.length - 1 ? `if (pg == ${n}) ` : ''}det = textureGrad(pg${n}, uv, dx, dy).rgb;`).join('\n            ');
+      sh.fragmentShader = `uniform sampler2D tIds;\nuniform sampler2D ${pages.map((_, n) => 'pg' + n).join(', ')};
+        uniform float uOn; uniform float uAniso; uniform vec2 uMap; uniform vec2 uGrid; uniform vec4 uTile; uniform int uPer; uniform vec2 uLod;\nvarying vec3 vW;\n` +
+        sh.fragmentShader.replace('#include <map_fragment>', `
+        vec4 sampledDiffuseColor = texture2D( map, vMapUv );
+        if (uOn > 0.5) {
+          vec2 mp = vec2(vW.x + uMap.x * 0.5, uMap.y * 0.5 - vW.z);      // map metres: x east, y north
+          vec2 tc = mp / 4.0 + 0.5;                                       // tile i covers x = 4 i - 2 .. 4 i + 2
+          vec2 gr = mp / 4.0 * uTile.y;                                   // atlas uv without the jumps at tile edges
+          vec2 dx = dFdx(gr), dy = dFdy(gr);
+          // seen at a slant the long axis of a pixel's footprint is covered by anisotropic filtering (up to uAniso
+          // samples), so the mip level follows the short axis sooner - as the graphics card does it
+          float pa = max(dot(dx, dx), dot(dy, dy)), pi = min(dot(dx, dx), dot(dy, dy));
+          float lod = 0.5 * log2(max(pa / (uAniso * uAniso), pi) * uTile.w * uTile.w + 1e-12);
+          float far = smoothstep(uLod.x - 1.0, uLod.x, lod);
+          if (far < 0.999) {
+            ivec2 ti = clamp(ivec2(floor(tc)), ivec2(0), ivec2(uGrid) - 1);
+            vec2 fr = fract(tc);
+            vec4 e = texelFetch(tIds, ti, 0);
+            int tid = int(e.r * 255.0 + 0.5) + int(e.g * 255.0 + 0.5) * 256;
+            int pg = tid / (uPer * uPer), cell = tid - pg * uPer * uPer;
+            vec2 org = vec2(float(cell - (cell / uPer) * uPer), float(cell / uPer)) * uTile.x + uTile.z;
+            vec2 uv = vec2(org.x + fr.x * uTile.y, 1.0 - (org.y + (1.0 - fr.y) * uTile.y));   // tile picture: top = north
+            float k = min(1.0, exp2(uLod.y - lod));
+            dx *= k; dy *= k;
+            vec3 det;
+            ${pick}
+            sampledDiffuseColor.rgb = mix(det, sampledDiffuseColor.rgb, far);
+          }
+        }
+        diffuseColor *= sampledDiffuseColor;`);
+    };
+    mat.customProgramCacheKey = () => 'pw-map-ground-' + gi.pages;
+    mat.needsUpdate = true;
   }
 
   heightAt(x, y) {
@@ -210,6 +298,7 @@ export class MapView {
         const im = new THREE.InstancedMesh(pt.geometry, pt.material, sel.length);
         sel.forEach((o, i) => { setQuat(q, o); m4.compose(this.toWorld(o.x, o.y, o.z), q, s1); im.setMatrixAt(i, m4); });
         im.castShadow = false; im.receiveShadow = false; im.name = name;
+        if (pt.material.userData.glow) im.renderOrder = 3;          // light effects after the water
         im.computeBoundingSphere();
         g.add(im);
       }
@@ -255,7 +344,7 @@ function staticModel(api, name, lod = 0) {
   if (!modelCache.has(key)) modelCache.set(key, (async () => {
     const inf = await api.get('/api/model?name=' + encodeURIComponent(name));
     const gltf = await loader.loadAsync(inf.url);
-    const root = gltf.scene;
+    const root = applyGsfMaterials(gltf.scene);       // light effects are added, not painted (materials.js)
     const top = root.children[0];
     const fourcc = (top && top.userData && top.userData.fourcc) || '';
     const desc = P.describe(root, fourcc);

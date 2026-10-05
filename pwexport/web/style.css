@@ -151,3 +151,7 @@ button.round { width: 34px; height: 34px; border-radius: 50%; padding: 0; backgr
 .mats .mat b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .mats .mat small { grid-column: 1 / 3; color: var(--dim); }
 .note.warn { color: #e0a040; }
+
+/* an option that belongs to the checkbox above it (map viewer: ground detail) */
+.row.sub-row { margin: 0 0 6px 26px; }
+.row.sub-row label { flex: 0 0 auto; opacity: .85; }

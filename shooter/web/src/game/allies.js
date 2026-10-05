@@ -271,7 +271,7 @@ export class Allies {
       for (const m of d.models) names.add(m);
       for (const h of d.held || []) names.add(h[0]);
       for (const h of d.riders || []) names.add(h[0]);
-      if (d.addon) { names.add(d.addon.model); for (const c of d.addon.crew || []) names.add(c[0]); }
+      for (const A of [].concat(d.addon || [])) { names.add(A.model); for (const c of A.crew || []) names.add(c[0]); }
       if (d.weapon.projectile) names.add(d.weapon.projectile);
     }
     const all = [...names];

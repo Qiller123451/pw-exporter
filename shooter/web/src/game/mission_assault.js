@@ -84,7 +84,7 @@ export const ASSAULT = {
           { model: 'seas_headquarters', pos: [-250, -456], yaw: 200 }, { model: 'seas_barracks', pos: [-214, -488], yaw: 110 },
           { model: 'seas_garage', pos: [-286, -444], yaw: 160 }, { model: 'seas_steelwork', pos: [-216, -450], yaw: 250 },
           { model: 'seas_greenhouse', pos: [-206, -520], yaw: 20 }, { model: 'seas_small_tent', pos: [-262, -424], yaw: 80 }, { model: 'seas_small_tent', pos: [-246, -486], yaw: 170 },
-          { model: 'seas_turret_tower', pos: [-124, -420], yaw: 60, addon: ['seas_turret', 'we'] }, { model: 'seas_turret_tower', pos: [-78, -404], yaw: 200, addon: ['seas_turret', 'we'] },
+          { model: 'seas_turret_tower', pos: [-124, -420], yaw: 60, addon: ['seas_turret', 'we'], gun: 'turret' }, { model: 'seas_turret_tower', pos: [-78, -404], yaw: 200, addon: ['seas_turret', 'we'], gun: 'turret' },
           { model: 'seas_rally_point', pos: [-100, -412], yaw: 0 },
         ],
         waves: { every: 4, group: 11, total: 9999, mix: { warrior: 5, spearman: 3, archer: 2, raptor: 2, assassin: 2, thrower: 1 } } },

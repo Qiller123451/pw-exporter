@@ -46,7 +46,7 @@ class Enemy {
     this.setTint(null);
     this.look = -1; this.setLook();
     if (d.structure) {                       // a tent, a totem, a boat: stands where it is put and only takes damage
-      this.state = 'structure'; this.yaw = yaw || 0; this.smokeT = 0; this.target = null; this.lookT = Math.random(); this.locked = false; this.onGround = true;
+      this.state = 'structure'; this.yaw = yaw || 0; this.heading = this.yaw - ((d.sail && d.sail.bow) || 0); this.sailing = false; this.sailSide = 0; this.smokeT = 0; this.target = null; this.lookT = Math.random(); this.locked = false; this.onGround = true;
       if (d.idle && this.anim.has(d.idle)) this.anim.play(d.idle);
       this.ride('ride_idle_0', true);
       actor.obj.rotation.set(0, this.yaw, 0);
@@ -105,6 +105,8 @@ class Enemy {
       if (this.locked) { if (!info.ally && G.zones.noteT <= 0) { G.zones.noteT = 4; G.hud.note(d.lockedNote || 'It holds - not yet'); } return false; }
       // wood and cloth: splinters and dust instead of blood, fire keeps burning it, nothing moves it
       const was = this.hp;
+      // (armour: a gate of stone and iron - only what is made for walls counts in full: a ram, a siege beast)
+      if (d.armour && info.kind !== 'siege') amount *= d.armour;
       this.hp -= amount * (info.kind === 'fire' ? d.fire || 1 : 1);
       if (!info.ally) G.hud.number(this, Math.min(was, was - this.hp), info.kind);
       if (info.kind === 'fire') { this.burn = Math.max(this.burn, (info.burn || 2) * 2); this.burnDps = (info.burnDps || 20) * (d.fire || 1); }
@@ -116,7 +118,7 @@ class Enemy {
     }
     // (the rifles of the SEAS line do little to the big beasts: twenty of them had an Allosaurus down in ten seconds,
     // before it had bitten anyone - those are for the player, the Widows and the Exo enforcers)
-    if (info.ally && d.heavy && d.animal && !info.heavy) amount *= CFG.allies.vsBig ?? 1;
+    if (info.ally && d.heavy && (d.animal || d.machine) && !info.heavy) amount *= CFG.allies.vsBig ?? 1;
     if (!info.ally) G.hud.number(this, Math.min(this.hp, amount), info.head ? 'head' : info.kind);
     this.hp -= amount;
     this.stagger += amount;
@@ -125,7 +127,7 @@ class Enemy {
     if (!info.ally && this.hp > 0 && G.mission.bosses.includes(this)) G.hud.boss(this);
     const mid = v1.copy(this.pos).setY(this.pos.y + d.height * 0.6);
     const dir = info.dir ? v2.copy(info.dir) : info.from ? v2.set(this.pos.x - info.from.x, 0, this.pos.z - info.from.z).normalize() : v2.set(0, 0, 0);
-    if (info.kind === 'fire') { this.burn = Math.max(this.burn, info.burn || 2); this.burnDps = info.burnDps || 20; this.burnAlly = !!info.ally; } else if (G.settings.blood) fx.blood(info.point || mid, dir, info.kind === 'bullet' ? 3 : 7, info.kind === 'bullet' ? 0.8 : 1.4);
+    if (info.kind === 'fire') { this.burn = Math.max(this.burn, info.burn || 2); this.burnDps = info.burnDps || 20; this.burnAlly = !!info.ally; } else if (d.machine) { if (Math.random() < 0.6) fx.sparks(info.point || mid, 5, 12, [1, 0.8, 0.4, 1]); } else if (G.settings.blood) fx.blood(info.point || mid, dir, info.kind === 'bullet' ? 3 : 7, info.kind === 'bullet' ? 0.8 : 1.4);
     if (!info.ally) G.hud.hit(this.hp <= 0, !!info.head);
     if (this.hp <= 0) { this.die(info, dir); return true; }
     const knock = (info.knock || 0) * (d.heavy ? 0.1 : 1);
@@ -168,6 +170,15 @@ class Enemy {
     this.rideT = 0; this.ride('dying', false);
     sw.alive--; sw.killed++;
     G.onKill(this, info);
+    // a machine: it blows up, nothing is left
+    if (d.machine) {
+      const p = v1.copy(this.pos).setY(this.pos.y + d.height * 0.5);
+      fx.explosion(p, d.radius * 2.2); fx.dust(p, d.radius * 2, 16); fx.shake(0.6);
+      for (let k = 0; k < 5; k++) fx.sparks(v3.copy(p).setY(p.y + k), 12, 22, [1, 0.7, 0.3, 1]);
+      G.sfx('explode', 95, this.pos, 0.7);
+      this.actor.obj.visible = false; this.t = 0.1;
+      return;
+    }
     const kind = info.kind;
     const big = (info.knock || 0) >= 20 || kind === 'explosion' || kind === 'execute';
     // blown to pieces
@@ -219,6 +230,7 @@ class Enemy {
           else this.shootCool = 0.4;
         }
       }
+      if (d.sail && this.alive) this.sail(dt);
       return;
     }
     // burning
@@ -246,6 +258,11 @@ class Enemy {
       case 'chase': {
         if (T.dead) { this.anim.play(this.anim.pick(d.taunt, d.idle)); break; }
         const R = d.ranged;
+        // (ranged.moving: what is built on its back shoots while it walks - the ballistas of the titan)
+        if (R && R.moving) {
+          if (this.shotT > 0 && (this.shotT -= dt) <= 0) this.release();
+          if (this.shootCool <= 0 && dist < R.range && dist > R.min && Math.abs(dy) < 30 && this.los()) { this.shootCool = R.every * rnd(0.8, 1.3); this.shotT = R.releaseAt || 0.4; if (this.actor.addon) this.actor.addon.fire(); }
+        } else
         if (R && this.shootCool <= 0 && dist < R.range && dist > R.min && Math.abs(dy) < 30 && this.los()) { this.startShoot(); break; }
         // (attack.start: the big ones begin their strike that much earlier and close the rest in a lunge - see below;
         // and they wait for nobody's turn)
@@ -473,6 +490,40 @@ class Enemy {
     this.anim.play(clip, { loop: false, restart: true, ts, fade: 0.08, cut: true });
     this.ride('ride_attack_front', false); this.rideT = B.time;
   }
+  // A ship (structure with sail: {speed, keep, wake, depth, turn, clip}): it makes for whoever it shoots at - the
+  // player if nobody else - until it lies `keep` off, over water at least `depth` deep, along the shore where the
+  // straight way is land.
+  sail(dt) {
+    const G = this.sw.g, d = this.def, S = d.sail, L = G.level, P = G.player;
+    if (G.zones && !G.zones.allowedAt(this.pos.x, this.pos.z)) return;
+    const T = this.target && !this.target.dead ? this.target : P.dead ? null : P;
+    let moving = false;
+    if (T) {
+      const dx = T.pos.x - this.pos.x, dz = T.pos.z - this.pos.z, dist = Math.hypot(dx, dz);
+      if (dist < S.wake && dist > S.keep) {
+        const base = Math.atan2(dx, dz), ahead = d.radius + 5, b = L.bounds;
+        const free = (h, r) => { const x = this.pos.x + Math.sin(h) * r, z = this.pos.z + Math.cos(h) * r; return x > b.x0 + 4 && x < b.x1 - 4 && z > b.z0 + 4 && z < b.z1 - 4 && L.height(x, z) < L.water - S.depth; };
+        let head = null;
+        // (the side it turned to last comes first: no dithering in front of a headland)
+        const side = this.sailSide || 1;
+        for (const off of [0, 0.5 * side, -0.5 * side, 1.0 * side, -1.0 * side, 1.5 * side, -1.5 * side]) { const h = base + off; if (free(h, ahead) && free(h, ahead * 0.5)) { head = h; if (off) this.sailSide = Math.sign(off); break; } }
+        if (head !== null) {
+          let dy = head - this.heading; dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+          this.heading += Math.max(-S.turn * dt, Math.min(S.turn * dt, dy));
+          const sp = S.speed * Math.max(0, Math.cos(dy));
+          const nx = this.pos.x + Math.sin(this.heading) * sp * dt, nz = this.pos.z + Math.cos(this.heading) * sp * dt;
+          if (L.height(nx, nz) < L.water - S.depth * 0.6) { this.pos.x = nx; this.pos.z = nz; moving = sp > 0.5; }
+          this.yaw = this.heading + (S.bow || 0);
+        }
+      }
+    }
+    if (moving !== this.sailing) {
+      this.sailing = moving;
+      const busy = this.anim.cur && this.anim.cur.isRunning() && d.ranged && this.anim.cur.getClip().name.toLowerCase().startsWith(d.ranged.clip);
+      const c = moving ? S.clip : d.idle;
+      if (!busy && c && this.anim.has(c)) this.anim.play(c);
+    }
+  }
   startShoot() {
     const d = this.def, R = d.ranged;
     this.state = 'shoot'; this.atkT = this.t = R.time; this.struckP = false;
@@ -486,7 +537,9 @@ class Enemy {
     const tgt = new THREE.Vector3(P.pos.x, P.pos.y + P.def.height * 0.6, P.pos.z);
     const flat = Math.hypot(tgt.x - from.x, tgt.z - from.z);
     const time = flat / R.speed;
-    tgt.x += P.vel.x * time * 0.6; tgt.z += P.vel.z * time * 0.6;
+    // (lead: how much of the target's movement is allowed for - the ballistas that shoot at a gunship need all of it)
+    const lead = R.lead ?? 0.6;
+    tgt.x += P.vel.x * time * lead; tgt.z += P.vel.z * time * lead; tgt.y += P.vel.y * time * lead;
     const grav = R.gravity || 18;
     const vel = new THREE.Vector3((tgt.x - from.x) / time, (tgt.y - from.y) / time + 0.5 * grav * time, (tgt.z - from.z) / time);
     vel.x += rnd(-2, 2); vel.z += rnd(-2, 2);
@@ -533,18 +586,20 @@ export class Enemies {
   }
   async load(progress = () => {}) {
     const names = new Set();
+    // (only the mission's enemy: the Dustriders, or what the mission brought itself - faction)
     for (const d of Object.values(CFG.enemies)) {
+      if ((d.faction || 'aje') !== (CFG.faction || 'aje')) continue;
       for (const m of d.models) names.add(m);
       for (const h of d.held) names.add(h[0]);
       for (const h of d.riders || []) names.add(h[0]);
-      if (d.addon) { names.add(d.addon.model); for (const c of d.addon.crew || []) names.add(c[0]); }
+      for (const A of [].concat(d.addon || [])) { names.add(A.model); for (const c of A.crew || []) names.add(c[0]); }
       if (d.ranged) names.add(d.ranged.projectile);
     }
     const all = [...names];
     let n = 0;
     await Promise.all(all.map(async (m) => {
       try { this.templates.set(m, await loadActor(m)); } catch (e) { console.warn('enemy model missing', m, e); }
-      progress(++n / all.length, 'Loading the Dustriders');
+      progress(++n / all.length, 'Loading the ' + (CFG.enemyName || 'Dustriders'));
     }));
     // ring shown above enemies that can be executed
     const c = document.createElement('canvas'); c.width = c.height = 64;
@@ -558,6 +613,7 @@ export class Enemies {
   check() {
     const out = [];
     for (const [type, d] of Object.entries(CFG.enemies)) {
+      if ((d.faction || 'aje') !== (CFG.faction || 'aje')) continue;
       for (const m of d.models) {
         const t = this.templates.get(m);
         if (!t) { out.push(`${type}: model ${m} missing`); continue; }

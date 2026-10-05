@@ -45,6 +45,7 @@ const cur = {
   exp: { format: 'glb', animations: 'all', name: '' },
   map: null,                    // /api/map result of the map shown
   mapLayers: { objects: true, forest: true, undergrowth: false, plants: false, water: true, markers: false, tiles: true },
+  groundQ: 0,                   // ground detail of the map viewer: the game's level 1 .. 5, 0 = the finest installed
   mapExp: { format: 'glb', objects: true, forest: true, undergrowth: false, plants: false, step: 2, extras: ['heightmap', 'csv'] },
 };
 
@@ -701,7 +702,7 @@ async function selectMap(m) {
   cur.mapExp.name = (m.rel.split('/').pop() || 'map').replace(/\.ula$/i, '');
   renderList();
   const mv = mapView = new MapView(api);
-  await mv.load(info);
+  await mv.load(info, () => {}, cur.groundQ);
   if (my !== mapToken) { mv.dispose(); return; }
   viewer.mapMode(true); document.body.classList.add('mapmode');
   viewer.showGroup(mv.group);
@@ -779,6 +780,20 @@ function renderMapDetails() {
   s.append(cb('plants', S.mapLayerPlants, (on) => { if (on) loadMapModels('plants', mapToken); }));
   s.append(cb('water', S.mapLayerWater));
   s.append(cb('tiles', S.mapLayerTiles));
+  // the game's ground detail levels (ScapeTexture1 .. 5 of the setting): which one the tiles are drawn with
+  const G = (mapView && mapView.ground) || {};
+  if ((G.qualities || []).length > 1) {
+    const sel = el('select', { id: 'ground-q', onchange: async (ev) => {
+      cur.groundQ = +ev.target.value;
+      const mv = mapView, my = mapToken;
+      if (!mv) return;
+      ev.target.disabled = true;
+      try { await mv.loadGround(cur.groundQ); } finally { if (my === mapToken) ev.target.disabled = false; }
+    } });
+    const qs = G.qualities.slice().reverse();
+    for (const q of qs) sel.append(el('option', { value: q, selected: q === G.q }, S.mapGroundLevel(q, q === qs[0], q === qs[qs.length - 1])));
+    s.append(el('div', { class: 'row sub-row' }, el('label', { text: S.mapGround }), sel));
+  }
   s.append(cb('markers', S.mapLayerMarkers));
   s.append(el('div', { id: 'map-progress', class: 'mapprog hidden' }, el('div', { class: 'progress' }, el('i')), el('span', { class: 'note' })));
   renderMapExport();

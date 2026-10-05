@@ -110,7 +110,7 @@ with sync_playwright() as p:
     check('visibility: Clear returns to the in-game look', pg.evaluate(vis) == v0)
     check('player colour in its own section', pg.locator('#s-parts .swatches button').count() >= 8 and pg.locator('#s-vis .swatches').count() == 0)
     # materials: the alpha of a texture is used only as the material flags say (low digit of MaterialAttributes1)
-    mats = pg.evaluate('''(() => { const r = []; PWX.viewer.parts[0].obj.traverse(o => { if (o.isMesh) for (const m of [].concat(o.material)) if (m.userData && m.userData.gsf_flags && !m.userData.gsf_sprite) r.push([parseInt(m.userData.gsf_flags.split("/")[0], 16) & 15, m.alphaTest > 0, !!m.transparent]); }); return r; })()''')
+    mats = pg.evaluate('''(() => { const r = []; PWX.viewer.parts[0].obj.traverse(o => { if (o.isMesh) for (const m of [].concat(o.material)) if (m.userData && m.userData.gsf_flags && !m.userData.gsf_sprite && !m.userData.glow) r.push([parseInt(m.userData.gsf_flags.split("/")[0], 16) & 15, m.alphaTest > 0, !!m.transparent]); }); return r; })()''')
     HARD, SOFT = (1, 3, 5, 11, 13, 15), (2, 6, 7, 10, 14)
     bad = [x for x in mats if (x[1] and x[0] not in HARD) or (x[2] and x[0] not in SOFT)]
     check('materials: alpha only where the flags ask for it', mats and not bad, '%d materials, %s' % (len(mats), bad[:3]))
@@ -134,6 +134,15 @@ with sync_playwright() as p:
     pg.wait_for_function('document.querySelector("#busy").classList.contains("hidden")', timeout=120000)
     time.sleep(1.5)
     shot('06_all_models.png')
+    # light effects (material flag 0x4) are added to the picture, not drawn as black sheets
+    pg.fill('#search', 'valhalla_big_monolit_base'); time.sleep(0.6)
+    if pg.locator('#list li').count():
+        pg.click('#list li >> nth=0')
+        pg.wait_for_function('document.querySelector("#busy").classList.contains("hidden") && PWX.viewer.parts.length', timeout=120000); time.sleep(1.5)
+        gl = pg.evaluate('''(() => { let n = 0, bad = 0; PWX.viewer.root.traverse((o) => { if (o.isMesh) for (const m of [].concat(o.material)) {
+          const a = parseInt(String((m.userData || {}).gsf_flags || "0").split("/")[0], 16); if (a & 4) { n++; if (!(m.userData.glow && m.blending === 5 && !m.depthWrite)) bad++; } } }); return [n, bad]; })()''')
+        check('light effects are drawn as added light', gl[0] > 0 and gl[1] == 0, gl)
+        shot('20_light_effects.png')
     pg.click('#btn-settings'); time.sleep(0.5); shot('07_settings.png')
     pg.click('#dialog-card .actions button >> nth=0'); time.sleep(0.3)
     pg.click('#tab-units'); time.sleep(0.3)
@@ -174,6 +183,18 @@ with sync_playwright() as p:
     if ships and ships[1]:
         check('ships of a map float at the water level', all(z == ships[0] for z, zm in ships[1]) and any(zm < ships[0] for z, zm in ships[1]), ships)
     check('map shown with its info', 'Dschungelkrater' in pg.inner_text('#d-head h2'), pg.inner_text('#d-head h2'))
+    # ground: the game's tiles from the atlas pages close up, at the chosen detail level; cave settings have own sets
+    gr = pg.evaluate('''(async () => { const mv = PWX.map, g = mv.ground, t = mv.mats.tiles;
+      for (let i = 0; i < 300 && t.userData.detail && t.userData.detail.value !== 1; i++) await new Promise((r) => setTimeout(r, 200));
+      const ms = await (await fetch("/api/maps")).json(), out = { q: g.q, inner: g.inner, px: g.px, pages: g.pages, on: t.userData.detail ? t.userData.detail.value : null,
+        sel: !!document.querySelector("#ground-q"), n: g.qualities.length };
+      for (const [k, re] of [["cave2", /single_16/i], ["cave1", /single_15/i]]) {
+        const m = ms.find((x) => re.test(x.rel)); if (!m) continue;
+        const i = await (await fetch("/api/map/groundinfo?id=" + encodeURIComponent(m.id))).json(); out[k] = [m.setting, i.ver]; }
+      return out; })()''')
+    check('map ground: atlas tiles close up at the finest installed detail', gr['q'] >= 1 and gr['inner'] > gr['px'] and gr['on'] == 1 and gr['sel'] == (gr['n'] > 1), gr)
+    if gr.get('cave2') and gr['cave2'][0] == 'Cave2':
+        check('a Cave2 map takes the ground of its own setting', '-Cave2-' in gr['cave2'][1] or '-Cave1-' in gr['cave2'][1] and not os.path.isdir(os.path.join(sys.argv[2], 'Data', 'Base', 'Texture', 'Scape', 'Cave2')), gr['cave2'])
     shot('12_map_viewer.png')
     labels = {'surf': '.surf', 'ksy': '.ksy'}
     for k, t in labels.items():

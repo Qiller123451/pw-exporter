@@ -28,6 +28,6 @@ if (err) logs.push('G.error: ' + err);
 // software WebGL renders slowly: stop the game's frame loop while the screenshot is taken (main.js honours __freeze)
 await page.evaluate(() => { window.__freeze = true; });
 await page.waitForTimeout(300);
-if (out && out !== '-') { try { await page.screenshot({ path: out, timeout: 120000 }); } catch (e) { logs.push('SCREENSHOT: ' + e.message.split('\n')[0]); } }
+if (out && out !== '-') { try { await page.screenshot({ path: out, timeout: +(process.env.SHOT_TIMEOUT || 120000) }); } catch (e) { logs.push('SCREENSHOT: ' + e.message.split('\n')[0]); } }
 console.log(JSON.stringify({ result, logs: [...new Set(logs)].slice(0, 40) }, null, 1));
 await browser.close();

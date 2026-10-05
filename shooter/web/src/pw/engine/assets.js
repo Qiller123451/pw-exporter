@@ -3,7 +3,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { isPartyMaterial } from '../game/colors.js';
-import { staticSig, helperPart, isDynamicKind, animalMask, applyMask, applyState } from './parts.js';
+import { staticSig, hasDoors, helperPart, isDynamicKind, animalMask, applyMask, applyState } from './parts.js';
 import { modelSprites } from './props.js';
 
 // Loads converted ParaWorld models on demand and hands out clones.
@@ -87,6 +87,9 @@ export function tagWallArms(root) {
   });
   const groups = new Map();
   for (const [n, e] of nodes) {
+    // a part without any state flag is not a piece of the wall (the palisade has two: something flat on the
+    // ground beside every post)
+    if (n.userData.attr !== undefined && !((n.userData.attr >>> 0) >>> 5)) { for (const o of e.meshes) o.removeFromParent(); continue; }
     e.box.getCenter(c);
     const arm = Math.hypot(c.x, c.y) < 1.2 ? -1 : ((Math.round(Math.atan2(c.y, c.x) / (Math.PI / 4)) % 8) + 8) % 8;
     const r = (v) => Math.round(v * 2) / 2;
@@ -122,7 +125,7 @@ export function tagWallArms(root) {
   }
 }
 
-function mergeStatic(root, animatedNodes) {
+function mergeStatic(root, animatedNodes, doors) {
   // static (non skinned, non animated) meshes: merge per material and part signature into the root's frame
   root.updateMatrixWorld(true);
   const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
@@ -130,8 +133,8 @@ function mergeStatic(root, animatedNodes) {
   const moving = (o) => { for (let n = o; n && n !== root; n = n.parent) if (animatedNodes.has(n.name)) return true; return false; };
   root.traverse((o) => {
     if (!o.isMesh || o.isSkinnedMesh || o.isInstancedMesh || o.userData.sprite) return;
-    if (animatedNodes.size && moving(o)) { if (o.userData.attr !== undefined) { const sg = staticSig(o.userData.attr >>> 0); if (sg !== 0x1fff) o.userData.sig = sg; } return; }
-    const sig = o.userData.attr !== undefined ? staticSig(o.userData.attr >>> 0) : 0x1fff;
+    if (animatedNodes.size && moving(o)) { if (o.userData.attr !== undefined) { const sg = staticSig(o.userData.attr >>> 0, doors); if (sg !== 0x1fff) o.userData.sig = sg; } return; }
+    const sig = o.userData.attr !== undefined ? staticSig(o.userData.attr >>> 0, doors) : 0x1fff;
     const k = o.material.uuid + '|' + Object.keys(o.geometry.attributes).sort().join(',') + '|' + (o.geometry.index ? 1 : 0) + '|' + sig + '|' + (o.userData.arm ?? '') + '|' + (o.userData.slope !== undefined || o.userData.vcount > 1 ? (o.userData.slope ?? '') + ':' + o.userData.variant + '/' + o.userData.vcount : '');
     o.userData.sigTmp = sig;
     if (!groups.has(k)) groups.set(k, []);
@@ -243,14 +246,15 @@ export function loadModel(name, opts = {}) {
       }
       for (const o of fol) o.removeFromParent();
       mergeSkinned(scene);
+      const doors = hasDoors(scene);                 // a gate: leaves open and leaves shut (parts.js)
       if (opts.wallArms) tagWallArms(scene.children[0] || scene);
       if (opts.static) {
         const animatedNodes = new Set();
         for (const c of gltf.animations) for (const t of c.tracks) animatedNodes.add(t.name.slice(0, t.name.lastIndexOf('.')));
-        mergeStatic(scene.children[0] || scene, animatedNodes);
+        mergeStatic(scene.children[0] || scene, animatedNodes, doors);
       }
       if (!isDynamicKind(fourcc)) scene.traverse((o) => {
-        if (o.isMesh && o.userData.sig === undefined && o.userData.attr !== undefined) { const sg = staticSig(o.userData.attr >>> 0); if (sg !== 0x1fff) o.userData.sig = sg; }
+        if (o.isMesh && o.userData.sig === undefined && o.userData.attr !== undefined) { const sg = staticSig(o.userData.attr >>> 0, doors); if (sg !== 0x1fff) o.userData.sig = sg; }
       });
       // default look: finished, intact, first epoch / wild animal
       if (fourcc === 'Anim' || fourcc === 'Vehi') applyMask(scene, animalMask({ owned: fourcc === 'Vehi' }));

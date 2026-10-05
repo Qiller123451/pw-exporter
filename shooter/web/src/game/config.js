@@ -315,6 +315,12 @@ export const CFG = {
   //   keep: backs off when an enemy is nearer than this; vsStructure: damage factor against tents and towers}
   allies: {
     vsBig: 0.35,                // what rifle and flame of the line do to the big beasts (rockets and the Exo's fists: all of it)
+    // gun towers of the base (objective.built: {..., gun: 'turret'}; mission.js _guns): shells that burst
+    guns: {
+      turret: { range: 85, min: 7, damage: 110, radius: 5.5, knock: 16, every: 1.7, speed: 120, turn: 2.8, forward: 3.2, up: 1.2, projectile: 'seas_turret_bullet', clip: 'attack_front', barrel: 'bone_1d433446',       // barrel: the bone at the muzzle end
+       
+        sound: '02_battle/seas_big_cannon1.wav', volume: 45 },
+    },
     count: 0, group: 5, every: 7, spawnMin: 40, spawnMax: 105, lead: 16, spread: 16, slack: 5, corpseTime: 7, heavyMax: 2, basic: 'rifleman', damageTaken: 1,
     mix: { rifleman: 8, marksman: 3, rocketeer: 2, flamer: 2, walker: 1 },
     // units that join later (objective.arrive = type): `first` come together, then `perWave` with every group of
@@ -502,5 +508,13 @@ export const CFG = {
     lastStand: { above: 0.25, time: 1.2 },
   },
 
+  // The fight music of the game, mixed (audio.playList: shuffled, no track twice in a row): by the enemy's tribe
+  // (CFG.music, set by the mission) the songs of the fight, of a boss, and of a ride. Files: Data/Base/Audio/Music.
+  tracks: {
+    Aje: { fight: ['36_combat_aje_1', '42_combat_aje_2', '48_var_combat_aje_1', '38_combat_seas_1', '50_var_combat_seas_1', '37_combat_ninigi_1'],
+      boss: ['39_combat_dinos', '40_combat_heroes'], ride: ['40_combat_heroes', '38_combat_seas_1'] },
+    Hu: { fight: ['35_combat_hu_1', '41_combat_hu_2', '47_var_combat_hu_2', '38_combat_seas_1', '50_var_combat_seas_1', '43_combat_ninigi_2'],
+      boss: ['40_combat_heroes', '39_combat_dinos'], ride: ['39_combat_dinos', '40_combat_heroes', '49_var_combat_ninigi_1'] },
+  },
   settings: { quality: 'high', difficulty: 'normal', sensitivity: 1, invertY: false, volume: 0.8, music: true, blood: true, numbers: true },
 };

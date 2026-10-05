@@ -8,7 +8,8 @@ Community tools for **ParaWorld** (SEK / Sunflowers, 2006):
 * **ParaWorld Remake** – the game rebuilt for the web browser: skirmish against the computer with all four tribes on
   the original maps or random maps, with the rules, models, sounds and interface of your installation.
 * **ParaWorld Shooter** – a third-person action game made from the same data: the SEAS Gunner and the Executioner
-  MKII against swarms of Dustriders in the Holy City – alone, or as part of a full SEAS assault.
+  MKII against swarms of Dustriders in the Holy City – alone, or as part of a full SEAS assault – and against the
+  Norsemen on an island of the game's own making, with a war mammoth to ride and a gunship to fly.
 
 ![The launcher](docs/screenshots/11_launcher.png)
 
@@ -92,12 +93,16 @@ How it is built: [remake/docs/ARCHITECTURE.md](remake/docs/ARCHITECTURE.md),
 ![The Gunner at the city gate](docs/screenshots/20_shooter.png)
 
 A fast third-person (or first-person) swarm shooter with the models, animations, maps and sounds of your
-installation. Two missions:
+installation. Three missions:
 
 * **The Holy City** (campaign mission 5): alone through the ruined city, district by district – 17 objectives.
 * **The Assault** (the fan-made map *Holy City defender* of the MIRAGE mod; greyed out without it): the SEAS land
   on the north shore and storm the city. Waves of friendly troops fight beside you, the Dustriders' towers shoot
-  back, 24 objectives from the beachhead to the temple.
+  back, 25 objectives from the beachhead to the temple.
+* **Iron Winter**: a map the game builds itself (no map file needed) and a new enemy, the Norsemen. From the
+  landing beach through a palisade and a village, up a pass into the snow, across a frozen lake to the fortress of
+  the rune gate – 18 objectives. For one of them you ride a **war mammoth** (tusks, stamp, charge: the only thing
+  that breaks the stone gate of the pass), for another you fly a **SEAS gunship** over the fortress.
 
 * Two characters, swapped at any time with `Tab`: the **Gunner** (machine gun, flamethrower, rocket launcher, knife)
   and the **Executioner MKII** (claw combo on the left mouse button, minigun while the right one is held, a ramming
@@ -113,10 +118,12 @@ installation. Two missions:
 |---|---|
 | ![Executioner MKII](docs/screenshots/22_shooter_executioner.png) | ![T-Rex titan](docs/screenshots/23_shooter_boss.png) |
 | ![The Assault: the first wave on the beach](docs/screenshots/25_shooter_assault.png) | ![The Assault: the war towers of the outer line](docs/screenshots/26_shooter_towers.png) |
+| ![Iron Winter: before the palisade](docs/screenshots/27_shooter_frost.png) | ![Iron Winter: on the war mammoth](docs/screenshots/28_shooter_mammoth.png) |
+| ![Iron Winter: the gunship over the cape](docs/screenshots/29_shooter_gunship.png) | ![Iron Winter: the Triceratops titan in the fortress](docs/screenshots/30_shooter_titan.png) |
 
 **Start:** prepare the remake's game data once (launcher → *ParaWorld Remake → Prepare the game data*), then
 double-click **`Start ParaWorld Shooter.bat`** (or run `python -m shooter`). The game opens in the browser – use
-Chrome or Edge. Controls, the mission and how it is built: **[shooter/README.md](shooter/README.md)**,
+Chrome or Edge. Controls, the missions and how it is built: **[shooter/README.md](shooter/README.md)**,
 [shooter/docs/DESIGN.md](shooter/docs/DESIGN.md).
 
 ## What is in this repository

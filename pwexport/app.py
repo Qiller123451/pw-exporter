@@ -21,7 +21,10 @@ HTTP API (JSON)
     GET  /api/map/mats?id=          ground material per 4 m cell, uint8 (X-Grid header)
     GET  /api/map/preview?id=       the map's 200 x 200 preview picture (png)
     GET  /api/ground?setting=&k=    ground material k of a setting (jpg)
-    GET  /api/map/ground?id=        the map's ground with the game's transition tiles (jpg, north up)
+    GET  /api/map/ground?id=&q=     the map's ground with the game's transition tiles (jpg, north up; q = ground detail 1 .. 5)
+    GET  /api/map/groundinfo?id=&q= the tile set behind it: detail levels, tile and atlas sizes (json)
+    GET  /api/map/tiles?id=&q=      which atlas tile lies where, uint16 (X-Grid header)
+    GET  /api/map/groundpage?id=&q=&n=   atlas page n (png)
     POST /api/map/export            {id, format, objects, plants, forest, undergrowth, step, extras: [...]} -> {files}
     GET  /cache/...                 converted models and textures
 """
@@ -221,6 +224,7 @@ class Maps:
         self.app = app
         self._maps = {}           # id -> Map (a few kept)
         self.lock = threading.Lock()
+        self.lock_pages = threading.Lock()
 
     def _list(self):
         # the maps of the loaded configuration (Base, plus the folders of the chosen mod and what it requires)
@@ -344,16 +348,64 @@ class Maps:
         Image.frombytes('RGBA', (m.preview['w'], m.preview['h']), m.preview['rgba']).save(b, 'PNG')
         return b.getvalue()
 
-    def ground_map(self, mid):
-        """the map's ground drawn with the game's transition tiles (scape.bake), cached as jpg"""
+    def ground_map(self, mid, q=None):
+        """the map's ground drawn with the game's transition tiles (scape.bake) at ground detail q, cached as jpg:
+        the whole map in one picture of at most 4 px per metre (the viewer shows it from afar, see ground_tiles)"""
         import hashlib
         path = self.path(mid)
         m = self.load(mid)
-        key = hashlib.sha1(('%s|%s|%s|%s' % (path, os.path.getmtime(path), scape.VERSION, mods.scape_pack(self.app.install, m.setting))).encode()).hexdigest()[:16]
+        ts = scape.tileset(self.app.install, m.setting, q)
+        key = hashlib.sha1(('%s|%s|%s|%s|q%s' % (path, os.path.getmtime(path), scape.VERSION, mods.scape_pack(self.app.install, m.setting),
+                                                 ts.q if ts else 0)).encode()).hexdigest()[:16]
         f = os.path.join(cache_dir('maps', 'ground'), key + '.jpg')
         if not os.path.exists(f):
-            scape.bake(self.app.install, m.setting, m.mats, m.w, m.h, px_per_m=4.0, max_side=4096).save(f + '.tmp.jpg', quality=88)
+            scape.bake(self.app.install, m.setting, m.mats, m.w, m.h, px_per_m=4.0, max_side=4096, q=q).save(f + '.tmp.jpg', quality=88)
             os.replace(f + '.tmp.jpg', f)
+        return f
+
+    def ground_info(self, mid, q=None):
+        """what the viewer needs to draw the ground from the game's tile atlases itself (full detail close up):
+        {'q', 'qualities' [1 .. 5 as installed], 'tile', 'inner', 'border', 'per_row', 'page' (px), 'pages', 'grid'
+        [nx, ny] of the tile layout (/api/map/tiles), 'px' (pixels per tile of the /api/map/ground picture), 'ver'
+        (changes with the tile set: lets the browser keep the atlas pages)} or {'q': 0, 'qualities': []} when the
+        setting has no tile set"""
+        m = self.load(mid)
+        inst = self.app.install
+        ts = scape.tileset(inst, m.setting, q)
+        if not ts:
+            return {'q': 0, 'qualities': []}
+        s = min(4.0, 4096 / max(m.w, m.h))
+        return {'q': ts.q, 'qualities': scape.qualities(inst, m.setting), 'tile': ts.dat['tile'], 'inner': ts.inner,
+                'border': ts.border, 'per_row': ts.per_row, 'page': ts.dat['atlas'], 'pages': len(ts.dat['names']),
+                'grid': [int(m.mats.shape[1]) + 1, int(m.mats.shape[0]) + 1],
+                'px': max(2, min(ts.inner, int(round(scape.METRES_PER_TILE * s)))),
+                'ver': '%s-%s-%d' % (mods.scape_pack(inst, m.setting), os.path.basename(ts.folder),
+                                     int(os.path.getmtime(os.path.join(ts.folder, 'ScapeTexture%d.dat' % ts.q))))}
+
+    def ground_tiles(self, mid, q=None):
+        """the tile layout of the map's ground (scape.tile_ids): uint16 per tile, row 0 = south"""
+        m = self.load(mid)
+        ts, ids = scape.tile_layout(self.app.install, m.setting, m.mats, q)
+        if ts is None:
+            raise KeyError('no ground tiles')
+        return ids.astype('<u2').tobytes(), (ids.shape[1], ids.shape[0])
+
+    def ground_page(self, mid, q, n):
+        """atlas page n of the map's tile set as a .png (cached; the game's file is a DXT .dds)"""
+        m = self.load(mid)
+        inst = self.app.install
+        ts = scape.tileset(inst, m.setting, q)
+        src = ts.page_file(n) if ts and 0 <= n < len(ts.dat['names']) else None
+        if not src:
+            raise KeyError('no ground atlas page')
+        sub = '%s@%s' % (os.path.basename(ts.folder), mods.scape_pack(inst, m.setting))
+        f = os.path.join(cache_dir('scape', sub), 'page%d_%d_%d.png' % (ts.q, n, int(os.path.getmtime(src))))
+        if not os.path.exists(f):
+            from PIL import Image
+            with self.lock_pages:
+                if not os.path.exists(f):
+                    Image.open(src).convert('RGB').save(f + '.tmp.png', compress_level=1)
+                    os.replace(f + '.tmp.png', f)
         return f
 
     def ground(self, setting, k):
@@ -498,7 +550,14 @@ def make_handler(app):
                 if p == '/api/map/preview':
                     data = app.maps.preview(q['id'])
                     return self.send_bytes(data, 'image/png', cache=True) if data else self.send_error(404)
-                if p == '/api/map/ground': return self.send_file(app.maps.ground_map(q['id']))       # not cached by the browser: the picture depends on the chosen mod
+                gq = int(q['q']) if (q.get('q') or '').isdigit() else None           # ground detail 1 .. 5
+                if p == '/api/map/ground': return self.send_file(app.maps.ground_map(q['id'], gq))   # not cached by the browser: the picture depends on the chosen mod
+                if p == '/api/map/groundinfo': return self.send_json(app.maps.ground_info(q['id'], gq))
+                if p == '/api/map/tiles':
+                    data, (nx, ny) = app.maps.ground_tiles(q['id'], gq)
+                    return self.send_bytes(data, headers={'X-Grid': '%d %d' % (nx, ny)})
+                if p == '/api/map/groundpage':            # the url carries groundinfo's 'ver': the browser may keep it
+                    return self.send_file(app.maps.ground_page(q['id'], gq, int(q.get('n') or 0)), cache=bool(q.get('v')))
                 if p == '/api/ground': return self.send_file(app.maps.ground(q.get('setting') or 'Jungle', int(q.get('k') or 0)))
                 if p.startswith('/cache/'):
                     root = os.path.realpath(cache_dir())
