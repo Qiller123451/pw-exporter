@@ -162,6 +162,8 @@ export const Combat = {
   nearestEnemy(u, r, filter) { return this.findTarget(u, r, { filter }); },
   validTarget(u, t, task) {
     if (!t || !t.alive || t.inside) return false;
+    // what cannot be hit (SetHitable false: a sleeping creature, the Scorpion's closed panels) ends an automatic fight
+    if (t.untargetable && !(task && task.user)) return false;
     if (active(t, 'peace', this.time) || (t.flying && !this.reachesFlyer(u))) return false;
     if (!u.isEnemy(t) && !(task && task.forceAttack)) return false;
     if (u.owner && this.hiddenFrom(t, u.owner) && !(task && task.user)) return false;

@@ -98,6 +98,7 @@ export class HUD {
       return b;
     };
     const mb = mk('hud_menu_menubutton.png', 'Menu', () => this.G.openMenu(), 235);
+    mb.classList.add('menu');
     const face = (f) => { mb.style.backgroundImage = img(`hud_menu_menubutton${f}.png`); };
     mb.onmouseenter = () => { face('_hover'); this.showTip(mb, buttonTip(this.G, '_tb_menu')); };
     mb.onmouseleave = () => { face(''); this.hideTip(); };
@@ -126,7 +127,7 @@ export class HUD {
   buildTopButtons() {
     const G = this.G, D = G.data;
     const mk = (name, tex, w, label, fn, rfn, tip) => {
-      const b = el('div', 'mbtn');
+      const b = el('div', 'mbtn ' + name);
       b.style.backgroundImage = img(tex); b.style.width = w + 'px';
       b.innerHTML = `<span>${label}</span>`;
       b.onclick = fn;

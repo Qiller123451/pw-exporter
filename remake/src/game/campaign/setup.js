@@ -423,6 +423,10 @@ export class Campaign {
     // ---- start locations: main building, start army, start resources (StartLocation.usl:316-737)
     for (const p of list) this.startLocation(p);
     for (const p of list) { p.tt.resume(); W.recomputeCaps(p); }
+    // the Dustriders' mobile base the player starts with (the map's, the start location's, the army's) is not driven
+    // in from wherever it was put: it waits, and a worker puts it down where the player wants - at once and for
+    // free (the user's choice; placeFreeMain)
+    this.parkFreeMains();
     for (const [cls, [n, why]] of this.missing) this.warn(`${cls}${n > 1 ? ' ×' + n : ''}: ${why}`);
     for (const w of data.warnings || []) if (/^player \d+: start location/.test(w)) this.warn('data: ' + w);
     if (this.human) this.human.debug = !!(G.config && G.config.debug);
@@ -433,6 +437,57 @@ export class Campaign {
     try { off = /[?&]notriggers\b/.test(location.search); } catch (e) { /* no page */ }
     this.engine = off ? null : new TriggerEngine(this);
     return this.human;
+  }
+  // the human's mobile bases (at the start: the map's, the start location's, the army's) wait for a worker. A mission
+  // made for the Dustriders but played by another tribe: the main building that stands in for the collector (the
+  // start location's, a map's collector converted) waits the same way.
+  parkFreeMains() {
+    const W = this.world, p = this.human;
+    if (!p) return;
+    p.freeMains = p.freeMains || [];
+    const park = (e) => { if (e && e.alive && e.owner === p && !e.parked && !p.freeMains.includes(e)) { W.setParked(e, true); p.freeMains.push(e); } };
+    for (const u of W.units) if (u.name === 'aje_resource_collector') park(u);
+    if (this.missionTribe !== 'Aje') return;
+    for (const e of [...W.units, ...W.buildings]) if (e.startMain) park(e);
+    for (const pl of this.plans) if (pl.swapped && pl.rec && this.ruleClass(pl.o.class) === 'aje_resource_collector') park(pl.rec.entity);
+  }
+  // put down a waiting main (freeMains) at (x, z), turned rot: true when the ground there is free. A building is
+  // made anew there, ready (its record - a map object's - moves to it); a unit is moved.
+  placeFreeMain(u, x, z, rot = 0) {
+    const W = this.world, p = this.human, list = p ? p.freeMains || [] : [];
+    if (!u || !list.includes(u) || !u.alive || !this.freeMainOk(u, x, z, rot)) return false;
+    list.splice(list.indexOf(u), 1);
+    if (u.kind === 'building') {
+      const rec = u.rec || null;
+      u.rec = null;
+      const at = W.placement(u.name, x, z, rot, p);
+      W.removeEntity(u);
+      this.pending = rec;
+      const b = W.placeAdapted(u.name, p, at.x, at.z, at.rot, true);
+      this.pending = null;
+      if (b && rec) b.rec = rec;
+      if (this.engine && this.engine.touch) this.engine.touch();
+      return !!b;
+    }
+    W.teleport(u, x, z);
+    u.heading = rot; if (u.obj) u.obj.rotation.y = rot;
+    W.setParked(u, false);
+    if (u.obj) u.obj.visible = true;
+    if (this.engine && this.engine.touch) this.engine.touch();
+    return true;
+  }
+  // may it stand there: walkable land the player has seen, free of anything else
+  freeMainOk(u, x, z, rot = 0) {
+    const W = this.world, nav = W.nav, r = (u.radius || 4) + 1;
+    if (W.fow && W.fow.explored_ && !W.fow.explored_(x, z)) return false;
+    if (u.kind === 'building') return !!W.placement(u.name, x, z, rot, this.human).ok;   // (the building rules)
+    for (let dz = -r; dz <= r; dz += 1) for (let dx = -r; dx <= r; dx += 1) {
+      if (dx * dx + dz * dz > r * r) continue;
+      if (!nav.isFree(x + dx, z + dz)) return false;
+    }
+    let busy = false;
+    W.uHash.query(x, z, r + 6, (o) => { if (!busy && o.alive && o !== u && !o.parked && Math.hypot(o.pos.x - x, o.pos.z - z) < r + (o.radius || 1)) busy = true; });
+    return !busy;
   }
   // the map's wild animals and nests exist now (main.js creates them after the players): nests get their record,
   // and the nest itself becomes an ownerless object with hit points (Nest.usl: 500): destroying it ends the
@@ -559,6 +614,7 @@ export class Campaign {
       // buys it with the army. A mission made for another tribe has no collector in its army: then it stands here.
       const cls = MAIN_BUILDING[p.tribe], bought = p.tribe === 'Aje' && !p.ai && !(this.swap && p === this.human);
       const e = bought ? null : W.spawn(cls, p, x, z, { heading });
+      if (e && p === this.human) e.startMain = true;            // (parkFreeMains)
       if (e) stand = e.radius;
       else if (!bought) this.miss(cls, 'start building not created');
     }

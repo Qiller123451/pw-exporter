@@ -474,6 +474,8 @@ export class Sequel {
     W.releaseTask(V); V.task = { type: 'idle' }; V.path = [];
     const a = V.anim && V.anim.pick('rest', 'sleep', 'idle_rest', 'dying', 'die_simple');
     if (a) { V.busyAnim = true; V.anim.play(a, { loop: false, fade: 0.3 }); }
+    // nobody goes on hitting a sleeper (its attackers turn to other work or the next enemy)
+    for (const u of W.units) if (u.alive && u !== V && u.task && u.task.target === V) { W.releaseTask(u); u.task = { type: 'idle' }; u.path = []; }
     this.call('asleep', { u: V });
   }
   wake(V) {
@@ -522,7 +524,9 @@ export class Sequel {
   captureTick() {
     const W = this.W, me = this.me;
     for (const u of W.units) if (u.sqAsleep && u.sqAsleep <= this.time && !u.parked) this.wake(u);
-    const pens = Object.values(this.zones).filter((z) => z.kind === 'pen');
+    // the pens of the mission; where it has none, the garage or the headquarters takes the animal in
+    let pens = Object.values(this.zones).filter((z) => z.kind === 'pen');
+    if (!pens.length) pens = W.buildings.filter((b) => b.alive && b.built && b.owner === me && /^seas_(garage|headquarters)$/.test(b.name)).map((b) => ({ x: b.pos.x, z: b.pos.z, r: b.radius + 10 }));
     for (const t of W.units) {
       if (!t.alive || t.owner !== me || !tagsOf(t.name).includes('capture')) continue;
       const load = this.cargo.find((c) => c[0] === t);
@@ -556,6 +560,8 @@ export class Sequel {
   // point asleep instead (lethalHook), so the army can wear it down without killing it.
   damageHook(dmg, A, V) {
     if (!A || !V) return false;
+    // a sleeper is left alone: no blow (darts, splash, a stray shot) reaches it
+    if (V.sqAsleep > this.time) return true;
     const tags = tagsOf(A.name);
     if ((tags.includes('shock') || tags.includes('chain')) && !this.chaining) this.electric(dmg, A, V, tags);
     if (V.kind !== 'unit' || V.cls !== 'ANML' || !tags.includes('tranq')) return false;

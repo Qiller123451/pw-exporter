@@ -42,6 +42,13 @@
   .mbtn { position: relative; width: 95px; height: 32px; display: grid; place-items: center; cursor: pointer; }
   .mbtn:hover { filter: brightness(1.2); }
   .mbtn span { font-size: 12px; font-weight: bold; color: #f3dca6; text-shadow: 0 1px 2px #000; }
+  /* the label on the plate of the button art (its top 22 px), clear of the slanted ends: the menu
+     plate's left edge is slanted, the chat plate's right edge is slanted */
+  .pwver { margin-top: 10px; text-align: center; font-size: 11px; color: #b8a77e; opacity: 0.8; cursor: copy; user-select: text; }
+  .pwver:hover { opacity: 1; }
+  .mbtn > span { position: absolute; top: 0; left: 0; right: 0; height: 22px; line-height: 22px; text-align: center; white-space: nowrap; }
+  .mbtn.menu > span { left: 12px; right: 4px; }
+  .mbtn.chat > span { right: 12px; }
   .perf { position: absolute; left: 50%; top: 40px; transform: translateX(-50%); font: 12px/1.3 Consolas, monospace; color: #cfe8c0;
     background: rgba(0,0,0,.55); padding: 3px 10px; border-radius: 3px; pointer-events: none !important; white-space: nowrap; }
 

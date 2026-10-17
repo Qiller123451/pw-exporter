@@ -8,6 +8,19 @@ import * as THREE from 'three';
 import { AnimCtl } from './anim.js';
 import { mapQuat } from './maps/frame.js';
 
+// the ground cells under a model's pathfinder boxes (the GSF pf table, boxes of type 1, as buildings use them) at
+// (x, z) turned by rot; null when the model has none
+export function pfCells(nav, tpl, x, z, rot, scale = 1) {
+  const pf = tpl && ((tpl.info && tpl.info.pf) || (tpl.extras && tpl.extras.pf));
+  if (!pf) return null;
+  const set = new Set(), c = Math.cos(rot), s = Math.sin(rot);
+  for (const r of pf) if (r[0] === 1 && r[4] > 0.5 && r[5] > 0.5) {
+    const bx = -(r[1] + r[4] / 2) * scale, bz = -(r[2] + r[5] / 2) * scale;
+    for (const k of nav.rectCells(x + bx * c + bz * s, z - bx * s + bz * c, r[4] / 2 * scale, r[5] / 2 * scale, rot)) set.add(k);
+  }
+  return set.size ? [...set] : null;
+}
+
 export class Prop {
   // o: { model, x, z, y (null = on the ground), rot, q (stored map quaternion or null), block (bool), party (colour | null) }
   constructor(world, o) {
@@ -36,14 +49,10 @@ export class Prop {
     // landscape objects of maps/source.js
     this.cells = [];
     if (o.block) {
-      const pf = tpl && ((tpl.info && tpl.info.pf) || (tpl.extras && tpl.extras.pf));
-      const set = new Set();
-      if (pf) for (const r of pf) if (r[0] === 1 && r[4] > 0.5 && r[5] > 0.5) {
-        const bx = -(r[1] + r[4] / 2), bz = -(r[2] + r[5] / 2), c = Math.cos(this.rot), s = Math.sin(this.rot);
-        for (const k of world.nav.rectCells(o.x + bx * c + bz * s, o.z - bx * s + bz * c, r[4] / 2, r[5] / 2, this.rot)) set.add(k);
-      }
-      if (!set.size && o.blockRadius > 0) for (const k of world.nav.markCircle(o.x, o.z, o.blockRadius, 0)) set.add(k);
-      this.cells = [...set];
+      this.cells = pfCells(world.nav, tpl, o.x, o.z, this.rot) || [];
+      // a model without pathfinder boxes blocks nothing in the engine (on the original maps their walk grid has the
+      // rest); the remake's own maps have no walk grid: a circle
+      if (!this.cells.length && o.blockRadius > 0 && !world.mapWalkGrid) this.cells = world.nav.markCircle(o.x, o.z, o.blockRadius, 0);
     }
     this.blocking = false;
     this.setBlocking(true);

@@ -20,7 +20,7 @@ const steps = [
   ['the workers harvest 90 food', () => gather('food'), () => fired('Gba06#Food_harvested'), 400],
   ['3 more workers', () => { workersTo(6); gather('food'); }, () => fired('Gba16#Worker_ready'), 400],
   ['a hero finds the stones', () => { goRegion([unit('Cole_s0')], 'Stone_sighted', 'cole'); gather(); }, () => fired('Gba23#Stone_found'), 400],
-  ['a stone quarry next to the stones', () => { build('hu_stone_quarry', ...regionMap('Stone_sighted')); gather(); }, () => fired('Gba37#StoneQ_build'), 400],
+  ['a stone quarry next to the stones', () => { build('hu_stone_quarry', ...regionMap('Stone_sighted')); gather(); }, () => fired('Gba37#StoneQ_build'), 600],     // (another tribe: a bigger building, the stone from one pile 150 m away)
   ['a forester\'s lodge next to the woods', () => { build('hu_lumberjack_cottage', ...woodNear()); gather(); }, () => fired('Gba36#Forrester_build'), 400],
   ['300 food, wood and stone', () => { workersTo(9); gather({ food: 320, wood: 320, stone: 320 }); }, () => fired('Gba31#all_ready'), 1500],
   ['the town centre and the cottage are repaired', () => { repairs(); gather(); }, () => fired('Gba45#All_repaired'), 600],

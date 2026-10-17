@@ -18,6 +18,7 @@ const HULL_OPEN = 2.4;          // s until the carrier's front hull is open (sea
 export const Production = {
   // why an action can't be queued right now (null = ok): req | level | done | cost | housing | level | unique
   canQueue(p, action, producer) {
+    if (action.freeMain) return null;                 // (a waiting mobile base: main.js G.buildActions)
     const owner = producer && producer.rulesOwner ? producer.rulesOwner() : p;
     const why0 = this.data.check(owner, action, producer && producer.kind === 'unit' ? producer : producer);
     if (why0) return why0 === 'hidden' || why0 === 'disabled' ? 'req' : why0;

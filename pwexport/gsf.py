@@ -434,7 +434,8 @@ PARTICLE_INTS = {'flags', 'color_var_r', 'color_var_g', 'color_var_b', 'color_r'
 
 
 def parse_particle(r, c):
-    """emitter: placement and emitting volume (scale) in the model's frame, the atlas cells of its sprites and the
+    """emitter: placement in the model's frame, its vector (`scale`, the client's m_vVel: x = radius of the emitting
+    disk, z = speed along the emitter's axis; remake/docs/spec/particles.md), the atlas cells of its sprites and the
     parameters of its particle source"""
     t = r.u32(c)
     P = dict(skinned=bool(t & 0x80000000), attr=r.u32(c + 4), guid=r.u32(c + 8), src=r.u32(c + 12) & 0x7FFFFFFF,

@@ -82,6 +82,13 @@ what is new, and a few seconds into the mission the radio says what each new thi
   lost and how many are still out (and not yet found); each death is announced; when too few are left to reach the
   number the objective fails (a primary one loses the mission). After 3 min without anyone found the places of those
   still hiding are marked on the map.
+* **Tranquilizers and capture trucks** (`damageHook`, `lethalHook`, `sleep`, `captureTick`; `ui/input.js`
+  `sequelClick`): a dart puts the "Tranquilized" debuff on a creature for 30 s; a blow that would kill it then, from
+  any weapon, leaves it asleep at 1 hit point for 50 s. A sleeper is left alone: whoever was attacking it stops, a
+  right-click on it is no attack order, and no blow reaches it (darts, splash, stray shots). A capture truck within
+  9 m of a sleeper loads it (a right-click on the sleeper drives the selected trucks there); at a pen of the mission -
+  or, where there is none, at the player's garage or headquarters - the animal becomes the player's. A truck that
+  dies drops its load awake. Test: `tests/sequel_capture.js`.
 * **Searchlights** (`nightTick`, `viewers`; drawn by `SequelUI.searchlight`): at night a searchlight dazzles the
   creatures within 26 m and lights 36 m for the fog of war; its lamp (its own model, `sq_searchlamp`) turns with a
   beam that reaches down to a lit spot 17 m out sweeping around the tower, and the ground around it glows.

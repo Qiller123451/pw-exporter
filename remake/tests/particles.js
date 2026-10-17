@@ -39,6 +39,19 @@ check('far from the camera the emitters rest', mine.every((x) => !x.parts.length
 const drv = P.emitters.filter((x) => x.anims && x.node);
 check('animation-driven emitters exist', drv.length > 0, { n: drv.length, anims: drv.length && [...drv[0].anims] });
 check('they spray only while their animation plays', drv.every((x) => !x.parts.length || P.constructor.playing(x)), drv.filter((x) => x.parts.length).length);
+// a hit's sparks (fx_impact_01: emitter vector 0.61, 0.61, 26.5 - a velocity, not a 26 m tall volume) burst out
+// from the hit and stop (drag 8): no pillar of light above the unit (user report 2026-10-17)
+{
+  const at = h.pos.clone(); at.x += 12; at.y = W.height(at.x, at.z) + 1.5;
+  const fx = G.mfx.at('fx_impact_01', at, 2.5);
+  if (fx) fx.obj.updateMatrixWorld(true);
+  for (let i = 0; i < 4; i++) P.update(0.05, G.camera, G.rtscam.target);
+  const sp = P.emitters.find((x) => x.node && /sparks/.test(x.node.name) && (() => { for (let o = x.node; o; o = o.parent) if (o === (fx && (fx.obj || fx.root || fx))) return true; return false; })())
+    || P.emitters.filter((x) => x.node && /fx_sparks/.test(x.node.name)).pop();
+  const pts = sp ? sp.parts.filter((q) => q.vis).map((q) => q.p.clone().applyMatrix4(sp.node.matrixWorld)) : [];
+  const up = Math.max(...pts.map((q) => q.y - at.y)), wide = Math.max(...pts.map((q) => Math.hypot(q.x - at.x, q.z - at.z)));
+  check('a hit\'s sparks burst around it, not up in a column', pts.length > 10 && up < 4 && wide > 0.3, { n: pts.length, up: +up.toFixed(2), wide: +wide.toFixed(2) });
+}
 // a model that leaves the scene: its emitters are dropped after a while
 const n0 = P.emitters.length;
 W.scene.remove(h.obj);

@@ -167,26 +167,25 @@ Layout from SEK's exporter (gsf.ksy `particle_chunk`), read by `pwexport.gsf.par
 - `+4` attribute flags (LOD mask bits 0-4 and the state bits like a mesh's: the fires of the epoch variants of a
   main building, the smoke of the damage stages `DEST_*`), `+8` guid, `+12` particle source type in bits 0-30 (3 for
   10430 of the 10439 emitters of Base, 0 for 9) and bit 31 = heat haze ("mirage", 23 fires), `+16` position,
-  `+28` quaternion (D3D: conjugate it, as for links), `+44` size of the emitting volume (3 floats), `+56` maximum
-  number of living particles. The skinned version adds the skeleton index and 4 bone ids / weights at `+60`.
+  `+28` quaternion (D3D: conjugate it, as for links), `+44` the emitter's vector (3 floats; called "scale" by SEK's
+  exporter, m_vVel in the scripts: x = radius of the emitting disk, z = the speed along the emitter's axis - not
+  a volume; remake/docs/spec/particles.md), `+56` maximum number of living particles. The skinned version adds the skeleton index and 4 bone ids / weights at `+60`.
 - Then the spread (float), self-relative pointers to the emitter's name (name block, e.g. `oben_01`,
   `Age_03_Fire_02`), to its atlas cells (`count` records of 9 bytes: used-material index, log2 columns, log2 rows,
   first cell, cell count - 1, border width, border left, pivot x + 127, pivot y + 127) and to its parameters
   (`count` × 4 bytes; source type 3: size, life_time, rotate, gravitation, size_var, drag, flags, fade_in, fade_out,
   tile_anim_speed, life_time_var, size_increase, colour variance r/g/b, emit_timer, speed_var, emit_timer_var,
   colour r/g/b (0-255), emit_rot_inc, src_rot_speed, center_suck, suck_vel, rotation_var, alpha (0-255),
-  emit_per_meter, size_inc_exp; older exports have fewer).
-  How the remake reads the growth: `size_increase` is added in size units over the life (the shockwave of a
-  collapsing building: 6 -> 24), `size_inc_exp` bends the curve (t^(2^exp), a guess). Taken as a factor instead,
-  the dust and wave sprites grew to 50-100 m and a camera near a waterfall had ~150 screens of overdraw a frame -
-  enough for Windows to reset the graphics card.
+  emit_per_meter, size_inc_exp; older exports have fewer). The spread tilts the velocity outwards. How the client
+  uses them (PWClient.exe, particle source 3): remake/docs/spec/particles.md - e.g. `size_increase` is added per
+  second (times age^size_inc_exp), gravitation is m/s² down in the world, fade_in / fade_out are shares of the life.
 - 1254 models of Base have emitters (buildings' fires and smoke, torches, the waterfalls' spray). Some models are
   emitters only (`sav_waterfall_01_top` / `_bottom`): the converter keeps them.
 - The converter writes one node per emitter (`particles_<name>`, placed like a link) with
   `extras = {kind: 'particles', attr, emitter: {src, mirage, scale, max, spread, tiles: [{..., tex, additive}],
   params, anims?}}`; `tex` is the sprite texture written with the model, `anims` the animations that drive the
-  emitter (0x40000002 above). Additive sprite textures (`gore.tga` flames) have alpha 0: they are drawn by colour. What the parameters mean is partly guessed
-  (remake: `src/engine/particles.js`).
+  emitter (0x40000002 above). Additive sprite textures (`gore.tga` flames) have alpha 0: they are drawn by colour.
+  The remake's port: `remake/src/engine/particles.js`.
 
 ## Corrections 2026-10-01 (found while building the Model Exporter; pwexport/gsf.py VERSION 2026.10.3)
 - **Walk-set indices are 1-based positions in the model's animation list** (0 = slot unused). Slots: 0–2 walk

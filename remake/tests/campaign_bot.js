@@ -106,14 +106,29 @@ function build(cls, mx, my, { workers: n = 2, count = 1, region = null } = {}) {
   const a = actionFor(c);
   if (!a) return 'no action';
   const [x0, z0] = C.toGame(mx, my);
-  for (let k = 0; k < 240; k++) {                // up to 126 m away: a crowded village leaves no room for a big one
+  for (let k = 0; k < 400; k++) {                // up to 206 m away: a crowded village leaves no room for a big one (another tribe's)
     const r = 6 + k * 0.5, ang = k * 2.4;
-    const pl = W.placement(c, x0 + Math.cos(ang) * r, z0 + Math.sin(ang) * r, 0, me);
+    // (turned a quarter when it does not fit as it is: a long building in a narrow place)
+    let pl = W.placement(c, x0 + Math.cos(ang) * r, z0 + Math.sin(ang) * r, 0, me);
+    if (!pl.ok && !pl.replace && !pl.existing) pl = W.placement(c, x0 + Math.cos(ang) * r, z0 + Math.sin(ang) * r, Math.PI / 2, me);
     if (!pl.ok || pl.replace || pl.existing) continue;
     if (region && !C.regions.find(region).contains(pl.x, pl.z)) continue;
     const ws = workers().sort((u, v) => Math.hypot(u.pos.x - pl.x, u.pos.z - pl.z) - Math.hypot(v.pos.x - pl.x, v.pos.z - pl.z)).slice(0, n);
     const b = W.startConstruction(me, a, pl.x, pl.z, pl.rot, ws);
     return typeof b === 'string' ? b : 'started';
+  }
+  // no room around the spot: the nearest free place anywhere the player may build (an 8 m grid over the map)
+  if (!region) {
+    const H = W.size / 2, cand = [];
+    for (let x = -H + 16; x < H - 16; x += 8) for (let z = -H + 16; z < H - 16; z += 8) cand.push([Math.hypot(x - x0, z - z0), x, z]);
+    cand.sort((p, q) => p[0] - q[0]);
+    for (const [, x, z] of cand) {
+      const pl = W.placement(c, x, z, 0, me);
+      if (!pl.ok || pl.replace || pl.existing) continue;
+      const ws = workers().sort((u, v) => Math.hypot(u.pos.x - pl.x, u.pos.z - pl.z) - Math.hypot(v.pos.x - pl.x, v.pos.z - pl.z)).slice(0, n);
+      const b = W.startConstruction(me, a, pl.x, pl.z, pl.rot, ws);
+      return typeof b === 'string' ? b : 'started';
+    }
   }
   return 'place';
 }
@@ -223,8 +238,19 @@ function camera(kind) {
 // ---------------------------------------------------------------- running
 const reached = [];
 let failedAt = null;
+// the Dustriders' mobile base the mission starts with waits for the player (campaign/setup.js freeMains): put it down
+// where it would have stood, or the nearest free place
+function placeFreeMains() {
+  for (const u of [...(me.freeMains || [])]) {
+    for (let k = 0; k < 400; k++) {
+      const r = k * 0.5, ang = k * 2.4, x = u.pos.x + Math.cos(ang) * r, z = u.pos.z + Math.sin(ang) * r;
+      if (C.placeFreeMain(u, x, z, 0)) break;
+    }
+  }
+}
 function runSteps(steps, opts = {}) {
   let err = null;
+  placeFreeMains();
   try {
     for (let i = 0; i < steps.length; i++) {
       const [name, act, done, limit] = steps[i];

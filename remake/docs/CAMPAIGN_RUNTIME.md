@@ -63,7 +63,14 @@ player's tribe in the data), `plan()` makes a `TribeSwap(rules, missionTribe, ch
   (`filterFor`: `Build/<type>/<class>[_level]`, `Upgrades/<main building>/age_N`, `BuildObjects/<class>`; heroes
   keep their path under the new tribe; other tribe-specific upgrades are dropped).
 - The Dustriders buy their resource collector with the army (StartLocation.usl:386-390); in a mission made for
-  another tribe it stands at the start location like the other tribes' main buildings.
+  another tribe it stands at the start location like the other tribes' main buildings. Either way (and the map's
+  own, converted from another tribe's main building) the player's mobile base does not stand where it was put: it
+  waits out of the world (`setup.js parkFreeMains`), and a worker's build card puts it down where the player wants,
+  free and at once (`placeFreeMain`, `main.js freeMainActions`; the user's choice - it used to block units, e.g.
+  at mission 8's ice arch). A mission made for the Dustriders played by another tribe: the main building that
+  stands in for the collector (the start location's fireplace / headquarters, a map's collector converted) waits
+  the same way; its card puts it down finished where the building rules allow (a new building takes the waiting
+  one's record). Test: `tests/free_main.js` (Dustriders and SEAS).
 
 Which class stands in for which (`TribeSwap.equivalent`) starts from a role table (`ROLES` in `tribes.js`), made
 from the base game's data: the build menus of the tech tree (`/Actions/<tribe>/Build`: which building or worker
@@ -215,6 +222,10 @@ Rec {
 * **Not** in the registry: the anonymous landscape (trees, stones, bushes, plain decoration that no trigger names,
   hides or owns - it stays in the instanced prop field and the resource system) and parts of other objects
   (`PROD`, `TRRT`, `MNIO`: riders, build-ups, turrets, cranes - the remake assembles those itself).
+* What scenery blocks (landscape and props alike): the cells under its model's pathfinder boxes (`prop.js pfCells`).
+  A model without any blocks nothing on an original map - the engine has nothing to block with, and the map's walk
+  grid holds the rest (mission 8's ice arch is walked under); the remake's own maps, without a walk grid, block a
+  circle (`tests/scenery_block.js`).
 
 Lookups (live objects only): `byGuid(g)`, `byName(n)`, `byHandle(index, serial)`, `byIndex(i)`, `of(entity)`,
 `get(ref)` (Rec | entity | GUID | name), `group(ref)` → `Group`; `all` = the live records in creation order.
@@ -628,7 +639,7 @@ All 17 missions are open. The menu would grey out a mission that is not adapted 
 | 13 The Rush | open | played to the end by the scripted test (`tests/campaign_play_13.js`, about 50 game minutes: two guard squads on the walls, the main attack) with each of the four tribes |
 | 14 Prisoners | open | played to the end by the scripted test (`tests/campaign_play_14.js`) with each of the four tribes (the landing film of the tribe the player brings) |
 | 15 New World Order | open | played to the end by the scripted test (`tests/campaign_play_15.js`: five pumping stations to take and hold, two guards each) with each of the four tribes |
-| 16 Showdown! | open | played to the end by the scripted test (`tests/campaign_play_16.js`: the SEAS bases, the Scorpio, Babbit's combat suit) with each of the four tribes |
+| 16 Showdown! | open | played to the end by the scripted test (`tests/campaign_play_16.js`: the SEAS bases, the Scorpio, Babbit's combat suit) with each of the four tribes. The Scorpion sleeps crouched in its huts (first frame of `stand_up`, CScorpionBoss.OnInit) until JumpOffWall; the gates stored open are drawn open (`tests/scorpion_start.js`) |
 
 The scripts play the main quests only (side quests are left alone) on the default difficulty. The long ones take
 10 - 60 minutes each per tribe; `tests/regress.sh` runs missions 0, 1, 7 and 10, the others are run by hand:

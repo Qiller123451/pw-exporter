@@ -18,6 +18,12 @@ run debug_ninigi python3 tests/evaljs.py tests/debug_mode.js "&tribe=Ninigi&enem
 run looks_aje python3 tests/evaljs.py tests/looks.js "&tribe=Aje&enemy=Hu"
 run looks_ninigi python3 tests/evaljs.py tests/looks.js "&tribe=Ninigi&enemy=Hu"
 run walls python3 tests/evaljs.py tests/walls.js "&tribe=Hu&enemy=Aje&debug"
+# scenery blocks with its pf boxes only (mission 8's ice arch is walked under); mission 16's sleeping Scorpion and open gates
+run scenery_block python3 tests/evaljs.py tests/scenery_block.js "&campaign=8&tribe=Ninigi"
+run scorpion_start python3 tests/evaljs.py tests/scorpion_start.js "&campaign=16&notriggers"
+# the Dustriders' mobile base of a mission start waits for a worker to put it down, free and at once
+run free_main python3 tests/evaljs.py tests/free_main.js "&campaign=8&tribe=Aje"
+run free_main_seas python3 tests/evaljs.py tests/free_main.js "&campaign=8&tribe=SEAS"
 run pathing python3 tests/evaljs.py tests/pathing.js
 # cliffs: the original maps' pathfinder grid, the slope rule of the sequel's maps (tests/cliffs.js)
 run cliffs python3 tests/evaljs.py tests/cliffs.js "&campaign=13&notriggers"
@@ -109,6 +115,7 @@ SQ="env PWR_PORT=${SEQ_PORT:-8412}"            # (the sequel is played with MIRA
 for n in 1 2 3 4 5 6 7 8 9 10; do run sequel_$n $SQ python3 tests/evaljs.py tests/sequel.js "&sequel=$n"; done
 run save_sequel_3 $SQ python3 tests/save_load.py "&sequel=3" 120 30
 run sequel_power $SQ python3 tests/evaljs.py tests/sequel_power.js "&sequel=2"
+run sequel_capture $SQ python3 tests/evaljs.py tests/sequel_capture.js "&sequel=3"
 # what heroes give by level (aura, special move, chief bonus, tooltip lines), the originals and the sequel's copies
 run hero_levels python3 tests/evaljs.py tests/hero_levels.js "&tribe=Hu&enemy=Aje"
 run hero_levels_sequel $SQ python3 tests/evaljs.py tests/hero_levels.js "&sequel=1"

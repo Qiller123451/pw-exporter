@@ -25,11 +25,12 @@ import { World } from './game/world.js';
 import { Player } from './game/player.js';
 import { generatedSource, originalSource, slopeWalkable } from './game/maps/source.js';
 import { parseUla } from './game/maps/ula.js';
+import { pfCells } from './game/prop.js';
 import { setForestData } from './game/maps/forest.js';
 import { buildWater } from './engine/water.js';
 import { GrassLayer, GRASS_DENSITY } from './engine/grass.js';
 import { TribeAI } from './game/ai.js';
-import { initAtlas, preloadAtlasImages, setCardNames } from './ui/atlas.js';
+import { initAtlas, preloadAtlasImages, setCardNames, iconFor } from './ui/atlas.js';
 import { HUD } from './ui/hud.js';
 import { Input } from './ui/input.js';
 import { Overlay } from './ui/overlay.js';
@@ -72,6 +73,7 @@ const REASON = {
 const EPOCH = ['', 'I', 'II', 'III', 'IV', 'V'];
 
 const G = window.G = {
+  build: BUILD,                    // the version the menus show (ui/menu.js versionLine)
   THREE,
   settings: loadSettings(),
   sel: new Set(),
@@ -295,6 +297,7 @@ async function buildWorld(cfg, S) {
     if (x < P.x0 + 2 || x > P.x1 - 2 || z < P.z0 + 2 || z > P.z1 - 2) nav.block[j * nav.n + i]++;
   }
   W.mapKind = S.kind;                              // (the wall map's height rules: wallmap.js heightAt)
+  W.mapWalkGrid = !!S.walkable;                    // an original map's walk grid (scenery without pf boxes: prop.js)
   if (S.water != null) W.markWater(S.water);
   // where land units can walk: the map's pathfinder grid, else a slope rule (maps/source.js slopeWalkable: the
   // sequel's cliffs and the random maps' mountains)
@@ -412,7 +415,15 @@ async function buildWorld(cfg, S) {
     kind(d.model, { castShadow: d.block || /bush|underwood|tree/.test(d.model), holes: /tree|palm/.test(d.model) });
     const prop = G.props.add(d.model, d.x, y, d.z, d.rot, d.scale, d.q);
     const sprites = addSprites(d.model, d.x, y, d.z, d.rot, d.scale, { ground: !/tree|palm|bamboo|deco/.test(d.model) });
-    const cells = d.block ? nav.markCircle(d.x, d.z, Math.min(24, radiusOf(d.model) * d.scale * 0.7)) : null;
+    // what stands in the way: the model's pathfinder boxes; a model without any blocks nothing on an original map
+    // (the engine has nothing to block with; the map's walk grid holds the rest - an ice arch is walked under), a
+    // circle on the remake's own maps
+    let cells = null;
+    if (d.block) {
+      cells = pfCells(nav, tpl(d.model, true), d.x, d.z, d.rot, d.scale);
+      if (cells) nav.mark(cells, 1);
+      else if (!S.walkable) cells = nav.markCircle(d.x, d.z, Math.min(24, radiusOf(d.model) * d.scale * 0.7));
+    }
     // the sequel's houses, cars and camps stand where the story put them (not plants)
     if (!/^sq_/.test(d.model)) decorList.push({ x: d.x, z: d.z, prop, sprites, cells });
   }
@@ -727,7 +738,24 @@ G.buildActions = () => {
   // too" - the class tesla_s0 is looked up as <tribe>_worker; the sequel's Taslov is a copy of him: Rules.kind)
   if (G.data.kind(w.name) === 'tesla_s0') { const o = w.rulesOwner(); w = { name: `${G.data.tree(o).tribe.toLowerCase()}_worker`, kind: 'unit', cls: 'CHTR', def: { type: 'CHTR' }, owner: w.owner, rulesOwner: () => o }; }
   // harbours only on maps with water
-  return G.data.actionsOf(w.rulesOwner(), w).filter((a) => a.cat === 'Build/BLDG' && a.visible && !a.disabled && (G.world.waterNav || !G.data.def(a.results[0].obj, G.me)?.coastal));
+  const acts = G.data.actionsOf(w.rulesOwner(), w).filter((a) => a.cat === 'Build/BLDG' && a.visible && !a.disabled && (G.world.waterNav || !G.data.def(a.results[0].obj, G.me)?.coastal));
+  return [...freeMainActions(), ...acts];
+};
+// the mobile base a campaign mission starts the Dustriders with (another tribe: the main building in its place) waits
+// until a worker puts it down (campaign/setup.js freeMains): a build card of its own, free and at once
+function freeMainActions() {
+  const list = (G.me && G.me.freeMains || []).filter((u) => u.alive && u.parked);
+  if (!list.length) return [];
+  const real = G.data.actions(G.me).find((a) => a.results && a.results[0] && a.results[0].obj === list[0].name) || null;
+  const loc = real && real.loc ? real.loc : {};
+  return [{ ...(real || {}), id: 'free_main', kind: 'Build', cat: 'Build/BLDG', freeMain: list[0], visible: true, disabled: false, cost: {},
+    req: [], breq: [], results: [{ obj: list[0].name }], loc: { ...loc, icon: loc.icon || iconFor(list[0].name) || 'aje_resource_collector_1', ui: { ...(loc.ui || {}), subcat: 'ECON', menupos: '0' } } }];
+}
+G.placeFreeMain = (a, x, z, rot) => {
+  const C = G.campaign;
+  if (!C || !a.freeMain || !C.placeFreeMain(a.freeMain, x, z, rot)) { G.hud.message(REASON.place || 'Cannot be placed here', 'bad'); G.feedback.error(); return false; }
+  G.feedback.ui('UI_click');
+  return true;
 };
 // special moves and building commands of the selection (generic commands have their own buttons)
 const GENERIC = /^(Attack|Walk|Stop|Kill|AggressiveTarget|AggroState_\d|Formation_\d)$/;
@@ -762,6 +790,7 @@ G.useAction = (a, sel, ev) => {
     if (res) G.hud.message(REASON[res] || res, 'bad');
     return;
   }
+  if (a.freeMain) { G.input.setMode('place', a); return; }
   if (a.cat === 'Build/BLDG') {
     if (G.data.check(G.me, a)) return G.hud.message(REASON.req, 'bad');
     if (!G.me.canAfford(a.cost)) return G.hud.message(REASON.cost, 'bad');
@@ -962,9 +991,13 @@ function freezeStill() {
     const seen = b.onScreen || near(b.pos, b.radius);
     // (o.userData.live: a part that moves by itself - the sequel's windmill rotors, water wheels, searchlight lamps)
     if (seen && (!b.built || b.turret || b.cranes.length || o.userData.live || animating(b.anim) || (b.parts || []).some((p) => animating(p.anim)))) { setStill(o, false); continue; }
-    const key = `${o.position.x},${o.position.y},${o.position.z},${o.rotation.y},${o.scale.x},${b.visKey}`;
-    if (o.still && key !== o.userData.stillKey) o.updateMatrixWorld(true);
-    o.userData.stillKey = key;
+    // (the pose of the last animation: one that ran while nobody looked - a gate opened by the mission far away -
+    // still has to show its end)
+    const a = b.anim, pose = !a || !a.cur ? '' : animating(a) ? a.curName : a.curName + ':' + a.cur.time.toFixed(2) + ':' + a.cur.getEffectiveWeight().toFixed(2);
+    const key = `${o.position.x},${o.position.y},${o.position.z},${o.rotation.y},${o.scale.x},${b.visKey},${pose}`;
+    // a change (moved, other parts, another pose): drawn live this round, frozen once it holds (the new pose may
+    // only be applied by the next animation update)
+    if (key !== o.userData.stillKey) { o.userData.stillKey = key; setStill(o, false); continue; }
     setStill(o, true);
   }
 }

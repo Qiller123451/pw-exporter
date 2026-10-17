@@ -220,7 +220,8 @@ const scorpion = {
   // ACDO JumpOffWall
   activate(b, W) {
     const S = b.scorp;
-    if (!S.active) { scorpOpenPanel(b, W); S.state = 4; S.busyT = 0; }
+    // it rises out of its huts, then the fight (state 4: standanim)
+    if (!S.active) { scorpOpenPanel(b, W); S.state = 4; S.busyT = scorpPlay(b, 'stand_up'); }
     S.change = false; S.active = true;
   },
   // a panel destroyed (CScorpionBoss.UpdateState)
@@ -233,7 +234,13 @@ const scorpion = {
   },
   update(b, W, dt) {
     const S = b.scorp;
-    if (!S || !S.active) return;
+    if (!S) return;
+    // asleep (OnInit SetAnim "stand_up", 0 loops): crouched in its huts at the first frame of standing up, out of
+    // sight until the mission wakes it
+    if (!S.active) {
+      if (b.anim && b.anim.has('stand_up') && (b.anim.curName !== 'stand_up' || b.anim.cur.timeScale !== 0)) { b.anim.play('stand_up', { loop: false, restart: true, fade: 0 }); b.anim.cur.time = 0; b.anim.cur.timeScale = 0; }
+      return;
+    }
     if (S.openT != null && (S.openT -= dt) <= 0) scorpOpenPanel(b, W);
     if (S.closeT != null && (S.closeT -= dt) <= 0) scorpClosePanels(b, W);
     // the blow of the attack under way: at its start, then every second until its end

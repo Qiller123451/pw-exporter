@@ -310,7 +310,7 @@ export function restore(G, snap) {
   W.events = []; W.dead = [];
   W.uHash.map.clear(); W.bHash.map.clear(); W.rHash.map.clear();
   for (const u of W.units) if (u.alive && !u.inside && !u.parked) W.uHash.insert(u);
-  for (const b of W.buildings) if (b.alive) W.bHash.insert(b);
+  for (const b of W.buildings) if (b.alive && !b.parked) W.bHash.insert(b);
   for (const r of W.resources) if (r.alive) W.rHash.insert(r);
   // the pathfinder grids as saved (buildings, felled trees, open gates, walls, props)
   const n = root.nav;
@@ -380,6 +380,7 @@ function reviveBuilding(b, X, W) {
   if (b.built && b.cranes && b.cranes.length && b.removeCranes) b.removeCranes();
   if (b.lastAnim && b.anim && b.anim.has(b.lastAnim)) { b.anim.play(b.lastAnim, { loop: false, fade: 0 }); b.anim.update(b.anim.duration(b.lastAnim) + 0.1); } else if (b.idleAnim) b.idleAnim();
   b.updateVisual();
+  if (b.parked) b.obj.visible = false;                // (a waiting main building: campaign/setup.js parkFreeMains)
   if (!b.alive) {
     W.scene.remove(b.obj);
     if (!b.removed && b.deadT <= 20) {

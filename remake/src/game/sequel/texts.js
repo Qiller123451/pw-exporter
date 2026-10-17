@@ -13,7 +13,7 @@ export const SEQUEL_TEXTS = {
   sq_tranq: {
     intro: ['booker', 'Tranquilizer Marksmen: a dart keeps the animal from dying. Hit it with one, then wear it down with anything you\'ve got - when it should drop dead, it drops asleep. That\'s when we can take it.'], where: 'at the barracks',
     medium: '• Infantry\n\n• Tranquilizer darts: a creature hit by one falls asleep instead of dying for 30 s',
-    long: 'Marksmen with dart rifles. A dart tranquilizes the creature it hits for 30 seconds: a blow that would kill it then - from the darts or from any other weapon - leaves it asleep at 1 hit point instead. The darts strike five times as hard on a creature held by an electrified net. A Capture Truck can then load the sleeper and take it to a pen.',
+    long: 'Marksmen with dart rifles. A dart tranquilizes the creature it hits for 30 seconds: a blow that would kill it then - from the darts or from any other weapon - leaves it asleep at 1 hit point instead. The darts strike five times as hard on a creature held by an electrified net. A sleeper is left alone - no blow reaches it, and nobody attacks it. A Capture Truck can then load it and take it to a pen (or, where there is none, to the garage or the headquarters).',
     vs: { chtr: '-', anml: '+', vhcl: '-', bldg: '-' },
   },
   sq_shock_trooper: {
@@ -30,8 +30,8 @@ export const SEQUEL_TEXTS = {
   },
   sq_capture_truck: {
     intro: ['booker', 'Capture Trucks: drive one next to a sleeping animal and it loads it. Bring it to a pen and the animal is ours.'], where: 'at the garage',
-    medium: '• Vehicle\n\n• Unarmed\n\n• Loads a sleeping animal and carries it to a pen',
-    long: 'A six-wheeled truck with a steel cage. Drive it next to an animal put to sleep by tranquilizer darts and it loads it; at a pen the animal becomes yours.',
+    medium: '• Vehicle\n\n• Unarmed\n\n• Loads a sleeping animal and carries it to a pen (or the garage)',
+    long: 'A six-wheeled truck with a steel cage. Drive it next to an animal put to sleep by tranquilizer darts and it loads it; at a pen - or, where there is none, at the garage or the headquarters - the animal becomes yours.',
   },
   sq_aa_halftrack: {
     intro: ['halloran', 'Flak Halftracks: they outrange anything on the ground and bring down whatever comes out of the rift on wings.'], where: 'at the garage',

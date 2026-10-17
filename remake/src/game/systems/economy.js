@@ -298,7 +298,7 @@ export const Economy = {
   nearestDropoff(u, res) {
     let best = null, bd = 1e9;
     const test = (e) => {
-      if (!e.alive || !e.owner || !u.owner || !u.owner.isFriend(e.owner) || !e.isDropoff || !e.def.delivery.includes(res)) return;
+      if (!e.alive || e.parked || !e.owner || !u.owner || !u.owner.isFriend(e.owner) || !e.isDropoff || !e.def.delivery.includes(res)) return;
       const d = u.distTo(e);
       if (d < bd) { bd = d; best = e; }
     };

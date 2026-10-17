@@ -377,7 +377,18 @@ function staticModel(api, name, lod = 0) {
       }
       g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
       if (src.attributes.uv) g.setAttribute('uv', src.attributes.uv);
-      if (src.index) g.setIndex(src.index);
+      // a mirroring transform (the GSF frame is mirrored against the viewer's) turns the triangles inside out once
+      // it is baked into the vertices: the winding goes back to the model's (three.js only flips the culling for a
+      // mirrored object matrix, not for baked geometry)
+      const mirrored = o.matrixWorld.determinant() < 0;
+      if (src.index) {
+        const ix = src.index.array;
+        if (mirrored) { const f = new ix.constructor(ix.length); for (let i = 0; i + 2 < ix.length; i += 3) { f[i] = ix[i]; f[i + 1] = ix[i + 2]; f[i + 2] = ix[i + 1]; } g.setIndex(new THREE.BufferAttribute(f, 1)); }
+        else g.setIndex(src.index);
+      } else if (mirrored) {
+        const f = new Uint32Array(cnt - (cnt % 3)); for (let i = 0; i + 2 < cnt; i += 3) { f[i] = i; f[i + 1] = i + 2; f[i + 2] = i + 1; }
+        g.setIndex(new THREE.BufferAttribute(f, 1));
+      }
       g.computeVertexNormals();
       const mat = Array.isArray(o.material) ? o.material[0] : o.material;
       const key = mat.uuid + '|' + (tag ? tag.join(',') : '');

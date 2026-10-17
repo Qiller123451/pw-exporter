@@ -204,6 +204,10 @@ export const Scripting = {
     if (e.kind === 'unit') {
       if (parked) { this.releaseTask(e); e.task = { type: 'idle' }; e.path = []; e.vel.set(0, 0, 0); if (!e.inside) this.uHash.remove(e); if (e.obj) e.obj.visible = false; }
       else if (!e.inside) { this.uHash.insert(e); e.anchor.set(e.pos.x, e.pos.z); }
+      // a trailer (the Dustriders' collector wagon) is drawn apart from its unit: hidden with it, hitched again where
+      // the unit comes back
+      const wg = e.comp && e.comp.wagon;
+      if (wg) { if (parked) wg.obj.visible = false; else { wg.rear = null; e.comp.syncWagon(0); } }
     } else if (e.kind === 'building') {
       if (parked) { this.bHash.remove(e); if (e.built) e.setBlocking(false); e.obj.visible = false; }
       else { this.bHash.insert(e); if (e.built) e.setBlocking(true); }

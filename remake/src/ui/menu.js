@@ -89,6 +89,19 @@ export class Menu {
       ${this.btn('campaign', 'Campaign')}${this.btn('sequel', 'Containment (1964)')}${this.btn('skirmish', 'Skirmish')}${this.btn('load', 'Load game')}${this.btn('settings', 'Options')}${this.btn('book', 'Help')}${this.btn('help', 'Controls')}${this.btn('exit', 'Exit game')}</div>`, { title: true });
     this.bind({ campaign: () => this.campaign(), sequel: () => this.sequel(), skirmish: () => this.skirmish(), load: () => this.loadWin(() => this.title()), settings: () => this.settings(() => this.title()), help: () => this.help(() => this.title()), book: () => this.helpBook(null, () => this.title()),
       exit: () => this.hooks.exit && this.hooks.exit() });
+    this.versionLine();
+  }
+  // the game's version (the build time of game.js, main.js BUILD) at the bottom of the title and in-game menus; a
+  // click copies it
+  versionLine() {
+    const b = String(this.G.build || 'dev'), m = /^(\d{4})(\d\d)(\d\d)(\d\d)(\d\d)$/.exec(b);
+    const text = `Version ${m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}` : b}${CONFIG_MOD ? ' · ' + CONFIG_MOD.replace(/[<>&"]/g, '') : ''}`;
+    const v = document.createElement('div');
+    v.className = 'pwver';
+    v.textContent = text;
+    v.title = 'Click to copy';
+    v.onclick = () => { try { navigator.clipboard.writeText(`build ${b}${CONFIG_MOD ? ' ' + CONFIG_MOD : ''}`); v.textContent = text + ' · copied'; } catch (e) { /* no clipboard */ } };
+    this.win.appendChild(v);
   }
   // Which campaign missions the menu offers. The trigger engine runs every mission, but only those listed here have
   // been played through and checked (docs/CAMPAIGN_RUNTIME.md "Mission status"); the others are greyed out.
@@ -264,6 +277,7 @@ export class Menu {
       quit: () => this.confirm('Quit to the main menu?', () => this.hooks.quit && this.hooks.quit(), () => this.main()),
       exit: () => this.confirm('Exit the game?', () => this.hooks.exit && this.hooks.exit(), () => this.main()),
     });
+    this.versionLine();
   }
   // ---------------------------------------------------------------- the sequel campaign (docs/SEQUEL.md)
   sequel() {

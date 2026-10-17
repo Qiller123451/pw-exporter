@@ -1,14 +1,17 @@
 import * as THREE from 'three';
 import { Assets, loadTexture } from './assets.js';
 
-// The particle emitters of the models (GSF chunk type 2: fires, smoke, sparks, the spray of waterfalls ...).
+// The particle emitters of the models (GSF chunk type 2: fires, smoke, sparks, the spray of waterfalls, hits ...).
 // The converter writes one node per emitter with its data in the extras (pwexport/gsf.py parse_particle, glTF node
-// extras {kind: 'particles', attr, emitter: {scale, max, spread, tiles, params}}). An emitter sprays sprites of a
-// texture atlas inside its volume (scale: half sizes along its own axes); they fall or rise with "gravitation" (m/s²,
-// positive = down), grow by "size_increase" (size units, added over the life; "size_inc_exp" bends the curve: a guess)
-// over their life, fade in and out, turn and play the atlas cells
-// tile_start .. tile_start + tile_last. "max" sprites live at a time (a new one every life_time / max seconds).
-// The game draws a sprite a quarter of "size" high (measured on the billboards, docs/GSF_FORMAT.md).
+// extras {kind: 'particles', attr, emitter: {scale, max, spread, tiles, params}}).
+//
+// Particle source 3, ported from PWClient.exe (docs/spec/particles.md; InitPart 0x709740, ProcPart 0x707e30,
+// Process 0x704a10). The emitter's vector ("scale" in the file) is its velocity: particles start on a disk of radius
+// x in the emitter's plane (sphere, hemisphere, ring by flag) and fly off with 0.7 z along its axis, tilted outwards
+// by "spread"; drag, then gravitation (world units, positive = down), centre suction; size grows by size_increase
+// per second; fade_in / fade_out are shares of the life; flag 0x80 starts all particles together (a burst). The
+// particles live in the emitter's frame (they move with their model) unless flag 0x80000 puts them in the world.
+// The game draws a sprite a quarter of "size" high.
 //
 // Emitters are tracked when a model is cloned (assets.js cloneModel -> track) or placed as a landscape object
 // (props.js -> addStatic). Only emitters near the camera spray; a hidden node (building state, epoch, damage stage:
@@ -27,11 +30,18 @@ const MAX_SHARE = 0.5;
 const FIRING = 1 << 16;
 const ATTACK = /attack|shoot/;
 
+// flags of particle source 3 (parameter "flags"; docs/spec/particles.md)
+const F = {
+  SPHERE: 0x1, SPHERE_VEL: 0x2, KEEP_POS: 0x4, KEEP_ROT: 0x8, KEEP_SIZE: 0x10, KEEP_TILE: 0x20, RADIAL_VEL: 0x40,
+  BURST: 0x80, TILE_FWD: 0x100, RING: 0x200, TILE_BACK: 0x400, TILE_PING: 0x800, TILE_PONG: 0x1000, KEEP_COLOR: 0x2000,
+  FADE_ALPHA: 0x4000, FADE_BOTH: 0x8000, RADIAL_H: 0x10000, UP_ONLY: 0x20000, BELOW: 0x40000, WORLD: 0x80000,
+  SUCK_ORIGIN: 0x200000, HEMI: 0x800000, STILL: 0x2000000, LOCAL_GRAV: 0x4000000, EDGE_SPEED: 0x8000000,
+  NO_Y: 0x10000000, ALONG_VEL: 0x20000000,
+};
 // Sprites are quads (one instance each): as wide as their atlas cell is to its height, hung at the cell's pivot
 // (the atlas record's pivot x / y + 127: -127 .. 127 from the cell's middle to its edge, the rays of the healing aura
-// stand on their foot) and turned to the camera - or, for emitters with flag bit 29 (UPRIGHT: the light rays of
-// fx_heal_area, the roots' and monoliths' rays), standing upright and only turned about the vertical axis.
-const UPRIGHT = 1 << 29;
+// stand on their foot) and turned to the camera. Flag ALONG_VEL turns a sprite so that it points the way it flies on
+// the screen (sparks, the rising rays of the healing aura).
 const VERT = `
 attribute vec2 corner;
 attribute vec3 aPos; attribute float aSize; attribute float aAlpha; attribute vec3 aColor; attribute vec2 aTile; attribute float aRot;
@@ -94,14 +104,14 @@ class Batch {
     scene.add(this.mesh);
     this.n = 0;
   }
-  push(p, a, x) {
+  push(d, x) {
     if (this.n >= MAX_PER_BATCH) return;
     const i = this.n++;
-    this.pos[i * 3] = p.p.x; this.pos[i * 3 + 1] = p.p.y; this.pos[i * 3 + 2] = p.p.z;
-    this.size[i] = p.size; this.alpha[i] = a; this.rot[i] = p.rot;
-    this.color[i * 3] = p.c[0]; this.color[i * 3 + 1] = p.c[1]; this.color[i * 3 + 2] = p.c[2];
-    this.tile[i * 2] = p.tx; this.tile[i * 2 + 1] = p.ty;
-    this.pivot[i * 3] = x.pivot[0]; this.pivot[i * 3 + 1] = x.pivot[1]; this.pivot[i * 3 + 2] = x.upright ? 1 : 0;
+    this.pos[i * 3] = d.w.x; this.pos[i * 3 + 1] = d.w.y; this.pos[i * 3 + 2] = d.w.z;
+    this.size[i] = d.size; this.alpha[i] = d.a; this.rot[i] = d.rot;
+    this.color[i * 3] = d.c[0]; this.color[i * 3 + 1] = d.c[1]; this.color[i * 3 + 2] = d.c[2];
+    this.tile[i * 2] = d.tx; this.tile[i * 2 + 1] = d.ty;
+    this.pivot[i * 3] = x.pivot[0]; this.pivot[i * 3 + 1] = x.pivot[1]; this.pivot[i * 3 + 2] = 0;
   }
   flush() {
     for (const k in this.attrs) {
@@ -113,8 +123,9 @@ class Batch {
   }
 }
 
-const rnd = (v) => (Math.random() * 2 - 1) * v;
-const _v = new THREE.Vector3(), _m = new THREE.Matrix4(), _s = new THREE.Sphere();
+const _v = new THREE.Vector3(), _m = new THREE.Matrix4(), _s = new THREE.Sphere(), _w = new THREE.Vector3(), _d = new THREE.Vector3();
+const _g = new THREE.Vector3(), _q = new THREE.Quaternion(), _n3 = new THREE.Matrix3(), _view = new THREE.Matrix3();
+const _draw = { w: _w, size: 0, a: 0, c: [1, 1, 1], tx: 0, ty: 0, rot: 0 };
 
 export class Particles {
   constructor(scene) {
@@ -163,8 +174,12 @@ export class Particles {
     const T = (e.tiles && e.tiles[0]) || {};
     if (!T.tex) return x;
     const P = e.params || {};
-    Object.assign(x, { e, P, T, parts: [], acc: Math.random(), idle: 0, anims: e.anims ? new Set(e.anims.map((a) => a.toLowerCase())) : null, fire: !!(attr & FIRING) && !!x.node,
-      pivot: [((T.mid_x ?? 127) - 127) / 127, ((T.mid_y ?? 127) - 127) / 127], upright: !!((P.flags >>> 0) & UPRIGHT) });
+    const fl = (P.flags >>> 0) || 0, sc = e.scale || [0, 0, 0], X = Math.max(sc[0], 0.01), sp = e.spread || 0;
+    Object.assign(x, { e, P, T, F: fl, parts: [], started: false, idle: 0, anims: e.anims ? new Set(e.anims.map((a) => a.toLowerCase())) : null, fire: !!(attr & FIRING) && !!x.node,
+      pivot: [((T.mid_x ?? 127) - 127) / 127, ((T.mid_y ?? 127) - 127) / 127],
+      // the outward tilt of the default velocity (constructor 0x707d06); a spread of -pi/2 or less: none
+      k: sp > -Math.PI / 2 ? Math.hypot(0.7 * sc[2], X) * Math.sin(sp) / X : null,
+      cnt: (T.tile_last || 0) + 1, gw: 1 << (T.tiles_w_log2 || 0) });
     if (x.anims && !x.node) return x;                          // a landscape object plays no animation
     this.emitters.push(x);
     return x;
@@ -224,11 +239,25 @@ export class Particles {
       this.step(x, dt, M, near);
       const b = this.batch(x.T);
       if (!b.b) continue;
+      const ws = Math.cbrt(Math.abs(M.determinant())) || 1;
+      if (x.F & F.ALONG_VEL) _view.setFromMatrix4(camera.matrixWorldInverse);
+      _n3.setFromMatrix4(M);
       for (const p of x.parts) {
+        if (!p.vis || p.size < 0.0001) continue;
         if (budget.n <= 0 || budget.area <= 0) break;
-        const px = Math.min(maxPx, p.size * scale / Math.max(0.5, p.p.distanceTo(eye)));
+        if (p.world) _w.copy(p.p); else _w.copy(p.p).applyMatrix4(M);
+        const size = p.size / 4 * ws;                                  // (a quarter of "size" high)
+        const px = Math.min(maxPx, size * scale / Math.max(0.5, _w.distanceTo(eye)));
         budget.n--; budget.area -= px * px;
-        b.b.push(p, p.a, x);
+        let rot = p.rot;
+        if (x.F & F.ALONG_VEL) {
+          // pointing the way it flies on the screen (0x707e30: the screen angle of pos -> pos + v, plus "rotate")
+          _d.copy(p.v); if (!p.world) _d.applyMatrix3(_n3);
+          _d.applyMatrix3(_view);
+          rot = (_d.x || _d.y ? Math.atan2(-_d.x, _d.y) : 0) + (x.P.rotate || 0);
+        }
+        _draw.size = size; _draw.a = p.a; _draw.c = p.c; _draw.tx = p.tx; _draw.ty = p.ty; _draw.rot = rot;
+        b.b.push(_draw, x);
       }
     }
     this.emitters = keep;
@@ -255,54 +284,133 @@ export class Particles {
     return !c || (!!c.cur && c.cur.isRunning() && ATTACK.test(c.curName || ''));
   }
   static attached(node) { for (let o = node; o; o = o.parent) if (o.isScene) return true; return false; }
-  // move the living sprites, start new ones
+  // one frame of a source (Process 0x704a10): every particle slot moves (ProcPart); a dead one starts again (InitPart)
+  // when the source may emit, else it stays hidden. emit: the source is shown and near the camera.
   step(x, dt, M, emit) {
-    const P = x.P, T = x.T, e = x.e;
-    const life = Math.max(0.1, P.life_time || 1);
-    const ws = Math.cbrt(Math.abs(M.determinant())) || 1;                 // the model's scale in the world
-    const grav = (P.gravitation || 0) * ws, drag = P.drag || 0;
+    dt = Math.min(1, dt);
+    if (dt < 0.001) return;
+    const P = x.P, max = Math.max(1, x.e.max || 1);
+    let can = emit;
+    if (P.emit_timer > 0) {
+      can = false;
+      x.timer = (x.timer || 0) + dt;
+      if (x.timer >= P.emit_timer) { can = emit; x.timer = P.emit_timer_var ? Math.random() * P.emit_timer_var * P.emit_timer : 0; }
+    }
+    // the first look: every slot starts (a continuous source at random ages, a burst all at once)
+    if (!x.started) {
+      if (!emit) return;
+      x.started = true;
+      x.parts = [];
+      for (let i = 0; i < max; i++) { const p = { p: new THREE.Vector3(), v: new THREE.Vector3(), c: [1, 1, 1], base: [1, 1, 1] }; this.init(x, p, false, M); x.parts.push(p); }
+      x.live = max;
+      return;
+    }
+    this.gravity(x, M, dt);
     for (const p of x.parts) {
-      p.age += dt;
-      p.v.y -= grav * dt;
-      if (drag) p.v.multiplyScalar(Math.max(0, 1 - drag * dt));
-      p.p.addScaledVector(p.v, dt);
-      p.rot += p.rs * dt;
+      let re = false;
+      if (!this.proc(x, p, dt)) { this.init(x, p, true, M); re = true; if (!can) { p.vis = false; p.emitted = false; } }
+      if ((x.F & F.BURST) && can && !p.emitted) { this.init(x, p, false, M); re = true; }
+      if (!re) this.look(x, p);
     }
-    x.parts = x.parts.filter((p) => p.age < p.life);
-    if (emit) {
-      x.acc += dt * Math.max(1, e.max || 1) / life;
-      while (x.acc >= 1) {
-        x.acc -= 1;
-        if (x.parts.length >= (e.max || 1)) { x.acc = 0; break; }
-        x.parts.push(this.spawn(x, M, ws, life));
-      }
-    }
-    const n = (T.tile_last || 0) + 1, gw = 1 << (T.tiles_w_log2 || 0);
-    for (const p of x.parts) {
-      const t = p.age / p.life;
-      p.size = Math.max(0.05 * p.s0, p.s0 + (P.size_increase || 0) * p.k * Math.pow(t, Math.pow(2, P.size_inc_exp || 0)));
-      let a = p.a0;
-      const fi = P.fade_in || 0, fo = P.fade_out || 0;
-      if (fi > 0 && t < fi) a *= t / fi;
-      if (fo > 0 && t > 1 - fo) a *= (1 - t) / fo;
-      p.a = a;
-      const f = (T.tile_start || 0) + (n > 1 ? Math.floor(t * n * Math.max(1, P.tile_anim_speed || 1)) % n : 0);
-      p.tx = f % gw; p.ty = Math.floor(f / gw);
-    }
+    x.live = 0;
+    for (const p of x.parts) if (p.vis) x.live++;
+    // nothing left in flight and nothing to emit: it starts afresh when it may emit again
+    if (!x.live && !emit) { x.started = false; x.parts = []; }
   }
-  spawn(x, M, ws, life) {
-    const P = x.P, s = x.e.scale || [0, 0, 0];
-    // a point of the emitting volume (glTF node frame: the GSF axes of the emitter)
-    const p = new THREE.Vector3(rnd(s[0]), rnd(s[1]), rnd(s[2])).applyMatrix4(M);
-    const sp = P.speed_var || 0;
-    const v = new THREE.Vector3(rnd(1), rnd(1), rnd(1)).normalize().multiplyScalar(sp * Math.random() * ws);
-    const sv = P.size_var || 0;
-    const cv = (k) => Math.min(1, Math.max(0, ((P['color_' + k] ?? 255) + rnd(P['color_var_' + k] || 0)) / 255));
-    return {
-      p, v, age: 0, life: life * (1 + rnd(P.life_time_var || 0)),
-      s0: Math.max(0.05, ((P.size || 1) / 4) * ws * Math.max(0.2, 1 + rnd(sv / 2))), k: ws / 4,     // size units -> m
-      a0: (P.alpha ?? 255) / 255, c: [cv('r'), cv('g'), cv('b')],
-      rot: Math.random() * Math.PI * 2, rs: rnd(P.rotate || 0), size: 0, a: 0, tx: 0, ty: 0,
-    };
+  // gravitation for this frame in the particles' frame: world down (three.js -y), or the emitter's own -z
+  gravity(x, M, dt) {
+    const g = x.P.gravitation || 0;
+    x.gv = null;
+    if (!g) return;
+    if (x.F & F.LOCAL_GRAV) { x.gv = _g.set(0, 0, -g * dt).clone(); return; }
+    x.gv = new THREE.Vector3(0, -g * dt, 0);
+    x.gvw = x.gv.clone();                                   // (world-space particles)
+    x.gv.applyMatrix3(_n3.setFromMatrix4(M).invert());
+  }
+  // ProcPart: age, motion, then the look; false = its life is over
+  proc(x, p, dt) {
+    const P = x.P, fl = x.F;
+    if (p.life > 0) {
+      p.age += dt;
+      if (p.age >= p.life) { p.age %= p.life; p.vis = false; return false; }
+    }
+    if (!(fl & F.STILL)) {
+      if (P.drag) p.v.multiplyScalar(1 - Math.min(1, P.drag * dt));
+      if (x.gv) p.v.add(p.world && !(fl & F.LOCAL_GRAV) ? x.gvw : x.gv);
+      if (P.center_suck) {
+        _d.set(0, 0, 0).sub(p.p);                            // (towards the emitter: its origin in its own frame)
+        if (P.suck_vel > 0) _d.addScaledVector(p.v, -P.suck_vel);
+        p.v.addScaledVector(_d, P.center_suck * dt);
+      }
+      p.p.addScaledVector(p.v, dt);
+    }
+    if (P.rotate > 0) { const s = (P.rotate + p.rv * (P.rotation_var || 0)) * dt; p.rot += p.rot > 0 ? s : -s; if (p.rot > 6.2832) p.rot -= 6.2832; else if (p.rot < -6.2832) p.rot += 6.2832; }
+    if (P.size_increase) p.size += dt * P.size_increase * (P.size_inc_exp ? Math.pow(p.age, P.size_inc_exp) : 1);
+    return true;
+  }
+  // fade and tile of a particle (the end of ProcPart / InitPart)
+  look(x, p) {
+    const P = x.P, fl = x.F, life = p.life;
+    let a = 1;
+    if (P.fade_in > 0 && p.age < P.fade_in * life) a = p.age / (P.fade_in * life);
+    if (P.fade_out > 0 && p.age > life - P.fade_out * life) a = (life - p.age) / (P.fade_out * life);
+    a = Math.max(0, Math.min(1, a));
+    const al = (P.alpha ?? 255) / 255;
+    const fa = fl & (F.FADE_BOTH | F.FADE_ALPHA), fc = !(fl & F.FADE_ALPHA) || (fl & F.FADE_BOTH);
+    p.a = fa ? al * a : al;
+    for (let k = 0; k < 3; k++) p.c[k] = fc ? p.base[k] * a : p.base[k];
+    const n = x.cnt;
+    let f = p.tile0;
+    if (n > 1 && life > 0) {
+      const t = Math.floor((P.tile_anim_speed ?? 1) * p.age * n / life);
+      if (fl & F.TILE_FWD) f = t % n;
+      else if (fl & F.TILE_BACK) f = n - 1 - (t % n);
+      else if (fl & (F.TILE_PING | F.TILE_PONG)) { const m = t % (2 * n), q = m < n ? m : 2 * n - 1 - m; f = fl & F.TILE_PING ? q : n - 1 - q; }
+    }
+    f += x.T.tile_start || 0;
+    p.tx = f % x.gw; p.ty = Math.floor(f / x.gw);
+  }
+  // InitPart: where it starts and how it flies (in the emitter's frame: x, y its plane, z its axis)
+  init(x, p, re, M) {
+    const P = x.P, fl = x.F, sc = x.e.scale || [0, 0, 0];
+    p.vis = true; p.emitted = true;
+    const w = Math.random() * Math.PI * 2, u = Math.random(), r = Math.sqrt(u) * sc[0];
+    const sx = Math.sin(w) * r, cy = Math.cos(w) * r;
+    let A = 0, B = 0, C = 0;
+    if ((fl & F.SPHERE_VEL) || ((fl & 0x810041) && !(fl & F.KEEP_POS))) { A = sx; B = cy; C = (Math.random() < 0.5 ? -1 : 1) * Math.random() * Math.sqrt(1 - u) * sc[0]; }
+    if (!(re && (fl & F.KEEP_POS))) {
+      if (fl & F.SPHERE) p.p.set(A, B, C);
+      else if (fl & F.HEMI) p.p.set(A, B, Math.abs(C));
+      else if (fl & F.RING) { const l = Math.hypot(sx, cy) || 1; p.p.set(sx / l * sc[0], cy / l * sc[0], 0); }
+      else p.p.set(sx, cy, 0);
+      p.world = false;
+    }
+    // the "unturned" velocities are along the model's axes: into the emitter's frame with its inverse turn
+    const unturned = () => { if (x.node) p.v.applyQuaternion(_q.copy(x.node.quaternion).invert()); };
+    if (fl & F.RADIAL_H) { p.v.set(A, B, 0); if (p.v.lengthSq()) p.v.normalize(); p.v.multiplyScalar(sc[2]); unturned(); }
+    else if (fl & F.RADIAL_VEL) { p.v.set(A, B, C); if ((fl & F.UP_ONLY) && p.v.z < 0) p.v.z = -p.v.z; if (p.v.lengthSq()) p.v.normalize(); p.v.multiplyScalar(sc[2]); unturned(); }
+    else if (fl & F.SPHERE_VEL) { p.v.set(A, B, C).multiplyScalar(0.7 * sc[2] / Math.max(sc[0], 1e-4)); if ((fl & F.UP_ONLY) && p.v.z < 0) p.v.z = -p.v.z; unturned(); }
+    else {
+      let hx = sx, hy = cy;
+      if (fl & F.NO_Y) hy = 0;
+      if ((fl & F.EDGE_SPEED) && r > 0) { hx *= sc[0] / r; hy *= sc[0] / r; }
+      if (x.k != null) { hx *= x.k; hy *= x.k; }
+      p.v.set(hx, hy, 0.7 * sc[2]);
+    }
+    const life = Math.max(0, P.life_time || 0);
+    p.life = life * (P.life_time_var > 0 ? 1 - Math.random() * P.life_time_var : 1);
+    if (fl & F.BURST) p.age = 0; else if (!re) p.age = Math.random() * p.life;
+    if (!(re && (fl & F.KEEP_TILE))) p.tile0 = (fl & (F.TILE_FWD | F.TILE_PING)) ? 0 : (fl & (F.TILE_BACK | F.TILE_PONG)) ? x.cnt - 1 : Math.floor(Math.random() * x.cnt);
+    if (!(re && (fl & F.KEEP_SIZE))) p.size = (P.size || 1) * (1 + (P.size_var ? Math.random() * P.size_var : 0));
+    if (!(re && (fl & F.KEEP_COLOR))) for (const [k, c] of [[0, 'r'], [1, 'g'], [2, 'b']]) {
+      const vr = P['color_var_' + c] | 0;
+      p.base[k] = Math.max(0, (P['color_' + c] ?? 255) - (vr > 0 ? Math.floor(Math.random() * 32768) % vr : 0)) / 255;
+    }
+    if (P.speed_var > 0) p.v.multiplyScalar(1 + Math.random() * P.speed_var);
+    if (fl & F.WORLD) { p.p.applyMatrix4(M); p.v.applyMatrix3(_n3.setFromMatrix4(M)); p.world = true; }
+    p.rv = Math.random();
+    if (!P.rotate) p.rot = 0;
+    else if (!(re && (fl & F.KEEP_ROT))) p.rot = P.emit_rot_inc ? (x.rotAcc = (x.rotAcc || 0) + P.emit_rot_inc * Math.PI / 180) : (Math.random() - 0.5) * 2 * Math.PI;
+    this.look(x, p);
   }
 }

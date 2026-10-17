@@ -683,9 +683,9 @@ export class Input {
   sequelClick(units, t) {
     const G = this.G;
     if (!t || t.kind !== 'unit' || !(t.sqAsleep > G.sequel.time)) return false;
+    // a sleeping creature: the capture trucks drive up to load it; nobody else attacks it, they just go there
     const trucks = units.filter((u) => /capture/.test(u.name));
-    if (!trucks.length) return false;
-    G.order(trucks, { type: 'move', x: t.pos.x, z: t.pos.z });
+    G.order(trucks.length ? trucks : units, { type: 'move', x: t.pos.x, z: t.pos.z });
     G.overlay.marker(t.pos.x, t.pos.z, 0x7dff6a);
     return true;
   }
@@ -749,6 +749,7 @@ export class Input {
     }
     if (mode === 'place') {
       if (!this.ghost || !this.ghost.ok) { G.hud.message('Cannot build here', 'bad'); G.feedback.error(); return; }
+      if (this.ghost.action.freeMain) { if (G.placeFreeMain(this.ghost.action, this.ghost.x, this.ghost.z, this.ghost.rot)) this.setMode(null); return; }
       const ok = G.placeBuilding(this.ghost.action, this.ghost.x, this.ghost.z, this.ghost.rot, units.filter((u) => u.canBuild), shift);     // (Taslow and the Dustriders' fighters build too)
       if (ok && !shift) this.setMode(null);
       return;
@@ -891,6 +892,8 @@ export class Input {
     }
     gh.obj.position.set(gh.x, G.world.height(gh.x, gh.z), gh.z);
     gh.obj.rotation.y = gh.rot;
+    // a waiting mobile base (main.js freeMainActions): where the ground is free (a waiting building: the building rules)
+    if (gh.action.freeMain && gh.action.freeMain.kind === 'unit') { gh.ok = !!(G.campaign && G.campaign.freeMainOk(gh.action.freeMain, gh.x, gh.z)); gh.mat.color.setHex(gh.ok ? 0x60ff60 : 0xff4040); return; }
     // coastal buildings (harbours) snap to the shore: show the ghost where it will really stand
     const ws = this.myUnits().filter((u) => u.canBuild);
     const from = ws.length ? [ws.reduce((s, u) => s + u.pos.x, 0) / ws.length, ws.reduce((s, u) => s + u.pos.z, 0) / ws.length] : null;

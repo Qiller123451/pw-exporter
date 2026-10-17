@@ -603,6 +603,8 @@ export class Building extends Entity {
     this.idleAnim();
     this.slots = this.linkSlots('Bl_');
     this.partsKey = null;
+    // a wall piece of a new class (WallClassChanged: the tile's parts and pathfinder boxes again, from the new model)
+    if (this.def.wallKind === 'wall' && this.tile && this.relocate) { this.relocate(); this.world.wallMap.update(...this.tile); }
     this.updateTurret();
   }
   get isDropoff() { return this.built && this.def.delivery && this.def.delivery.length > 0; }
