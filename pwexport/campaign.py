@@ -21,7 +21,7 @@ The document (SCHEMA 'pw-campaign/1', field by field in docs/CAMPAIGN_FORMAT.md 
     warnings     what could not be resolved
 
 What the triggers MEAN (how to run a mission from this document) is specified in remake/docs/spec/triggers.md.
-Coordinates are map coordinates: x east, y north, z up (metres); rotations as in ula.py. Levels of objects are
+Coordinates are map coordinates: x east, y south, z up (metres; left-handed, docs/MAP_FORMAT.md); rotations as in ula.py. Levels of objects are
 0-based (level 0 = the game's "level 1").
 
 The reader degrades gracefully: without an installation (or with an incomplete one) the texts, dialogue scenes and
@@ -790,11 +790,17 @@ def campaign_maps(install):
     Cpn_single_* folders that the list does not name follow in file order."""
     if isinstance(install, str):
         install = Install(install)
+    # a map of the same path in a later folder of the configuration replaces the earlier one, as in the game
+    # (MIRAGE ships its own Cpn_single_001/single_*.ula); folders outside the configuration only fill gaps
+    chain = [m.lower() for m in getattr(install, 'mods', [])]
+    rank = lambda e: chain.index(e['pack'].lower()) if e['pack'].lower() in chain else -1
     found = {}
     for e in install.maps():
         mm = re.search(r'(^|/)cpn_single_\d+/([^/]+)\.ula$', e['rel'].replace('\\', '/').lower())
         if mm:
-            found.setdefault(mm.group(2) + '.ula', e)
+            k = mm.group(2) + '.ula'
+            if k not in found or rank(e) > rank(found[k]):
+                found[k] = e
     order = []
     p = install.file('Scripts/Server/settings/Campaigns.txt')
     if p:

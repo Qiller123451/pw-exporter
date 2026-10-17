@@ -6,7 +6,11 @@ community maps. The formal description is in Kaitai Struct: [`paraworld_ula.ksy`
 checks them against real files. Readers: `pwexport/ula.py` (Python, the exporter's map viewer) and
 `remake/src/game/maps/ula.js` (the remake).
 
-All numbers are little endian. Map coordinates: x east 0..width, y north 0..height, z up, metres.
+All numbers are little endian. Map coordinates: x east 0..width, **y south** 0..height (y 0 = the north edge), z up,
+metres - a left-handed space, the Direct3D way; the models (GSF) are left-handed too. Read with y north, everything
+comes out mirrored: the multiplayer preview pictures (rotated by the default camera's 45 degrees) and the heightmap
+row order show it, and right-hand weapons only land in the right hand this way. In a right-handed Y-up viewer
+(glTF: X east, -Z north) a map point (x, y, z) is (x - w/2, z, y - h/2) and a model's (x, y, z) is (-x, z, -y).
 
 ## Container
 
@@ -47,7 +51,7 @@ the tree (`SURF` = the start of the map data; nested trees count from their own 
 |---|---|
 | `LInf` | level info (below) |
 | `Terr` | terrain (below) |
-| `PaFi` | pathfinding grid |
+| `PaFi` | the pathfinder's grids: where land units can walk (below) |
 | `Rgns` | named regions, e.g. each nest's `Nest_<kind>_<n>_ActionArea / SafeArea / HotspotArea / ToleranceArea` |
 | `Frst` | forest blocks: 32 m squares of forest, with the state of their 15 trees and 16 undergrowth plants (below) |
 | `Objs` | placed objects (below) |
@@ -85,12 +89,36 @@ u32 setting                   0 Northland, 1 Savanna, 2 Jungle, 3 Icewaste, 4 As
 f32 water level               (metres; 16 on most maps)
 u32 ?, u8 ?
 u32 count, u16 heights[count] 1/128 m per unit, 2 m grid, stored in 16x16 blocks (blocks row by row from the
-                              south-west corner, samples row by row inside a block)
+                              corner at x 0, y 0 - the north-west -, samples row by row inside a block)
 u32 count, u8  materials[count] 4 m grid, stored in 8x8 blocks the same way
 ```
 
 Material values index the setting's 8 ground materials – the columns of the setting's
 `Texture/Scape/<Setting>/ScapeTexture<Q>.dat` table (see `pwexport/scape.py`).
+
+### PaFi – pathfinding grids
+
+The map editor stores the pathfinder's grids with the map (chunk version 4 in every map of the game). Cells are 2 m:
+`W = width / 2` by `H = height / 2`, cell (i, j) covers map x `2i .. 2i + 2`, y `2j .. 2j + 2`.
+
+```
+u32 W, u32 H, u32 a, u32 b                 a, b = 9 / 4, 10 / 5, 11 / 6 or 12 / 7 (grows with the map size; ?)
+grid: u32 W, u32 H, u32 words, u32[words]  words = ceil(W * H / 32); one bit per cell, row-major, lowest bit first
+...                                        the land grid is followed by data starting with u32 10 (not decoded)
+grid                                       2nd grid (bit set on shallow and deep water of rivers, few cells; ?)
+u32 W, u32 H, u32 15000, ...               (not decoded)
+per start location: u32 x, u32 y, u32 110, grid
+```
+
+* **The first grid is walkable terrain**: 1 = land units can walk there. Steep slopes (mountains, cliffs, the shore)
+  and water deeper than about 0.6 m are 0; shallow fords are 1. It is not a plain slope limit (a threshold of about
+  22 degrees between the four corner heights gets 91 % of the cells right), so the editor's own grid is the one to use.
+  Checked on `advocate`: the mountains of the heightmap are exactly the holes of the grid.
+* The grids per start location (x, y = the start in cells) are the first grid minus the placed objects (forests,
+  buildings, walls) and the areas not reachable from that start - the objects' own blocking is what the game adds at
+  run time.
+* Readers: `pwexport.ula.pathing()`, the remake's `maps/ula.js pathing()`; the remake blocks the cells that are 0
+  for land units (`World.markTerrain`).
 
 ### Objs – placed objects
 
@@ -130,8 +158,9 @@ u8[16]  guid
 
 **Rotations.** The engine multiplies row vectors (Direct3D), so the stored quaternion turns a model the other way
 round than the usual column-vector reading: apply its **conjugate** (-x, -y, -z, w). The heading of an upright object
-(counter-clockwise from east, map x east / y north) is `-2 * atan2(z, w)`. In a Y-up world with X east and -Z north
-(glTF) the rotation is the quaternion `(-x, -z, y, w)`. Evidence: gates only line up with their wall pieces this way,
+(from east towards south, i.e. clockwise as seen from above) is `-2 * atan2(z, w)`. In a Y-up world with X east and
+-Z north (glTF), with map and models mirrored as above, the rotation is `(x, z, y, w) * Ry(pi)` = `(-y, w, x, -z)`
+(normalised): an upright object at heading `rot` turns by `pi - rot` about Y. Evidence: gates only line up with their wall pieces this way,
 harbours face the water, and tilted plateau pieces sink their skirts into the ground instead of floating above it
 (the "hollow" terrain of the untilted / mirrored reading). `pwexport.ula.rotation_matrix(q)` gives the 3 x 3 matrix.
 
@@ -241,17 +270,18 @@ bushes, fish, animals, starts and bases, and the set of models to load. The rema
 
 ```
 game x = map x - W/2
-game z = H/2 - map y
-rotation = -2 * atan2(qz, qw)        (props: the full quaternion, (-qx, -qz, qy, qw) in game space)
+game z = map y - H/2                 (three.js: -z = north; the map's y runs south)
+heading = pi - rot, rot = -2 * atan2(qz, qw)   (props: the full quaternion, game/maps/frame.js mapQuat)
 ```
 
-(the toolkit's map exports use the same centre, with -Z = north in the glTF convention.)
+(the toolkit's map exports use the same centre and axes.)
 
 Forest blocks (`maps/forest.js`, the twin of `pwexport/forest.py`): every standing tree of a block becomes a tree of
 the map source like a placed one - same models, stump, timber and wood. The layouts and the kinds per setting come
 from `forest.json`, which the pipeline step "forest" builds from the player's installation.
 
-Water: a cell deeper than 0.4 m blocks land units; ships need 1.5 m. Maps larger than 1400 m use a 4 m pathing cell.
+Walkability: land units walk where the map's PaFi grid lets them (above); without one (generated maps) a cell deeper
+than 0.4 m in the water blocks them. Ships need 1.5 m. Maps larger than 1400 m use a 4 m mesh cell.
 
 The toolkit's server lists every map in the installation's `Data/<pack>/Maps/` folders (`Base`, `BoosterPack1`,
 mods like `MIRAGE` ...) as `maps/<pack>/<path>.ula` in `maps/index.json`, so maps installed into the game the usual

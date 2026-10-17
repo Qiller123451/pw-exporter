@@ -121,13 +121,14 @@ try {
   W.kill(sp, null); for (const u of W.units) if (u.alive && u.name === 'arena_gallimimus') C.remove(u);
   run(1);
   ok(v('wave_dead') === '1' && grp.size === 0 && v('no_chtr') === '1', 'CKGR <1: the group is empty after the last member died; REGN <1 for the owner');
-  // ---- a healing well of the arena: a hurt hero standing next to it is healed out of the well's store
+  // ---- a healing well of the arena: a hurt hero sent to it is healed out of the well's store (systems/landmarks.js)
   {
-    const well = E.wells[0], [wx, wy] = C.toMap(well.pos[0], well.pos[1]);
+    const well = W.wells[0], [wx, wy] = C.toMap(well.pos.x, well.pos.z), F = well.well;
     W.setHp(bela, 33);
-    C.teleport(bela, wx + 3, wy + 2);
-    run(1.5);
-    ok(E.wells.length === 3 && bela.hp === bela.maxHp && well.fill < well.max && well.fill > well.max - bela.maxHp, `healing well: Béla is healed (${Math.round(bela.hp)} hp), the well has ${Math.round(well.fill)} of ${well.max} left and refills in ${well.refill} s`);
+    C.teleport(bela, wx + 8, wy + 6);
+    W.order([bela], { type: 'fountain', target: well });
+    for (let i = 0; i < 40 && bela.task.type === 'fountain'; i++) run(0.5);
+    ok(W.wells.length === 3 && bela.hp === bela.maxHp && F.fill < F.max && F.fill >= F.max - bela.maxHp - F.max / F.refill * 3, `healing well: Béla is healed (${Math.round(bela.hp)} hp), the well has ${Math.round(F.fill)} of ${F.max} left and refills in ${F.refill} s`);
   }
   // ---- debug helpers
   ok(D.list('t once').length === 1 && D.trigger('t once').fired === 1 && D.log(5).length === 5 && typeof D.print(3) === 'string', 'debug: list / trigger / log / print');

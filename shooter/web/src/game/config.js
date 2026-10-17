@@ -513,8 +513,11 @@ export const CFG = {
   tracks: {
     Aje: { fight: ['36_combat_aje_1', '42_combat_aje_2', '48_var_combat_aje_1', '38_combat_seas_1', '50_var_combat_seas_1', '37_combat_ninigi_1'],
       boss: ['39_combat_dinos', '40_combat_heroes'], ride: ['40_combat_heroes', '38_combat_seas_1'] },
+    Ninigi: { fight: ['37_combat_ninigi_1', '43_combat_ninigi_2', '49_var_combat_ninigi_1', '38_combat_seas_1', '50_var_combat_seas_1', '42_combat_aje_2'],
+      boss: ['39_combat_dinos', '40_combat_heroes'], ride: ['40_combat_heroes'] },
     Hu: { fight: ['35_combat_hu_1', '41_combat_hu_2', '47_var_combat_hu_2', '38_combat_seas_1', '50_var_combat_seas_1', '43_combat_ninigi_2'],
       boss: ['40_combat_heroes', '39_combat_dinos'], ride: ['39_combat_dinos', '40_combat_heroes', '49_var_combat_ninigi_1'] },
   },
-  settings: { quality: 'high', difficulty: 'normal', sensitivity: 1, invertY: false, volume: 0.8, music: true, blood: true, numbers: true },
+  // models: '' the originals | 'hd' | 'remodel' - the HD versions where there are some (pwexport/hd)
+  settings: { quality: 'high', difficulty: 'normal', sensitivity: 1, invertY: false, volume: 0.8, music: true, blood: true, numbers: true, models: '' },
 };

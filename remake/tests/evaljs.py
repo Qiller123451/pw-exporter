@@ -1,4 +1,5 @@
-"""Load the game headless and evaluate a JS snippet file: python3 tests/evaljs.py file.js [url options]"""
+"""Load the game headless and evaluate a JS snippet file: python3 tests/evaljs.py file.js [url options]
+A first line "// include: other.js" puts that file (next to it) in front of the snippet."""
 import os as _os
 try:
     import fcntl as _f; _lk = open(_os.environ.get('PWR_LOCK', '/tmp/pwr_browser.lock'), 'w'); _f.flock(_lk, _f.LOCK_EX)   # one headless browser at a time (memory)
@@ -6,7 +7,7 @@ except ImportError:
     pass
 import sys, time
 from playwright.sync_api import sync_playwright
-url = 'http://127.0.0.1:' + __import__('os').environ.get('PWR_PORT', '8411') + '/index.html?manual&reveal' + (sys.argv[2] if len(sys.argv) > 2 else '&tribe=Hu&enemy=Aje')
+url = 'http://127.0.0.1:' + __import__('os').environ.get('PWR_PORT', '8411') + '/' + __import__('os').environ.get('PWR_PAGE', 'index.html') + '?manual&reveal' + (sys.argv[2] if len(sys.argv) > 2 else '&tribe=Hu&enemy=Aje')
 with sync_playwright() as p:
     b = p.chromium.launch(args=['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'])
     pg = b.new_page(viewport={'width': 1280, 'height': 720})
@@ -20,6 +21,10 @@ with sync_playwright() as p:
         if st and st != 'loading': break
         time.sleep(1)
     print('state', st)
-    print(pg.evaluate('(async () => {' + open(sys.argv[1]).read() + '})()'))
+    src = open(sys.argv[1]).read()
+    m = __import__('re').match(r'//\s*include:\s*(\S+)', src)        # "// include: campaign_bot.js": helpers in front
+    if m:
+        src = open(_os.path.join(_os.path.dirname(_os.path.abspath(sys.argv[1])), m.group(1))).read() + '\n' + src
+    print(pg.evaluate('(async () => {' + src + '})()'))
     for l in logs[-15:]: print(l[:300])
     b.close()

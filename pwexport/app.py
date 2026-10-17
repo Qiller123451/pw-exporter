@@ -12,7 +12,8 @@ HTTP API (JSON)
     POST /api/browse                {title, initial} -> folder picked in a native dialog
     GET  /api/catalog               units / buildings with names and add-ons, tribes, formats
     GET  /api/models                every model of every archive
-    GET  /api/model?name=&archive=  converts (cached) -> {url, fourcc, anims, loops, walksets, links, flags}
+    GET  /api/model?name=&archive=  converts (cached) -> {url, fourcc, anims, loops, walksets, links, flags, hd}
+    GET  /hd/<model>/<variant>.glb  an HD version of a model (pwexport/hd: hd | remodel)
     POST /api/export                export spec -> {files}
     POST /api/open                  {path} -> opens the folder in the file manager
     GET  /api/maps                  every map of the installation (name, size, players ... cached)
@@ -44,7 +45,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
-from . import VERSION, blender, forest, glb, gsf, mapexport, mods, parts, scape, scene, ula, walls, writers
+from . import VERSION, blender, forest, glb, gsf, hd, mapexport, mods, parts, scape, scene, ula, walls, writers
 from .catalog import Catalog, ModelIndex
 from .config import Settings, cache_dir, home
 from .install import LANGS, Install
@@ -188,7 +189,9 @@ class App:
         return {'url': '/cache/' + rel, 'name': e['name'], 'archive': e['archive'], 'mod': e['mod'],
                 'copies': self.catalog.copies_json(e['name']) if self.catalog else [],
                 'fourcc': ex.get('fourcc', ''), 'anims': anims, 'loops': loops, 'walksets': ex.get('walksets') or {},
-                'links': glb.links(j), 'flags': parts.flag_groups(j), 'visible': sorted(parts.visible_nodes(j))}
+                'links': glb.links(j), 'flags': parts.flag_groups(j), 'visible': sorted(parts.visible_nodes(j)),
+                # HD versions (pwexport/hd): {'hd': url, 'remodel': url}
+                'hd': {v: '/hd/%s/%s.glb' % (e['name'].lower(), v) for v in hd.find(e['name'])}}
 
     def export(self, d):
         fmt = d['format']
@@ -383,7 +386,7 @@ class Maps:
                                      int(os.path.getmtime(os.path.join(ts.folder, 'ScapeTexture%d.dat' % ts.q))))}
 
     def ground_tiles(self, mid, q=None):
-        """the tile layout of the map's ground (scape.tile_ids): uint16 per tile, row 0 = south"""
+        """the tile layout of the map's ground (scape.tile_ids): uint16 per tile, row 0 = map y 0 (north)"""
         m = self.load(mid)
         ts, ids = scape.tile_layout(self.app.install, m.setting, m.mats, q)
         if ts is None:
@@ -559,6 +562,10 @@ def make_handler(app):
                 if p == '/api/map/groundpage':            # the url carries groundinfo's 'ver': the browser may keep it
                     return self.send_file(app.maps.ground_page(q['id'], gq, int(q.get('n') or 0)), cache=bool(q.get('v')))
                 if p == '/api/ground': return self.send_file(app.maps.ground(q.get('setting') or 'Jungle', int(q.get('k') or 0)))
+                if p.startswith('/hd/'):                  # /hd/<model>/<variant>.glb
+                    bits = p[4:].split('/')
+                    f = hd.find(bits[0]).get(bits[-1][:-4]) if len(bits) == 2 and bits[1].endswith('.glb') else None
+                    return self.send_file(f) if f else self.send_error(404)
                 if p.startswith('/cache/'):
                     root = os.path.realpath(cache_dir())
                     f = os.path.realpath(os.path.join(root, p[len('/cache/'):]))

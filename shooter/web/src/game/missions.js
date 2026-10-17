@@ -3,11 +3,13 @@
 import { CFG } from './config.js';
 import { ASSAULT } from './mission_assault.js';
 import { FROST } from './mission_frost.js';
+import { DRAGON } from './mission_dragon.js';
 
 export const MISSIONS = {
   holycity: { id: 'holycity', title: CFG.mission.title, blurb: 'Alone against the Dustriders: burn their camp before the walls, break through the gate and fight through the ruined city up to the temple.', map: CFG.map, zones: CFG.zones, mission: CFG.mission },
   assault: ASSAULT,
   frost: FROST,
+  dragon: DRAGON,
 };
 export function useMission(id) {
   const m = MISSIONS[id] || MISSIONS.holycity;

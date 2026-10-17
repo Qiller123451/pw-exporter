@@ -47,7 +47,7 @@ export class Viewer {
     this.root = new THREE.Group();
     this.scene.add(this.root);
     this.parts = [];                // {spec, gltf, obj, mixer, action, info, state}
-    this.clock = new THREE.Clock();
+    this.clock = new THREE.Timer();          // (THREE.Clock is deprecated)
     this.speed = 1; this.playing = true; this.loop = true;
     this.onTime = null;
     this.opts = { texture: true, cloth: true, links: false, coll: false, normals: false };
@@ -84,7 +84,7 @@ export class Viewer {
         const host = this.parts[spec.parent || 0];
         let link = null;
         if (host) host.obj.traverse((o) => { if (!link && o.userData.nodeName === 'link_' + spec.link) link = o; });
-        if (rootNode) rootNode.rotation.set(0, 0, 0);          // link frames are the GSF Z-up frame already
+        if (rootNode) { rootNode.rotation.set(0, 0, 0); rootNode.scale.set(1, 1, 1); }   // link frames are the GSF Z-up frame already (mirror included)
         if (rootNode && rootNode.userData.restSrc) rootNode.userData.restSrc.q.identity();
         if (rootNode && spec.offset) {                         // metres in the link's frame (GSF axes): MIRAGE's AddObjCustomized
           rootNode.position.set(spec.offset[0], spec.offset[1], spec.offset[2]);
@@ -168,6 +168,7 @@ export class Viewer {
     for (const p of this.parts) if (p.action) { p.action.time = p === this.parts[0] ? t : t % Math.max(1e-3, p.action.getClip().duration); p.mixer.update(0); }
   }
   tick() {
+    this.clock.update();
     const dt = Math.min(0.1, this.clock.getDelta());
     if (this.playing) for (const p of this.parts) {
       p.mixer.update(dt * this.speed);
@@ -294,7 +295,7 @@ export class Viewer {
         const inv = new THREE.Matrix4().copy(rootNode.matrixWorld).invert();
         const hmat = new THREE.LineBasicMaterial({ color: 0xff7a3d, depthTest: false, transparent: true, opacity: 0.8 });
         for (const n of P.flagged(p.obj)) {
-          if (P.helper(n.userData.attr >>> 0, p.fourcc) !== 'pick' && !P.isHull(n)) continue;
+          if (P.helper(n.userData.attr >>> 0, p.fourcc, P.isAdditive(n)) !== 'pick' && !P.isHull(n)) continue;
           n.traverse((m) => {
             if (!m.isMesh || m.isSkinnedMesh) return;
             const l = new THREE.LineSegments(new THREE.WireframeGeometry(m.geometry), hmat);

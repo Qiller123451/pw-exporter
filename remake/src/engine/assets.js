@@ -3,7 +3,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { isPartyMaterial } from '../game/colors.js';
-import { staticSig, helperPart, isDynamicKind, animalMask, applyMask, applyState } from './parts.js';
+import { staticSig, helperPart, todOf, isDynamicKind, animalMask, applyMask, applyState } from './parts.js';
 import { modelSprites } from './props.js';
 
 // Loads converted ParaWorld models on demand and hands out clones.
@@ -24,23 +24,67 @@ export async function initAssets(base = 'assets/') {
   Assets.manifest = await (await fetch(base + 'manifest.json')).json();
 }
 
+// GSF material flag 0x4 (docs/GSF_FORMAT.md): the picture is ADDED to what is behind it - light cones, glows, the
+// rays of the healing aura. Bright shapes on black: not lit, no depth written, alpha only where 0x1/0x2 ask for it.
+function gsfAdditive(m) {
+  const f = m && m.userData && m.userData.gsf_flags;
+  const a1 = f ? parseInt(String(f).split('/')[0], 16) : 0;
+  return a1 & 0x4 ? a1 : 0;
+}
+
 function toLambert(m, fourcc = '') {
-  if (m.isMeshLambertMaterial || m.isShaderMaterial) return m;
+  if (m.isMeshLambertMaterial || m.isShaderMaterial || m.isMeshBasicMaterial) return m;
+  const a1 = gsfAdditive(m);
+  if (a1) {
+    const g = new THREE.MeshBasicMaterial({ map: m.map, color: 0xffffff, transparent: true, depthWrite: false, side: THREE.DoubleSide,
+      blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: a1 & 0x3 ? THREE.SrcAlphaFactor : THREE.OneFactor,
+      blendDst: THREE.OneFactor, toneMapped: false, fog: false });
+    g.name = m.name; g.userData = Object.assign({}, m.userData, { glow: true });
+    return g;
+  }
   const l = new THREE.MeshLambertMaterial({
     map: m.map, normalMap: m.normalMap || null, color: m.color, transparent: m.transparent, alphaTest: m.alphaTest,
     side: m.side, depthWrite: m.depthWrite, opacity: m.opacity, vertexColors: m.vertexColors,
   });
   if (l.map) l.map.anisotropy = Assets.maxAniso;
+  // the sequel's glowing parts: the texture of the lit signs, lamps and coils (emissiveMap: art/sequel/kit.py)
+  if (m.emissive && (m.emissive.r || m.emissive.g || m.emissive.b)) { l.emissive.copy(m.emissive); l.emissiveIntensity = m.emissiveIntensity ?? 1; l.emissiveMap = m.emissiveMap || null; }
   // vegetation textures carry cut-out alpha even where the source material was flagged opaque
   // (only plants: animal skins like jng_deinonychus_a keep other data in alpha and must stay opaque, and so do the
-  // carried wood logs product_wood_* - Misc models cut from the bark area of jng_large_b, alpha 0 there)
+  // carried wood logs product_wood_* - Misc models cut from the bark area of jng_large_b, alpha 0 there - and the
+  // rock and stone textures of Texture/Land: their alpha is a gloss mask, MIRAGE's jng_hill_b made the stone
+  // deposits vanish; of Land only the grass and flower sheet jng_misc_* is cut out)
   const src = String((m.userData && m.userData.gsf_texture) || '');
-  if (/^jng_/i.test(m.name || '') && /^(Vgtn|Deko|Ress)$/.test(fourcc) && !/^animals[\\/]/i.test(src) && !l.transparent && !(l.alphaTest > 0)) { l.alphaTest = 0.5; l.side = THREE.DoubleSide; }
+  if (/^jng_/i.test(m.name || '') && /^(Vgtn|Deko|Ress)$/.test(fourcc) && (/^vegetation[\\/]/i.test(src) || /^land[\\/]jng_misc_/i.test(src) || !src) && !l.transparent && !(l.alphaTest > 0)) { l.alphaTest = 0.5; l.side = THREE.DoubleSide; }
   l.name = m.name;
   // GSF material flags; bit 0x1000 marks party-colour materials (tinted with the owner's colour, see tintParty)
   l.userData.gsf_flags = m.userData && m.userData.gsf_flags;
   l.userData.party = isPartyMaterial(m);
   return l;
+}
+
+// A geometry baked with a mirroring matrix (determinant < 0: every model's root mirrors the game's left-handed space,
+// pwexport/gsf.py GSF_MIRROR) has its triangles turned inside out: reverse their order. three.js does this by itself
+// for an object whose matrixWorld mirrors, but not for baked geometry or the instance matrices of an InstancedMesh.
+export function bakeGeometry(geo, matrix) {
+  const g = matrix.determinant() < 0 ? mirroredGeometry(geo) : geo.clone();
+  g.applyMatrix4(matrix);
+  return g;
+}
+// a model hung on a link of another: the link frame is already the parent's GSF frame (Z up, mirrored), so the
+// model's own root turn and mirror go
+export function toLinkFrame(obj) {
+  const r = obj.children[0];
+  if (r) { r.rotation.set(0, 0, 0); r.scale.set(1, 1, 1); }
+}
+// a copy with the triangles reversed (for a mirroring instance matrix, props.js)
+export function mirroredGeometry(geo) {
+  const g = geo.clone();
+  if (!g.index) g.setIndex([...Array(g.attributes.position.count).keys()]);
+  else g.setIndex(new THREE.BufferAttribute(g.index.array.slice(), 1));
+  const ix = g.index.array;
+  for (let i = 0; i + 2 < ix.length; i += 3) { const t = ix[i + 1]; ix[i + 1] = ix[i + 2]; ix[i + 2] = t; }
+  return g;
 }
 
 function mergeSkinned(root) {
@@ -62,9 +106,20 @@ function mergeSkinned(root) {
 }
 
 // Wall pieces are hubs with arms in 8 directions (docs/spec/walls.md §2): the engine shows the arms towards connected
-// neighbours. Every mesh gets userData.arm = direction 0..7 (0 E, 1 NE, 2 N ... counter-clockwise, GSF space
-// x east / y north) or -1 for the hub; the building shows the arms of its mask (parts.js applyState).
+// neighbours. Every mesh gets userData.arm = direction 0..7 (0 = +x, 1 = +x -z, 2 = -z ... the world directions of
+// wallmap.js DIRS) or -1 for the hub; the building shows the arms of its mask (parts.js applyState).
 export function tagWallArms(root) {
+  // the exporter names the parts (pwexport/gsf.py WALL_PARTS: node extras "part" = "3bD"): the engine shows parts by
+  // name (BuildName), so a mesh only needs its component ("3b", "x1"); its variants A..P are building / damage states
+  let named = false;
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    let n = o;
+    while (n && n.userData.part === undefined && n !== root) n = n.parent;
+    if (n && n.userData.part !== undefined) { o.userData.comp = String(n.userData.part).slice(0, -1); named = true; }
+  });
+  if (named) return;
+  // (older exports without part names: arms by angle)
   // Each part of a wall model belongs to the hub (centre post, arm -1) or to one of 8 arms (45 degree bins, GSF model
   // space). The models carry several geometry variants of every piece (palisade arms of different heights, 11 hub
   // posts) with identical flags; the engine shows one of them per tile, never all of them stacked (that made the wall
@@ -88,7 +143,9 @@ export function tagWallArms(root) {
   const groups = new Map();
   for (const [n, e] of nodes) {
     e.box.getCenter(c);
-    const arm = Math.hypot(c.x, c.y) < 1.2 ? -1 : ((Math.round(Math.atan2(c.y, c.x) / (Math.PI / 4)) % 8) + 8) % 8;
+    // the arm's direction in the world at rotation 0 (wallmap.js DIRS: 0 = +x, 2 = -z): the root mirrors GSF x
+    // (GSF (x, y) -> world (x, z) = (-x, -y)), so the angle from +x towards -z is atan2(y, -x)
+    const arm = Math.hypot(c.x, c.y) < 1.2 ? -1 : ((Math.round(Math.atan2(c.y, -c.x) / (Math.PI / 4)) % 8) + 8) % 8;
     const r = (v) => Math.round(v * 2) / 2;
     const key = arm + '|' + ((n.userData.attr >>> 0) >>> 5) + '|' + [r(e.box.min.x), r(e.box.min.y), r(e.box.max.x), r(e.box.max.y)].join(',');
     if (!groups.has(key)) groups.set(key, []);
@@ -103,7 +160,7 @@ export function tagWallArms(root) {
   }
 }
 
-function mergeStatic(root, animatedNodes) {
+function mergeStatic(root, animatedNodes, keep = 0) {
   // static (non skinned, non animated) meshes: merge per material and part signature into the root's frame
   root.updateMatrixWorld(true);
   const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
@@ -113,7 +170,7 @@ function mergeStatic(root, animatedNodes) {
     if (!o.isMesh || o.isSkinnedMesh || o.isInstancedMesh || o.userData.sprite) return;
     if (animatedNodes.size && moving(o)) { if (o.userData.attr !== undefined) { const sg = staticSig(o.userData.attr >>> 0); if (sg !== 0x1fff) o.userData.sig = sg; } return; }
     const sig = o.userData.attr !== undefined ? staticSig(o.userData.attr >>> 0) : 0x1fff;
-    const k = o.material.uuid + '|' + Object.keys(o.geometry.attributes).sort().join(',') + '|' + (o.geometry.index ? 1 : 0) + '|' + sig + '|' + (o.userData.arm ?? '') + '|' + (o.userData.vcount > 1 ? o.userData.variant + '/' + o.userData.vcount : '');
+    const k = o.material.uuid + '|' + Object.keys(o.geometry.attributes).sort().join(',') + '|' + (o.geometry.index ? 1 : 0) + '|' + sig + '|' + (o.userData.arm ?? '') + '|' + (o.userData.vcount > 1 ? o.userData.variant + '/' + o.userData.vcount : '') + '|' + (o.userData.tod || '') + '|' + (o.userData.comp ?? '') + '|' + (keep && o.userData.attr !== undefined ? (o.userData.attr >>> 0) & keep : '');
     o.userData.sigTmp = sig;
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(o);
@@ -121,11 +178,7 @@ function mergeStatic(root, animatedNodes) {
   for (const list of groups.values()) {
     const sig = list[0].userData.sigTmp;
     if (list.length < 2) { if (sig !== 0x1fff) list[0].userData.sig = sig; continue; }
-    const geos = list.map((m) => {
-      const g = m.geometry.clone();
-      g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, m.matrixWorld));
-      return g;
-    });
+    const geos = list.map((m) => bakeGeometry(m.geometry, new THREE.Matrix4().multiplyMatrices(inv, m.matrixWorld)));
     const g = mergeGeometries(geos, false);
     if (!g) continue;
     const mesh = new THREE.Mesh(g, list[0].material);
@@ -133,7 +186,10 @@ function mergeStatic(root, animatedNodes) {
     mesh.castShadow = true; mesh.receiveShadow = true;
     if (sig !== 0x1fff) mesh.userData.sig = sig;
     if (list[0].userData.arm !== undefined) mesh.userData.arm = list[0].userData.arm;
+    if (list[0].userData.tod) mesh.userData.tod = list[0].userData.tod;
     if (list[0].userData.vcount > 1) { mesh.userData.variant = list[0].userData.variant; mesh.userData.vcount = list[0].userData.vcount; }
+    if (list[0].userData.comp !== undefined) mesh.userData.comp = list[0].userData.comp;
+    if (keep && list[0].userData.attr !== undefined) mesh.userData.attr = (list[0].userData.attr >>> 0) & keep;
     root.add(mesh);
     for (const m of list) m.removeFromParent();
   }
@@ -145,7 +201,7 @@ export function modelInfo(name) {
 
 // Load (once) and prepare a template. opts.static: merge all meshes (props/buildings without animation)
 export function loadModel(name, opts = {}) {
-  const key = name.toLowerCase() + (opts.static ? '#s' : '') + (opts.wallArms ? '#w' : '');
+  const key = name.toLowerCase() + (opts.static ? '#s' : '') + (opts.wallArms ? '#w' : '') + (opts.gate ? '#g' : '');
   if (Assets.templates.has(key)) return Assets.templates.get(key);
   const info = modelInfo(name);
   if (!info) return Promise.reject(new Error('unknown model ' + name));
@@ -161,6 +217,7 @@ export function loadModel(name, opts = {}) {
           const out = arr.map((m) => { if (!mats.has(m.uuid)) mats.set(m.uuid, toLambert(m, fourcc0)); return mats.get(m.uuid); });
           o.material = Array.isArray(o.material) ? out : out[0];
           o.castShadow = true; o.receiveShadow = true;
+          if (out.some((m) => m.userData.glow)) { o.castShadow = false; o.receiveShadow = false; o.renderOrder = 3; }
         }
       });
       const root0 = scene.children[0];
@@ -172,6 +229,10 @@ export function loadModel(name, opts = {}) {
         while (n && n.userData.attr === undefined) n = n.parent;
         if (n) o.userData.attr = n.userData.attr >>> 0;
       });
+      // day and night parts (buildings' and ships' lamps: parts.js todOf), the particle emitters too (fireflies)
+      scene.traverse((o) => {
+        if ((o.isMesh || o.userData.kind === 'particles') && o.userData.attr !== undefined) { const t = todOf(o.userData.attr >>> 0, fourcc); if (t) o.userData.tod = t; }
+      });
       scene.updateMatrixWorld(true);
       const fol = [];
       const pick = new THREE.Box3();
@@ -179,7 +240,7 @@ export function loadModel(name, opts = {}) {
         if (o.userData.isFoliageMesh) { fol.push(o); return; }
         if (!o.isMesh) return;
         if (o.userData.attr !== undefined) {
-          let h = helperPart(o.userData.attr, fourcc);
+          let h = helperPart(o.userData.attr, fourcc, [].concat(o.material).some((m) => m.userData && m.userData.glow));
           // flag-less low-poly hulls (whole-object pick/collision volumes)
           if (!h && !(o.userData.attr >>> 5) && !o.isSkinnedMesh && o.geometry.attributes.position.count <= 24) {
             const bb = new THREE.Box3().setFromObject(o);
@@ -215,8 +276,11 @@ export function loadModel(name, opts = {}) {
           if (helperPart(attr, fourcc)) continue;
           const map = o.material && o.material.map;
           if (!map) continue;
-          const sp = modelSprites(f, map);
+          const sp = modelSprites(f, map, !!(o.material.userData && o.material.userData.glow));
+          if (sp.material.blending === THREE.AdditiveBlending) sp.renderOrder = 3;
           sp.userData.attr = attr;
+          const tod = todOf(attr, fourcc);
+          if (tod) sp.userData.tod = tod;
           sp.position.copy(n.position); sp.quaternion.copy(n.quaternion); sp.scale.copy(n.scale);
           (n.parent || scene).add(sp);
         }
@@ -227,10 +291,12 @@ export function loadModel(name, opts = {}) {
       if (opts.static) {
         const animatedNodes = new Set();
         for (const c of gltf.animations) for (const t of c.tracks) animatedNodes.add(t.name.slice(0, t.name.lastIndexOf('.')));
-        mergeStatic(scene.children[0] || scene, animatedNodes);
+        mergeStatic(scene.children[0] || scene, animatedNodes, opts.gate ? 0x880 : 0);   // (a gate's end pieces stay apart)
       }
+      // building state, epoch and damage stage of the static parts and of the particle emitters (fires of the epoch
+      // variants, smoke of the damage stages)
       if (!isDynamicKind(fourcc)) scene.traverse((o) => {
-        if (o.isMesh && o.userData.sig === undefined && o.userData.attr !== undefined) { const sg = staticSig(o.userData.attr >>> 0); if (sg !== 0x1fff) o.userData.sig = sg; }
+        if ((o.isMesh || o.userData.kind === 'particles') && o.userData.sig === undefined && o.userData.attr !== undefined) { const sg = staticSig(o.userData.attr >>> 0); if (sg !== 0x1fff) o.userData.sig = sg; }
       });
       // default look: finished, intact, first epoch / wild animal
       if (fourcc === 'Anim' || fourcc === 'Vehi') applyMask(scene, animalMask({ owned: fourcc === 'Vehi' }));
@@ -260,6 +326,7 @@ export function cloneModel(tpl, party = null) {
   const s = SkeletonUtils.clone(tpl.scene);
   s.traverse((o) => { if (o.isSkinnedMesh) o.frustumCulled = false; });
   if (party != null) tintParty(s, party);
+  if (Assets.onClone) Assets.onClone(s);        // the particle emitters of the model (engine/particles.js)
   return s;
 }
 

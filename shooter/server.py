@@ -12,6 +12,8 @@ own ParaWorld installation, through the game data the toolkit's remake has alrea
     /data/assets/music/<f>    Data/<mod>/Audio/Music/<f>
     /data/maps/<pack>/<rel>   Data/<pack>/Maps/<rel>          map files (.ula)
     /api/info                 {ready, reason, game, data}     is the prepared data there?
+    /api/hd                   {model: [variants]}             HD versions of models (python -m pwexport.hd)
+    /data/hd/<model>/<v>.glb  <toolkit data>/hd/...           one of them (v = hd | remodel)
     /api/log?sid=<session>    POST: lines of the game's log   -> <toolkit home>/shooter/logs/shooter-<time>-<session>.log
     /api/lastlog?sid=<s>      the previous session's log: {file, closed, tail}
 
@@ -46,6 +48,7 @@ if ROOT not in sys.path:
 
 from pwexport.config import Settings, home          # noqa: E402
 from pwexport.install import Install, _ci_join      # noqa: E402
+from pwexport import hd                             # noqa: E402
 
 TYPES = {'.js': 'text/javascript', '.mjs': 'text/javascript', '.json': 'application/json', '.glb': 'model/gltf-binary',
          '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.ula': 'application/octet-stream', '.html': 'text/html; charset=utf-8',
@@ -98,6 +101,8 @@ class Source:
         if parts[0] == 'maps' and inst and len(parts) >= 3:
             d = _ci_join(inst.data, parts[1])
             return _file(_ci_join(d, 'Maps/' + '/'.join(parts[2:])) if d else None)
+        if parts[0] == 'hd' and len(parts) == 3 and parts[2].endswith('.glb'):
+            return hd.find(parts[1]).get(parts[2][:-4])
         if parts[0] in ('gamedata.json', 'techtree.json') and len(parts) == 1:
             return _file(os.path.join(self.data, parts[0]))
         if parts[0] == 'assets':
@@ -215,6 +220,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         rel = unquote(self.path.split('?')[0]).lstrip('/')
         if rel == 'api/info':
             return self._send(json.dumps(dict(self.source.info(), logs=self.logs.dir if self.logs else None)).encode(), 'application/json', cache=False)
+        if rel == 'api/hd':
+            return self._send(json.dumps(hd.available()).encode(), 'application/json', cache=False)
         if rel == 'api/lastlog':
             return self._send(json.dumps(self.logs.last(self._query('sid')) if self.logs else {'file': None}).encode(), 'application/json', cache=False)
         try:

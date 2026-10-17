@@ -1,11 +1,12 @@
 import * as THREE from 'three';
 import { cloneModel } from '../engine/assets.js';
 import { AnimCtl } from '../game/anim.js';
+import { UnitDecals } from './decals.js';
 
 // rally points are marked with the tribe's flag (tech tree <tribe>_rally_point / _rally_point_harbour on water)
 const RALLY = { Hu: 'hu_rally_point', Aje: 'aje_rally_point', Ninigi: 'ninigi_rally_point', SEAS: 'seas_rally_point' };
 
-// World-space selection rings + 2D overlay (health bars, drag box) + minimap.
+// World-space selection rings + 2D overlay (health bars, drag box). The minimap: ui/minimap.js.
 const ringGeo = new THREE.RingGeometry(0.88, 1.0, 48).rotateX(-Math.PI / 2);
 const ringGeoBig = new THREE.RingGeometry(0.965, 1.0, 64).rotateX(-Math.PI / 2);
 
@@ -22,6 +23,7 @@ export class Overlay {
     window.addEventListener('resize', () => this.resize());
     this.v = new THREE.Vector3();
     this.flags = new Map();     // building -> {name, obj, anim}
+    this.decals = new UnitDecals(G);   // hero rings and buff decals under units (ui/decals.js)
   }
   // the rally flag of every selected own producer
   updateFlags(dt) {
@@ -102,7 +104,11 @@ export class Overlay {
       if (m.t > 0.7) { this.markers.splice(i, 1); continue; }
       put(m.x, m.z, 3.5 * (1 - m.t / 0.7) + 0.5, m.color, 1 - m.t / 0.7);
     }
+    // the formation arrow being drawn (right-drag): the places the units will take
+    const fa = G.input.mouse.arrow;
+    if (fa) for (const [x, z] of fa.slots) put(x, z, 0.9, 0x7dff6a, 0.85);
     this.updateFlags(dt);
+    this.decals.update((e) => !!(e.obj && e.obj.visible));
     for (const e of G.sel) if (e.alive && e.rally && G.canRally(e) && !this.flags.has(e)) put(e.rally[0], e.rally[1], 1.2 + 0.2 * Math.sin(G.world.time * 5), 0xffe070, 0.9);
     for (let i = n; i < this.rings.length; i++) this.rings[i].visible = false;
     this.draw();
@@ -137,6 +143,19 @@ export class Overlay {
     for (const u of G.world.units) draw(u);
     for (const b of G.world.buildings) draw(b);
     const m = G.input.mouse;
+    if (m.arrow) {
+      // the arrow (CFormPreview): from the press point to the cursor
+      const H = G.world.height, a = m.arrow;
+      const p0 = this.toScreen(new THREE.Vector3(a.x, H(a.x, a.z) + 0.4, a.z)), p1 = this.toScreen(new THREE.Vector3(a.tip[0], H(a.tip[0], a.tip[1]) + 0.4, a.tip[1]));
+      if (p0.z < 1 && p1.z < 1) {
+        const ang = Math.atan2(p1.y - p0.y, p1.x - p0.x), hl = 16;
+        ctx.strokeStyle = 'rgba(160,255,130,0.95)'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(p0.x, p0.y); ctx.lineTo(p1.x, p1.y);
+        ctx.moveTo(p1.x, p1.y); ctx.lineTo(p1.x - hl * Math.cos(ang - 0.45), p1.y - hl * Math.sin(ang - 0.45));
+        ctx.moveTo(p1.x, p1.y); ctx.lineTo(p1.x - hl * Math.cos(ang + 0.45), p1.y - hl * Math.sin(ang + 0.45));
+        ctx.stroke();
+      }
+    }
     if (m.dragging) {
       const x0 = Math.min(m.sx, m.x), y0 = Math.min(m.sy, m.y);
       ctx.strokeStyle = 'rgba(160,255,130,0.95)'; ctx.fillStyle = 'rgba(160,255,130,0.12)'; ctx.lineWidth = 1;
@@ -147,101 +166,3 @@ export class Overlay {
 }
 
 // ---------------------------------------------------------------- minimap
-export class Minimap {
-  constructor(G, canvas, half) {
-    this.G = G; this.canvas = canvas; this.half = half;
-    this.ctx = canvas.getContext('2d');
-    this.S = canvas.width;
-    this.bg = document.createElement('canvas'); this.bg.width = this.bg.height = this.S;
-    this.fogC = document.createElement('canvas');
-    this.t = 0;
-  }
-  w2m(x, z) { return [(x + this.half) / (2 * this.half) * this.S, (z + this.half) / (2 * this.half) * this.S]; }
-  m2w(mx, my) { return [mx / this.S * 2 * this.half - this.half, my / this.S * 2 * this.half - this.half]; }
-  // colors: minimap colour of each ground texture (4 or 8), water: sea level or null
-  buildBackground(splat, height, trees, colors, water = null) {
-    const S = this.S, ctx = this.bg.getContext('2d');
-    const img = ctx.createImageData(S, S);
-    const cols = colors && colors.length ? colors : [[88, 128, 52], [140, 142, 70], [130, 104, 70], [118, 112, 102]];
-    for (let j = 0; j < S; j++) for (let i = 0; i < S; i++) {
-      const [x, z] = this.m2w(i + 0.5, j + 0.5);
-      const w = splat(x, z);
-      let sum = 0; for (let c = 0; c < cols.length; c++) sum += w[c] || 0;
-      sum = sum || 1;
-      const hL = height(x - 2, z), hR = height(x + 2, z), hU = height(x, z - 2), h0 = height(x, z);
-      const shade = 1 + (hL - hR) * 0.06 + (hU - h0) * 0.03;
-      const k = (j * S + i) * 4;
-      for (let c = 0; c < 3; c++) {
-        let v = 0;
-        for (let m = 0; m < cols.length; m++) v += cols[m][c] * (w[m] || 0);
-        img.data[k + c] = Math.max(0, Math.min(255, v / sum * shade));
-      }
-      if (water != null && h0 < water - 0.3) {             // sea: blue, darker where deep
-        const d = Math.min(1, (water - h0) / 10);
-        img.data[k] = 40 - 25 * d; img.data[k + 1] = 105 - 50 * d; img.data[k + 2] = 140 - 40 * d;
-      }
-      img.data[k + 3] = 255;
-    }
-    ctx.putImageData(img, 0, 0);
-    ctx.fillStyle = 'rgba(28,52,20,0.8)';
-    for (const t of trees) { const [mx, my] = this.w2m(t.x, t.z); ctx.fillRect(mx - 1, my - 1, 2.2, 2.2); }
-  }
-  update(dt, force) {
-    this.t -= dt;
-    if (this.t > 0 && !force) return;
-    const G = this.G, ctx = this.ctx, S = this.S;
-    this.t = G.mission && G.mission.markers.length ? 0.08 : 0.25;      // mission markers pulse: redraw more often
-    ctx.drawImage(this.bg, 0, 0);
-    // stones
-    ctx.fillStyle = '#c8c4b8';
-    for (const r of G.world.resources) if (r.alive && r.type === 'stone' && G.fow.explored_(r.pos.x, r.pos.z)) { const [x, y] = this.w2m(r.pos.x, r.pos.z); ctx.fillRect(x - 2, y - 2, 4, 4); }
-    // fog of war
-    const f = G.fow, n = f.n;
-    if (this.fogC.width !== n) { this.fogC.width = this.fogC.height = n; this.fogImg = this.fogC.getContext('2d').createImageData(n, n); }
-    if (!f.revealAll) {
-      const d = this.fogImg.data;
-      for (let i = 0; i < n * n; i++) d[i * 4 + 3] = f.vis[i] ? 0 : f.explored[i] ? 110 : 225;
-      this.fogC.getContext('2d').putImageData(this.fogImg, 0, 0);
-      const scale = S / (2 * this.half) * f.cell;           // minimap px per fog cell
-      const off = (f.size / 2 - this.half) / f.cell * scale;
-      ctx.imageSmoothingEnabled = true;
-      ctx.drawImage(this.fogC, -off, -off, n * scale, n * scale);
-    }
-    // entities
-    const me = G.me;
-    for (const b of G.world.buildings) {
-      if (!b.alive) continue;
-      if (b.parked || !b.owner || (b.owner !== me && !f.explored_(b.pos.x, b.pos.z))) continue;
-      const [x, y] = this.w2m(b.pos.x, b.pos.z);
-      const r = Math.max(3, b.radius / (2 * this.half) * S * 1.2);
-      ctx.fillStyle = '#000'; ctx.fillRect(x - r - 1, y - r - 1, 2 * r + 2, 2 * r + 2);
-      ctx.fillStyle = '#' + b.owner.color.toString(16).padStart(6, '0'); ctx.fillRect(x - r, y - r, 2 * r, 2 * r);
-    }
-    for (const u of G.world.units) {
-      if (!u.alive) continue;
-      if (u.parked || u.inside || (!G.sees(u.owner) && !f.visible(u.pos.x, u.pos.z))) continue;
-      const [x, y] = this.w2m(u.pos.x, u.pos.z);
-      ctx.fillStyle = u.owner ? '#' + u.owner.color.toString(16).padStart(6, '0') : '#ffc040';
-      const r = u.radius > 2 ? 2.5 : 1.6;
-      ctx.fillRect(x - r, y - r, 2 * r, 2 * r);
-    }
-    // alert pings
-    for (const p of G.pings || []) {
-      const [x, y] = this.w2m(p.x, p.z);
-      const k = (G.world.time - p.t) / 3;
-      if (k > 1) continue;
-      ctx.strokeStyle = `rgba(255,60,40,${1 - k})`; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(x, y, 4 + k * 14, 0, Math.PI * 2); ctx.stroke();
-    }
-    // campaign: the quest / hint markers of the mission (ui/mission.js)
-    if (G.mission && G.mission.drawMinimap) G.mission.drawMinimap(ctx, this);
-    // camera view
-    const corners = G.input.viewCorners();
-    if (corners) {
-      ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 1;
-      ctx.beginPath();
-      corners.forEach(([wx, wz], i) => { const [x, y] = this.w2m(wx, wz); if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); });
-      ctx.closePath(); ctx.stroke();
-    }
-  }
-}

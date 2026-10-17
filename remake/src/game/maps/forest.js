@@ -7,7 +7,7 @@
 // PWServer.exe / PWClient.exe, and the tree kinds of every setting (Forest_<Setting>.txt).
 //
 //   setForestData(json)               forest.json, or null (then maps have no forest trees)
-//   forestItems(md) -> {trees: [{x, y, rot, kind, amount}], deco: [{x, y, kind}]}     map coordinates (x east, y north)
+//   forestItems(md) -> {trees: [{x, y, rot, kind, amount}], deco: [{x, y, kind}]}     map coordinates (x east, y south)
 //   forestKinds(setting) -> {trees: [{standard, stump, timber} | null x 5], deco: [model | null x 8]} | null
 const CELL = 32, TREES = 15, ITEMS = 31, PATTERNS = 32, PWORDS = 156;
 export const FOREST_MIN_HEIGHT = 16;      // the engine shows nothing of a forest block at or below the water level

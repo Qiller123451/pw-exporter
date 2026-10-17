@@ -25,7 +25,7 @@ FOLDERS = {'Northland': 'Northland', 'Savanna': 'Savanna', 'Jungle': 'Jungle', '
 # a setting whose own folder has no tile set (an incomplete installation) borrows another one's
 FALLBACK = {'Cave2': 'Cave1', 'Cave3': 'Cave1', 'TestSet': 'Jungle'}
 QUALITIES = (1, 2, 3, 4, 5)  # ScapeTexture<Q>: the game's ground detail levels, 5 = finest
-VERSION = '3'               # of the cached material textures
+VERSION = '4'               # of the cached material textures and map ground pictures (4: row 0 = map y 0)
 _lock = threading.Lock()    # the server asks for the 8 textures of a setting at once
 GRID = 8                    # tiles per side of a material texture
 METRES_PER_TILE = 4.0       # one tile = one 4 m material cell in the game
@@ -152,6 +152,38 @@ def _quality(folder, want=None):
     return below[-1] if below else have[0]
 
 
+BRUSH_METRES_PER_PIXEL = 0.5   # an object brush pixel; 8 pixels = one 4 m ground material cell (the brushes' blocks)
+
+
+def obj_brushes(install):
+    """the ground brushes of the buildings (Texture/Scape/ObjBrush/<gfx>.tga, mods layered over Base): the engine's
+    ScapeMgr.AdaptTerrain(gfx, pos, rot, coastal) stamps one where a player puts a building down (ServerApp.usl, not
+    for walls and gates). {gfx name (lower case): RGBA uint8 array [h, w, 4]}, row 0 = the -y side of the model
+    (map y runs south). The alpha is how strongly the ground is levelled to the building ("change terrain height
+    failed: no alpha available"). The colour is the ground material the 4 m cells under the brush get (PWServer.exe
+    AdaptTerrain -> 0x8e0570): each channel above 127 is one bit, material = R * 4 + G * 2 + B (brush_materials):
+    magenta 5 under the building, cyan 3 around it, green 2 at the corners - in every setting 5 is gravel or bare
+    ground, 3 earth, 2 grass."""
+    import numpy as np
+    from PIL import Image
+    out = {}
+    for rel, path in install.tree('Texture/Scape/ObjBrush').items():
+        name, ext = os.path.splitext(os.path.basename(rel))
+        if ext.lower() != '.tga':
+            continue
+        try:
+            out[name.lower()] = np.asarray(Image.open(path).convert('RGBA'))
+        except OSError:
+            continue
+    return out
+
+
+def brush_materials(img):
+    """the ground material (0..7) every pixel of an object brush (RGBA array) paints: R, G, B above 127 = bits 2, 1, 0"""
+    import numpy as np
+    return ((img[:, :, 0] > 127).astype(np.uint8) << 2) | ((img[:, :, 1] > 127).astype(np.uint8) << 1) | (img[:, :, 2] > 127).astype(np.uint8)
+
+
 def material_textures(install, setting, size=512):
     """8 seamless ground textures of the setting (PIL images, size x size), cached as .jpg: the first 8 x 8 cells of
     each material's macro map with the variant tiles the game puts there"""
@@ -193,7 +225,7 @@ def material_colors(install, setting):
 
 
 def tile_ids(ts, mats):
-    """which atlas tile lies where: ids[j, i] (int array, (my + 1) x (mx + 1), row 0 = south) for the materials of
+    """which atlas tile lies where: ids[j, i] (int array, (my + 1) x (mx + 1), row 0 = map y 0) for the materials of
     the 4 m cells mats[y, x]. Tile (i, j) spans the square between the cell centres i-1 .. i and j-1 .. j - on the map
     x = 4 i - 2 .. 4 i + 2 m - and shows the transition between their materials, as the game draws it."""
     import numpy as np
@@ -203,9 +235,10 @@ def tile_ids(ts, mats):
     ii = np.clip(np.arange(-1, mx)[None, :], 0, mx - 1); jj = np.clip(np.arange(-1, my)[:, None], 0, my - 1)
     ii1 = np.clip(ii + 1, 0, mx - 1); jj1 = np.clip(jj + 1, 0, my - 1)
     m = mats.astype(np.int64)
-    sw, se, nw, ne = m[jj, ii], m[jj, ii1], m[jj1, ii], m[jj1, ii1]          # tile picture: top = north
+    # the tile picture lies like the map (x east, y south, as the engine maps textures): its top row towards map y 0
+    nw, ne, sw, se = m[jj, ii], m[jj, ii1], m[jj1, ii], m[jj1, ii1]
     X = (np.arange(-1, mx)[None, :] + np.zeros_like(jj)) & 31
-    Y = (-np.arange(-1, my)[:, None] + np.zeros_like(ii)) & 31        # macro map rows run down the picture: south
+    Y = (np.arange(-1, my)[:, None] + np.zeros_like(ii)) & 31         # macro map rows run down the picture: south
     var = ((X * 73856093) ^ (Y * 19349663)) % 4
     pure = (nw == ne) & (nw == sw) & (nw == se)
     macro = np.array([mt['macro'] for mt in info], np.int64)               # [8, 1024]
@@ -223,9 +256,9 @@ def tile_layout(install, setting, mats, q=None):
 
 
 def bake(install, setting, mats, w, h, px_per_m=2.0, max_side=4096, q=None):
-    """one texture of the whole map: the materials of the 4 m cells (mats[y, x], row 0 = south) drawn with the
-    setting's pre-blended tiles (tile_ids) at ground detail q (None = the finest). Returns a PIL image (row 0 = north
-    edge, as an image)."""
+    """one texture of the whole map: the materials of the 4 m cells (mats[y, x], row 0 = map y 0) drawn with the
+    setting's pre-blended tiles (tile_ids) at ground detail q (None = the finest). Returns a PIL image, row 0 = map y 0
+    = the north edge (map y runs south, docs/MAP_FORMAT.md)."""
     import numpy as np
     from PIL import Image
     ts = tileset(install, setting, q)
@@ -240,7 +273,7 @@ def bake(install, setting, mats, w, h, px_per_m=2.0, max_side=4096, q=None):
     lib = np.stack([np.asarray(Image.fromarray(ts.tile(t)).resize((p, p), Image.LANCZOS)) if p != ts.inner else ts.tile(t) for t in uniq])
     ny, nx = ids.shape
     img = lib[inv.reshape(ny, nx)]                                         # [ny, nx, p, p, 3]
-    img = img[::-1].transpose(0, 2, 1, 3, 4).reshape(ny * p, nx * p, 3)    # rows: north first
+    img = img.transpose(0, 2, 1, 3, 4).reshape(ny * p, nx * p, 3)          # rows: map y 0 (north) first
     half = p // 2                                                          # tiles start half a cell outside the map
     img = img[half:half + my * p, half:half + mx * p]
     out = Image.fromarray(np.ascontiguousarray(img))
@@ -263,7 +296,7 @@ def bake_blend(install, setting, mats, w, h, px_per_m=2.0, max_side=4096):
     step = 256
     for r0 in range(0, H, step):
         rows = np.arange(r0, min(H, r0 + step))
-        ys = (H - 0.5 - rows) / s / METRES_PER_TILE - 0.5            # image row 0 = north edge
+        ys = (rows + 0.5) / s / METRES_PER_TILE - 0.5                # image row 0 = map y 0 (north edge)
         y0 = np.clip(np.floor(ys).astype(int), 0, my - 1); y1 = np.clip(y0 + 1, 0, my - 1); fy = np.clip(ys - np.floor(ys), 0, 1)
         acc = np.zeros((len(rows), W, 3), np.float32)
         for k in range(8):

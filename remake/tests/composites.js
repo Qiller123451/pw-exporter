@@ -31,5 +31,16 @@ if (me.tribe === 'Hu') {
   check('ballista tower shows the ballista', partsOf(b).some((p) => p.startsWith('hu_large_tower_upgrade_balista@we')), { gfx: b.gfx, parts: partsOf(b) });
   check('ballista tower aims with its turret', !!b.turret);
 }
+if (me.tribe === 'SEAS' && G.data.composites('seas_mg_nest').length) {
+  // MIRAGE: the guns its towers put on when they are finished (SetReady; pwexport/modparts.py)
+  const guns = { seas_mg_nest: 'seas_hq_machinegun_nest_top@we', seas_small_cannon: 'seas_hq_defense_turret_top@we',
+                 seas_shore_cannon: 'seas_carrier_turret@we', seas_great_cannon: 'seas_hq_big_cannon_rotator@we' };
+  let k = 0;
+  for (const [n, part] of Object.entries(guns)) {
+    const b = W.placeBuilding(n, me, x0 + 60 + 20 * k++, z0 + 40, 0, true);
+    if (!b) { check(n + ' placed', false); continue; }
+    check(n + ' shows its gun and aims with it', partsOf(b).includes(part) && !!b.turret, partsOf(b));
+  }
+}
 G.step(20);
 return out.join('\n');

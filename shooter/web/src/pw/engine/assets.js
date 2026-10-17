@@ -17,6 +17,8 @@ export const Assets = {
   clipCache: new Map(),     // anim source -> clips
   base: 'assets/',
   maxAniso: 4,
+  hd: {},                   // models with HD versions: {name: ['hd', 'remodel']} (shooter only)
+  hdVariant: '',            // the HD version to load where there is one ('' = the originals)
 };
 
 export async function initAssets(base = 'assets/') {
@@ -168,12 +170,15 @@ export function modelInfo(name) {
 
 // Load (once) and prepare a template. opts.static: merge all meshes (props/buildings without animation)
 export function loadModel(name, opts = {}) {
-  const key = name.toLowerCase() + (opts.static ? '#s' : '') + (opts.wallArms ? '#w' : '');
+  // the shooter's HD versions (Assets.hd: {model: [variants]}, Assets.hdVariant: the one chosen; pwexport/hd)
+  const hd = Assets.hdVariant && (Assets.hd || {})[name.toLowerCase()] && Assets.hd[name.toLowerCase()].includes(Assets.hdVariant) ? Assets.hdVariant : '';
+  const key = name.toLowerCase() + (opts.static ? '#s' : '') + (opts.wallArms ? '#w' : '') + (hd ? '#' + hd : '');
   if (Assets.templates.has(key)) return Assets.templates.get(key);
   const info = modelInfo(name);
   if (!info) return Promise.reject(new Error('unknown model ' + name));
   const p = new Promise((res, rej) => {
-    loader.load(Assets.base + 'models/' + name.toLowerCase() + '.glb', async (gltf) => {
+    const url = hd ? Assets.base.replace(/assets\/$/, '') + 'hd/' + name.toLowerCase() + '/' + hd + '.glb' : Assets.base + 'models/' + name.toLowerCase() + '.glb';
+    loader.load(url, async (gltf) => {
       const scene = gltf.scene;
       const mats = new Map();
       const fourcc0 = (scene.children[0] && scene.children[0].userData && scene.children[0].userData.fourcc) || '';

@@ -19,13 +19,20 @@ except ImportError:
     import paths
     import stamps
 from pwexport import gsf                      # noqa: E402
-from pwexport.install import Install          # noqa: E402
+
+
+def texture_roots(game):
+    """the Texture folders the converter looks in, first match wins: the configuration's folders, the top one first
+    (the game takes a file from the last folder that has it), then the others as a last resort"""
+    from pwexport.install import _ci_join
+    own = [t for t in (_ci_join(os.path.join(game.data, m), 'Texture') for m in reversed(game.mods)) if t and os.path.isdir(t)]
+    return own + [t for t in gsf.texture_roots(game.data, None) if t not in own]
 
 
 def inputs(game):
     """the game files this step reads: the archives and the texture folders the converter looks in"""
     from pwexport.install import _ci_join
-    return [_ci_join(os.path.join(game.data, m), 'GSF') for m in game.model_mods] + gsf.texture_roots(game.data, None)
+    return [_ci_join(os.path.join(game.data, m), 'GSF') for m in game.model_mods] + texture_roots(game)
 
 
 def _load(path):
@@ -44,12 +51,13 @@ def _save(path, data):
 
 
 def run(log=print, progress=None):
-    game = Install(paths.DATA)
+    game = paths.game()
     os.makedirs(paths.CONV, exist_ok=True)
     stamp_file = os.path.join(paths.CONV, 'stamps.json')
     old = _load(stamp_file)
     code = stamps.code_hash(os.path.abspath(__file__))
-    tex = stamps.tree_hash(game.data, gsf.texture_roots(game.data, None))
+    roots = texture_roots(game)
+    tex = stamps.tree_hash(game.data, roots)
     arch = sorted(game.archives().items())
     names = {a for a, _ in arch}
     # folders of archives that are no longer in the installation (the asset step reads every folder in CONV)
@@ -58,7 +66,9 @@ def run(log=print, progress=None):
         if os.path.isdir(os.path.join(paths.CONV, e)) and e.lower() not in keep:
             shutil.rmtree(os.path.join(paths.CONV, e), ignore_errors=True)
     new = {}
-    finders = {}
+    # one texture search order for every archive of the configuration (the converter's default is per archive folder)
+    finder = gsf.TextureFinder(roots, 'max') if gsf.Image is not None else None
+    finders = {(game.data, m, 'max'): finder for m in game.mods} if finder else {}
     t0 = time.time()
     n = done = 0
     for k, (name, path) in enumerate(arch):

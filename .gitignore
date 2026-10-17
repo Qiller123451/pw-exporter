@@ -12,3 +12,9 @@ remake/esbuild
 *.surf
 /remake/data/
 /exports/
+# HD versions of the game's models (python -m pwexport.hd) when they are kept next to the toolkit
+/hd/
+# ... except the sequel's own models, made for the remake from CC0 materials (remake/art/sequel)
+!/remake/art/sequel/built/models/*.glb
+# the downloaded materials they are made from (remake/art/sequel/fetch.py)
+/remake/art/sequel/_lib/

@@ -7,17 +7,11 @@
 //             Audio/Sound/<path> there; most are IMA ADPCM wavs, which browsers can't decode - decodeWav() does)
 // Animation sound events come from the GSF models (manifest.models[x].sounds: { anim: [[time, wav, vol, maxhear, group]] }).
 //
-// Channels: 'sfx' (3D world sounds), 'ui', 'voice' (one speech ack at a time), 'music' (streamed mp3).
+// Channels: 'sfx' (3D world sounds), 'ui', 'voice' (one speech ack at a time), 'music' (streamed mp3: engine/music.js,
+// the original's MusicMgr, as audio.mus).
 import * as THREE from 'three';
-
-const MUSIC = {
-  menu: ['01_maintheme'],
-  background: ['11_plain_jungle_1', '12_plain_jungle_2'],
-  combat: { SEAS: ['38_combat_seas_1'], Aje: ['36_combat_aje_1', '42_combat_aje_2'], Hu: ['36_combat_aje_1'], Ninigi: ['42_combat_aje_2'] },
-  victory: ['02_victory'], defeat: ['03_defeat'],
-};
-// MusicMgr.txt: combat music after 3 attacks, falls back 10 s after the last one
-const COMBAT_TRIGGER = 3, COMBAT_DELAY = 10;
+import { Music } from './music.js';
+import { Atmo } from './atmo.js';
 
 // ---------------------------------------------------------------- IMA ADPCM (wav format 0x11)
 const IMA_STEP = [7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66, 73, 80, 88, 97,
@@ -82,14 +76,17 @@ export class Audio {
     this.seqIdx = new Map();
     this.listener = new THREE.Vector3();
     this.hearScale = 1.6;           // original hearing distances are for a closer camera
-    this.vol = { master: 0.8, sfx: 0.9, ui: 0.8, voice: 1, music: 0.45 };
+    this.vol = { master: 0.8, sfx: 0.9, ui: 0.8, voice: 1, music: 0.45, atmo: 0.8 };
     this.muted = false;
     this.voice = null;              // current speech ack source
     this.active = 0;                // playing world sounds (capped)
-    this.music = null; this.musicMode = ''; this.combatHits = []; this.lastCombat = -99;
+    this.duckK = 1;                 // music turned down while somebody speaks (ui/mission.js duck)
+    this.mus = new Music(this);
+    this.atmo = new Atmo(this);     // the level's ambience (engine/atmo.js)
   }
   async load() {
     try { this.db = await (await fetch(this.base + 'sounds.json')).json(); } catch (e) { console.warn('no sounds.json', e); }
+    this.mus.setData(this.db.music);
   }
   // the AudioContext may only start after a user gesture
   init() {
@@ -98,14 +95,14 @@ export class Audio {
       this.ctx = new (window.AudioContext || window.webkitAudioContext)();
       this.out = this.ctx.createGain(); this.out.connect(this.ctx.destination);
       this.bus = {};
-      for (const k of ['sfx', 'ui', 'voice']) { const g = this.ctx.createGain(); g.connect(this.out); this.bus[k] = g; }
+      for (const k of ['sfx', 'ui', 'voice', 'atmo']) { const g = this.ctx.createGain(); g.connect(this.out); this.bus[k] = g; }
       this.applyVolumes();
     } catch (e) { this.ctx = null; }
   }
   applyVolumes() {
     if (this.out) this.out.gain.value = this.muted ? 0 : this.vol.master;
     if (this.bus) for (const k in this.bus) this.bus[k].gain.value = this.vol[k];
-    if (this.music) this.music.volume = this.muted ? 0 : this.vol.music * this.vol.master;
+    this.mus.applyVolume();
   }
   buffer(file) {
     if (!this.buffers.has(file)) {
@@ -115,8 +112,8 @@ export class Audio {
     return this.buffers.get(file);
   }
   has(name) { return !!(name && this.db.events[name.toLowerCase()]); }
-  // play a sound file; pos = world position (null for 2D), maxHear = original hearing distance
-  async playFile(file, vol = 70, pos = null, maxHear = 0, channel = 'sfx', rate = 1) {
+  // play a sound file; pos = world position (null for 2D), maxHear = original hearing distance; pan (-1 .. 1) for a 2D one
+  async playFile(file, vol = 70, pos = null, maxHear = 0, channel = 'sfx', rate = 1, pan = 0) {
     if (!this.ctx || this.muted || !file) return null;
     let gain = vol / 100;
     if (pos) {
@@ -139,6 +136,10 @@ export class Audio {
       const dx = pos.x - this.listener.x, dz = pos.z - this.listener.z;
       const a = Math.atan2(dx, -dz) - (this.yaw || 0);
       p.pan.value = Math.max(-0.8, Math.min(0.8, Math.sin(a) * Math.min(1, Math.hypot(dx, dz) / 30)));
+      g.connect(p); p.connect(this.bus[channel]);
+    } else if (pan && this.ctx.createStereoPanner) {
+      const p = this.ctx.createStereoPanner();
+      p.pan.value = Math.max(-1, Math.min(1, pan));
       g.connect(p); p.connect(this.bus[channel]);
     } else g.connect(this.bus[channel]);
     if (pos) { this.active++; src.onended = () => { this.active--; }; }
@@ -183,47 +184,8 @@ export class Audio {
   // stop everything for good (Exit game): music element, all buffers, the audio context
   shutdown() {
     this.muted = true;
-    try { if (this.music) { this.music.pause(); this.music.src = ''; this.music = null; } } catch (e) { /* ignore */ }
+    this.mus.shutdown();
     try { if (this.ctx) this.ctx.close(); } catch (e) { /* ignore */ }
     this.ctx = null;
-  }
-
-  // ------------------------------------------------------------------ music
-  playMusic(mode, tribe) {
-    let list = MUSIC[mode];
-    if (list && !Array.isArray(list)) list = list[tribe] || list.SEAS;
-    if (!list || this.musicMode === mode) return;
-    this.musicMode = mode;
-    const track = list[Math.floor(Math.random() * list.length)];
-    const once = mode === 'victory' || mode === 'defeat';
-    const el = new window.Audio(this.base + 'music/' + track + '.mp3');
-    el.loop = false;
-    el.volume = 0;
-    el.addEventListener('ended', () => { if (!once && this.music === el) { this.musicMode = ''; this.playMusic(mode, tribe); } });
-    const old = this.music;
-    this.music = el;
-    el.play().catch(() => {});
-    // cross-fade (MusicMgr: 5 s fade in)
-    const target = () => (this.muted ? 0 : this.vol.music * this.vol.master);
-    const t0 = performance.now();
-    const step = () => {
-      const k = Math.min(1, (performance.now() - t0) / (once ? 500 : 3000));
-      if (this.music === el) el.volume = target() * k;
-      if (old) old.volume = Math.max(0, old.volume * (1 - k));
-      if (k < 1) requestAnimationFrame(step); else if (old) old.pause();
-    };
-    step();
-  }
-  // called for every hit on the player's units/buildings
-  combatEvent(time) {
-    this.combatHits.push(time);
-    while (this.combatHits.length && this.combatHits[0] < time - 5) this.combatHits.shift();
-    if (this.combatHits.length >= COMBAT_TRIGGER) this.lastCombat = time;
-  }
-  updateMusic(time, tribe) {
-    if (this.musicMode === 'victory' || this.musicMode === 'defeat') return;
-    const combat = time - this.lastCombat < COMBAT_DELAY;
-    if (combat && this.musicMode !== 'combat') this.playMusic('combat', tribe);
-    else if (!combat && this.musicMode !== 'background') this.playMusic('background', tribe);
   }
 }

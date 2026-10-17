@@ -3,6 +3,11 @@
 // Plain DOM elements (style.css); update() is called once per frame.
 import * as THREE from 'three';
 import { CFG } from './config.js';
+import { Assets } from '../pw/engine/assets.js';
+
+// the models with HD versions and the versions there are (main.js: Assets.hd from /api/hd)
+const hdModels = () => Object.keys(Assets.hd || {});
+const hdVariants = () => [...new Set(Object.values(Assets.hd || {}).flat())];
 
 const RANK = { '': 0, fire: 1, big: 2, head: 3 };          // which colour a damage number gets when hits of several kinds add up
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
@@ -223,6 +228,7 @@ export class Hud {
       <label><input type="checkbox" data-k="blood"${s.blood ? ' checked' : ''}> Blood</label>
       <label><input type="checkbox" data-k="numbers"${s.numbers ? ' checked' : ''}> Damage numbers</label>
       <label><input type="checkbox" data-k="showFps"${s.showFps ? ' checked' : ''}> Show frames per second</label>
+      ${hdModels().length ? `<label title="HD versions made with python -m pwexport.hd for: ${hdModels().join(', ')} (the mission starts again)">Models <select data-k="models">${opt('', s.models || '', 'Original')}${hdVariants().includes('hd') ? opt('hd', s.models, 'HD') : ''}${hdVariants().includes('remodel') ? opt('remodel', s.models, 'HD remodelled') : ''}</select></label>` : ''}
     </div>`;
   }
   bindSettings() {

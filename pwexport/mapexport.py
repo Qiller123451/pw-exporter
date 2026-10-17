@@ -7,7 +7,9 @@ objects with their models.
     materials_png(m, 'out/berg_materials.png')  1 pixel = 4 m, value = ground material 0..7 (x 32 for visibility)
     objects_csv(m, 'out/berg_objects.csv')      type, name, class, model, x, y, z, heading, owner, attributes
 
-Coordinates of the 3D files: Y up, X east, -Z north (glTF convention), metres, origin at the map's centre.
+Coordinates of the 3D files: Y up, X east, -Z north (glTF convention), metres, origin at the map's centre. The map's
+own space is left-handed (Direct3D: x east, y SOUTH, z up): a map point (x, y, z) is (x - w/2, z, y - h/2) there, and
+the models' root mirrors their x the same way (gsf.py GSF_MIRROR).
 """
 import csv
 import json
@@ -22,20 +24,23 @@ from . import forest as forest_mod, parts, scape, scene as scene_mod, walls, wri
 
 def to_world(m, x, y, z):
     """map coordinates -> 3D file coordinates (Y up, origin at the map centre)"""
-    return np.array([x - m.w / 2.0, z, -(y - m.h / 2.0)], dtype=np.float64)
+    return np.array([x - m.w / 2.0, z, y - m.h / 2.0], dtype=np.float64)
 
 
 def world_quat(o):
     """an object's orientation in the 3D files' frame. The engine applies the stored quaternion as its conjugate
-    (Direct3D row vectors, see ula.py); its axes are mapped like positions (x, y, z) -> (x, z, -y). Tilted landscape
-    pieces (plateaus, cliffs) need all of it, not just the heading."""
+    (Direct3D row vectors, see ula.py). Map space and model space are both mirrored against the file's (see above):
+    world = S R(conj q) Rz(pi)^-1 S with S = swap(y, z), which is the quaternion (qx, qz, qy, qw) * Ry(pi) - a turn
+    about z by rot becomes a heading of pi - rot. Tilted landscape pieces (plateaus, cliffs) need all of it, not just
+    the heading. (The remake: remake/src/game/maps/frame.js mapQuat.)"""
     q = o.get('quat')
     if not q:
-        a = o['rot'] / 2.0
+        a = (math.pi - o['rot']) / 2.0
         return [0.0, math.sin(a), 0.0, math.cos(a)]
     qx, qy, qz, qw = q
     n = math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw) or 1.0
-    return [-qx / n, -qz / n, qy / n, qw / n]
+    ax, ay, az, aw = qx / n, qz / n, qy / n, qw / n
+    return [-az, aw, ax, -ay]
 
 
 def terrain_grid(m, step=2):
@@ -45,15 +50,15 @@ def terrain_grid(m, step=2):
     xs = np.arange(nx) * 2.0 * step
     ys = np.arange(ny) * 2.0 * step
     X, Y = np.meshgrid(xs, ys)
-    pos = np.stack([X - m.w / 2.0, H, -(Y - m.h / 2.0)], -1).reshape(-1, 3)
+    pos = np.stack([X - m.w / 2.0, H, Y - m.h / 2.0], -1).reshape(-1, 3)
     # normals from the height gradient
     gy, gx = np.gradient(H, 2.0 * step)
-    nrm = np.stack([-gx, np.ones_like(H), gy], -1)
+    nrm = np.stack([-gx, np.ones_like(H), -gy], -1)
     nrm /= np.linalg.norm(nrm, axis=-1, keepdims=True)
-    uv = np.stack([X / max(m.w, 1), 1.0 - Y / max(m.h, 1)], -1).reshape(-1, 2)
+    uv = np.stack([X / max(m.w, 1), Y / max(m.h, 1)], -1)   # the ground picture: row 0 = map y 0.reshape(-1, 2)
     i = np.arange(nx * ny).reshape(ny, nx)
     a, b, c, d = i[:-1, :-1], i[:-1, 1:], i[1:, :-1], i[1:, 1:]
-    tri = np.concatenate([np.stack([a, b, d], -1).reshape(-1, 3), np.stack([a, d, c], -1).reshape(-1, 3)])
+    tri = np.concatenate([np.stack([a, d, b], -1).reshape(-1, 3), np.stack([a, c, d], -1).reshape(-1, 3)])   # counter-clockwise from above
     return pos.astype(np.float32), nrm.reshape(-1, 3).astype(np.float32), uv.astype(np.float32), tri.astype(np.uint32)
 
 
@@ -277,14 +282,14 @@ def heightmap_png(m, path):
     from PIL import Image
     H = m.heights
     top = float(H.max()) or 1.0
-    img = (np.flipud(H) / top * 65535.0).astype(np.uint16)          # image row 0 = north
+    img = (H / top * 65535.0).astype(np.uint16)          # image row 0 = map y 0 = north (map y runs south)
     Image.fromarray(img, mode='I;16').save(path)
     return path, top
 
 
 def materials_png(m, path):
     from PIL import Image
-    Image.fromarray((np.flipud(m.mats).astype(np.uint16) * 32).clip(0, 255).astype(np.uint8), mode='L').save(path)
+    Image.fromarray((m.mats.astype(np.uint16) * 32).clip(0, 255).astype(np.uint8), mode='L').save(path)
     return path
 
 

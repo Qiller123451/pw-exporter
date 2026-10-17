@@ -30,7 +30,7 @@
 // World side effects (camera jumps, fog reveals, sounds, game over) are NOT here: the engine calls G.rtscam,
 // world.revealArea, G.audio, G.endMission itself.
 //
-// BEYOND THE CONTRACT (docs/MISSION_UI.md): openLog() / closeLog() / toggleLog() (quest log, key L), news(text, kind,
+// BEYOND THE CONTRACT (docs/MISSION_UI.md): openLog() / closeLog() / toggleLog() (quest log, key J), news(text, kind,
 // opts) (a ticker line), showTitle() (the mission title card), closeDialog() (the player's close button), next() /
 // skip() (cutscene: next line / end it), key(e) (keyboard hook of ui/input.js), drawMinimap(ctx, minimap) (hook of
 // ui/overlay.js Minimap), frameLength(text, soundSeconds), `manual` (true with ?manual: no cutscene presentation),
@@ -40,10 +40,12 @@
 // MiniMap2.usl (MM), IngameScreen.usl (IS), Server/classes/misc/QuestionMark.usl; behaviour: docs/spec/triggers.md §5.2, §6.
 import * as THREE from 'three';
 import { UIA, spriteCss, iconFor, entry } from './atlas.js';
+import { buttonTip, textTip } from './tooltip.js';
 
 // minimap marker colours by type (MM:238-262); 'FixedColor' carries its own
 const MARK_COLOR = { Attack: 0xff0000, SPMainQuest: 0xffc864, SPOptQuest: 0xc8c8c8, SPHint: 0x007800 };
 // question marks: state -> glyph and colour (QuestionMark.usl: questionmark_red / _green / _yellow, exclamation_yellow)
+const QMODEL = { QM_STATE_RED: 'questionmark_red', QM_STATE_GREEN: 'questionmark_green', QM_STATE_YELLOW: 'questionmark_yellow', EC_STATE_YELLOW: 'exclamation_yellow' };
 const QMARK = {
   QM_STATE_RED: ['?', '#e8402a', '#5a0c04'], QM_STATE_GREEN: ['?', '#58d840', '#0c4a08'],
   QM_STATE_YELLOW: ['?', '#ffd428', '#6a4a00'], EC_STATE_YELLOW: ['!', '#ffd428', '#6a4a00'],
@@ -106,7 +108,7 @@ export class MissionUI {
       for (const m of C.questionMarks || []) this.questionMark(m);
       if (C.on) C.on('questionmark', (m) => this.questionMark(m));
     }
-    if (!this.manual) this.showTitle();
+    if (!this.manual && !G.loading) this.showTitle();
   }
   get dom() { return !!this.left; }
   // dialogue scenes and cutscenes waiting or running, in the order they were asked for
@@ -124,12 +126,15 @@ export class MissionUI {
     this.qbtn.style.backgroundImage = `url(${UIA.base}hud_menu_questbutton.png)`;
     this.qbtn.innerHTML = `<span>${esc(this.text('_UI_IngaScre_Button_Quest', 'Quests'))}</span>`;
     this.qbtn.onclick = () => this.toggleLog();
-    this.qbtn.onmouseenter = () => G.hud.showTip(this.qbtn, `<h4>${esc(this.text('_UI_QuestWin_Title_Quests', 'Quests'))}</h4><span class="sub">Quest log (L)</span>`);
+    this.qbtn.onmouseenter = () => G.hud.showTip(this.qbtn, buttonTip(G, '_tb_quests'));
     this.qbtn.onmouseleave = () => G.hud.hideTip();
-    if (G.hud.tr) G.hud.tr.insertBefore(this.qbtn, G.hud.tr.firstChild);
-    // left column under the resource bar: the dialogue box and the news ticker (NT: a 235 px column)
-    this.left = el('div', 'mleft', root);
-    this.dlg = el('div', 'dlg hidden', this.left, '<div class="dpor"></div><div class="dbody"><b class="dname"></b><span class="dtext"></span></div><i class="dclose" title="Close"></i>');
+    if (G.hud.slot) G.hud.slot('quest', this.qbtn);
+    // the dialogue box at the bottom left, right of the army pyramid, above the info window (DialogScene.usl:143:
+    // x 212, y desktop - (198 + its height)); the news ticker in the HUD's right column (NewsTicker.usl: a 235 px
+    // column at x desktop - 235, y 37)
+    this.dlgWrap = el('div', 'mdlg', root);
+    this.left = el('div', 'mnews', G.hud.rcol || root);
+    this.dlg = el('div', 'dlg hidden', this.dlgWrap, '<div class="dpor"></div><div class="dbody"><b class="dname"></b><span class="dtext"></span></div><i class="dclose" title="Close"></i>');
     this.dlg.querySelector('.dclose').style.backgroundImage = `url(${UIA.base}hud_closebutton.png)`;
     this.dlg.querySelector('.dclose').onclick = () => this.closeDialog();
     this.ticker = el('div', 'nticker', this.left);
@@ -144,6 +149,10 @@ export class MissionUI {
       '<div class="chint">Click or Space: continue &nbsp;·&nbsp; Esc: skip</div></div>');
     for (const e of ['mousedown', 'mouseup', 'click', 'contextmenu', 'wheel', 'dblclick']) this.cineEl.addEventListener(e, (ev) => { ev.stopPropagation(); if (e === 'contextmenu') ev.preventDefault(); });
     this.cineEl.addEventListener('click', () => this.next());
+    // the story films (hs_*.bik of the original, converted to WebM by the toolkit: pwexport/video.py)
+    this.filmEl = el('div', 'film hidden', document.body, '<video playsinline preload="auto"></video><div class="fsub"><b></b><span></span></div>' +
+      '<div class="chint">Esc: skip</div>');
+    for (const e of ['mousedown', 'mouseup', 'click', 'contextmenu', 'wheel', 'dblclick']) this.filmEl.addEventListener(e, (ev) => { ev.stopPropagation(); ev.preventDefault(); });
     this.titleEl = el('div', 'mtitle hidden', document.body, '<h1></h1><p></p>');
     this.preload();
   }
@@ -161,16 +170,13 @@ export class MissionUI {
     const key = s + ':' + window.innerWidth + ':' + window.innerHeight;
     if (key !== this.layoutKey) {
       this.layoutKey = key; this.s = s;
-      this.left.style.transform = `scale(${s})`;
-      this.left.style.top = Math.round(58 * s) + 'px';
-      // the column ends above the minimap
-      this.left.style.maxHeight = Math.max(80, Math.floor((window.innerHeight - 58 * s - 270 * s - 6) / s)) + 'px';
       this.top.style.transform = `translateX(-50%) scale(${s})`;
       this.top.style.top = Math.round(38 * s) + 'px';
       this.topKey = null;
     }
     // too many lines for the room above the minimap: the oldest ticker lines go
-    while (this.news_.length > 1 && this.left.scrollHeight > this.left.clientHeight + 1) this.dropNews(this.news_[0]);
+    const col = this.left.parentElement;
+    while (this.news_.length > 1 && col && col.scrollHeight > col.clientHeight + 1) this.dropNews(this.news_[0]);
     // the HUD's own messages start below the info bar and the timers
     const tk = this.top.offsetHeight + ':' + this.s;
     if (tk !== this.topKey) {
@@ -373,8 +379,25 @@ export class MissionUI {
     this.log.push(['questionmark', m.name, m.state]);
     const G = this.G, def = QMARK[m.state];
     let sp = this.marks.get(m);
-    if (!def) { if (sp) { sp.removeFromParent(); this.marks.delete(m); } return; }
+    const drop = (x) => { x.removeFromParent(); if (x.userData.fx) x.userData.fx.until = 0; };
+    if (!def) { if (sp) { drop(sp); this.marks.delete(m); } return; }
     if (!G.scene || typeof document === 'undefined') return;
+    // the game's own models (QuestionMark.usl SetGFX: questionmark_red / _green / _yellow, exclamation_yellow - in
+    // all_effects.gsf; their emitters glow, "anim" turns them), placed on the ground like the original's object; an
+    // empty node above it stands for it (the tooltip's hit test, the fog). Without the models: the drawn mark.
+    const gfx = QMODEL[m.state];
+    if (G.mfx && G.mfx.has(gfx)) {
+      if (sp) { drop(sp); this.marks.delete(m); }
+      const y = G.world && G.world.height ? G.world.height(m.x, m.z) : 0;
+      const fx = G.mfx.at(gfx, new THREE.Vector3(m.x, y, m.z), 1e9, { loop: true });
+      sp = new THREE.Object3D();
+      sp.position.set(m.x, y + 3, m.z);
+      sp.userData = { fx, model: true, y: y + 3 };
+      G.scene.add(sp);
+      this.marks.set(m, sp);
+      return;
+    }
+    if (sp && sp.userData.model) { drop(sp); this.marks.delete(m); sp = null; }
     if (!sp) {
       sp = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, fog: false, toneMapped: false, depthWrite: false }));
       sp.scale.set(3.4, 3.4, 1);
@@ -392,6 +415,7 @@ export class MissionUI {
     for (const [m, sp] of this.marks) {
       // a place the player has not seen yet does not show its mark (fog of war)
       sp.visible = !f || f.revealAll || !f.explored_ || !!f.explored_(m.x, m.z);
+      if (sp.userData.fx) { sp.userData.fx.obj.visible = sp.visible; continue; }
       sp.position.y = sp.userData.y + 0.35 * Math.sin(this.time * 2.2 + m.x);
     }
     // the tooltip of the mark under the mouse (IS:1084-1093 QuestionMarkToolTip)
@@ -413,8 +437,7 @@ export class MissionUI {
       }
     }
     if (hit) {
-      const r = { left: mo.x, right: mo.x, top: mo.y - 14, bottom: mo.y + 18, width: 0, height: 32 };
-      G.hud.showTip({ getBoundingClientRect: () => r }, esc(this.text(hit.tooltip)));
+      G.hud.showTip({ x: mo.x, y: mo.y }, textTip(this.text(hit.tooltip)));
     } else if (this.tipMark) G.hud.hideTip();
     this.tipMark = hit;
   }
@@ -503,7 +526,7 @@ export class MissionUI {
     if (!A || !A.ctx || !A.bus || !A.bus.sfx) return;
     try {
       A.bus.sfx.gain.setTargetAtTime((A.vol.sfx || 0) * (on ? 0.5 : 1), A.ctx.currentTime, 0.15);
-      if (A.music) A.music.volume = A.muted ? 0 : A.vol.music * A.vol.master * (on ? 0.5 : 1);
+      A.duckK = on ? 0.5 : 1; A.mus.applyVolume();
     } catch (e) { /* ignore */ }
   }
   endScene() {
@@ -532,8 +555,10 @@ export class MissionUI {
     const G = this.G;
     while (!this.cine && this.seqs.length) {
       const q = this.seqs[0], lines = (q.seq && q.seq.lines || []).filter((l) => l && l.text);
-      if (this.manual || !lines.length || !this.dom) { this.seqs.shift(); this.log.push(['sequenceEnd', q.seq && q.seq.id]); if (q.onEnd) q.onEnd(); continue; }
+      const films = q.noFilm ? [] : (q.seq && q.seq.videos) || [];
+      if (this.manual || (!lines.length && !films.length) || !this.dom) { this.seqs.shift(); this.log.push(['sequenceEnd', q.seq && q.seq.id]); if (q.onEnd) q.onEnd(); continue; }
       if (G.menuOpen || G.over) return;            // not under an open menu
+      if (films.length) { this.playFilms(q, films, lines); return; }
       const cam = G.rtscam, to = q.opts.camera && Number.isFinite(q.opts.camera.x) ? q.opts.camera : null;
       this.cine = { ...q, q, lines, frames: lines, i: -1, t: 0, len: 0, sound: null, wasPaused: !!G.paused,
         cam: cam ? { x0: cam.x, z0: cam.z, x1: to ? to.x : cam.x, z1: to ? to.z : cam.z, t: to ? 0 : CAM_EASE } : null };
@@ -565,6 +590,66 @@ export class MissionUI {
     this.cineEl.querySelector('.ctext').textContent = text;
     this.speak(this.lineSound(c.seq, l), 'seq', c, c.i);
   }
+  // a sequence that is a film of the original (CBink: hs_2560.bik ...): the films one after the other, full screen,
+  // with their own sound; the sequence's subtitle lines spread over them (the films carry no timing for them). A
+  // film that is not there (not converted yet, no ffmpeg) falls back to the subtitles with the camera move.
+  playFilms(q, films, lines) {
+    const G = this.G;
+    this.cine = { ...q, q, lines, film: { list: films, k: -1, played: false }, wasPaused: !!G.paused, cam: null, i: -1, t: 0, len: 0 };
+    G.setPaused(true);
+    document.body.classList.add('cine');
+    if (G.hud) G.hud.hideTip();
+    if (G.input) { G.input.keys = {}; if (G.input.mode && G.input.setMode) G.input.setMode(null); }
+    this.filmEl.classList.remove('hidden');
+    this.duck(true);
+    const v = this.filmEl.querySelector('video');
+    v.onended = () => this.nextFilm();
+    v.onerror = () => { if (this.cine && this.cine.film && !this.cine.film.played) this.filmMissing(); else this.nextFilm(); };
+    v.onplaying = () => { if (this.cine && this.cine.film) this.cine.film.played = true; };
+    v.ontimeupdate = () => this.filmSubtitle();
+    this.nextFilm();
+  }
+  nextFilm() {
+    const c = this.cine;
+    if (!c || !c.film) return;
+    const f = c.film, v = this.filmEl.querySelector('video');
+    f.k++;
+    if (f.k >= f.list.length) { this.endCine(); return; }
+    this.log.push(['film', c.seq.id, f.list[f.k]]);
+    v.src = 'assets/video/' + String(f.list[f.k]).replace(/\.bik$/i, '').toLowerCase() + '.webm';
+    const p = v.play();
+    if (p && p.catch) p.catch(() => {});
+    this.filmSubtitle();
+  }
+  // the share of the subtitle lines that belongs to the current film, spread evenly over its length
+  filmSubtitle() {
+    const c = this.cine, el = this.filmEl.querySelector('.fsub');
+    if (!c || !c.film) return;
+    const v = this.filmEl.querySelector('video'), n = c.film.list.length, L = c.lines.length;
+    const a = Math.floor((c.film.k * L) / n), b = Math.floor(((c.film.k + 1) * L) / n);
+    const d = v.duration > 0 ? v.duration : 0, i = d && b > a ? a + Math.min(b - a - 1, Math.floor((v.currentTime / d) * (b - a))) : -1;
+    const l = i >= 0 ? c.lines[i] : null;
+    el.style.visibility = l ? 'visible' : 'hidden';
+    el.querySelector('b').textContent = l && l.speaker ? this.speakerName(l.speaker) + this.text('_NT_ACTOR_TEXT_SEPARATOR', ':') + ' ' : '';
+    el.querySelector('span').textContent = l ? String(l.text).replace(/\s*\n\s*/g, ' ') : '';
+  }
+  // no film file: this sequence is shown with its subtitles instead
+  filmMissing() {
+    const G = this.G, c = this.cine;
+    this.stopFilm();
+    this.cine = null;
+    document.body.classList.remove('cine');
+    G.setPaused(c.wasPaused);
+    c.q.noFilm = true;
+    this.log.push(['filmMissing', c.seq.id]);
+    this.pump();
+  }
+  stopFilm() {
+    const v = this.filmEl.querySelector('video');
+    v.onended = v.onerror = v.onplaying = v.ontimeupdate = null;
+    v.pause(); v.removeAttribute('src'); v.load();
+    this.filmEl.classList.add('hidden');
+  }
   // the speech file of a subtitle line: the sequence's speech entry '<...>/SeqSounds/Level_1/1040/1040_Stina_01.lsd'
   // (lip data, the .mp3 lies next to it) whose name is the line's key '_seq_1040_stina_01'
   lineSound(seq, l) {
@@ -577,12 +662,13 @@ export class MissionUI {
     return null;
   }
   // cutscene: the next line (click, Space) / the end of the scene (Esc)
-  next() { if (this.cine) { this.sound('ui_click'); this.nextLine(); } }
+  next() { if (this.cine && !this.cine.film) { this.sound('ui_click'); this.nextLine(); } }
   skip() { if (this.cine) this.endCine(); }
   endCine() {
     const G = this.G, c = this.cine;
     if (!c) return;
     this.stopVoice(c);
+    if (c.film) this.stopFilm();
     this.cine = null;
     const i = this.seqs.indexOf(c.q); if (i >= 0) this.seqs.splice(i, 1);
     // G:1835-1853: the camera returns to where it was (snap_cam_back) or stays at the scene's place
@@ -597,7 +683,7 @@ export class MissionUI {
   }
   updateCine(dt) {
     const G = this.G, c = this.cine;
-    if (!c || G.menuOpen) return;
+    if (!c || G.menuOpen || c.film) return;
     if (c.cam && G.rtscam && c.cam.t < CAM_EASE) {
       c.cam.t = Math.min(CAM_EASE, c.cam.t + dt);
       const k = c.cam.t / CAM_EASE, e = k * k * (3 - 2 * k);
@@ -632,7 +718,7 @@ export class MissionUI {
       if (e.preventDefault && e.code === 'Space') e.preventDefault();
       return true;
     }
-    if (e.code === 'KeyL' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    if (e.code === 'KeyJ' && !e.ctrlKey && !e.altKey && !e.metaKey) {          // (L is the original's weapon smith key)
       if (this.logOpen) { this.closeLog(); return true; }
       if (!G.menuOpen) { this.openLog(); return true; }
     }
@@ -700,8 +786,7 @@ export class MissionUI {
 let ringGeo = null;
 function RING() { return ringGeo || (ringGeo = new THREE.RingGeometry(0.86, 1.0, 48).rotateX(-Math.PI / 2)); }
 
-// the floating mark, drawn once per state (the original models questionmark_* / exclamation_yellow are not in the
-// built assets)
+// the floating mark, drawn once per state: only when the game's models are missing (an older build of the assets)
 const markTex = {};
 function markTexture(state) {
   if (markTex[state]) return markTex[state];

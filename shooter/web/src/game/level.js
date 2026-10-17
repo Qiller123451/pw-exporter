@@ -213,7 +213,7 @@ export async function loadLevel(scene, cfg, progress = () => {}) {
     if (!o.model || !templates.has(o.model)) { o.model = null; continue; }
     const tpl = templates.get(o.model);
     const veg = o.type === 'VGTN' || o.type === 'TREE';
-    const tree = veg && /tree|palm|acacia|koekerboom|larch|birch|beech|oak|maple|poplar/.test(o.model);
+    const tree = veg && /tree|palm|bamboo|acacia|koekerboom|larch|birch|beech|oak|maple|poplar/.test(o.model);
     // trees stand on the ground, everything else at its stored height (bridges, roofs, things on tables)
     const y = o.type === 'TREE' ? height(o.x, o.z) : o.y;
     o.y = y;

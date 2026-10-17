@@ -163,11 +163,17 @@ export function attackPlan(ctx) {
   const none = ['none', 'none', 'none', 'none', 'none'];
   if (AI && AI.attackPlans && AI.attackPlans.length) {
     for (const r of AI.attackPlans) {
-      if (!matches(r, { ...ctx, defenderGame: false })) continue;
+      if (!matches(r, { ...ctx, defenderGame: !!ctx.defenderGame, defender: !!ctx.defender })) continue;
       // a list appended to the five defaults instead of replacing them (Aje Giraffe on campaign maps) stays "none"
       return { attacks: r.appended ? none.concat(r.attacks).slice(0, 5) : r.attacks.slice(0, 5), guerilla: r.guerilla || 0 };
     }
     return { attacks: none, guerilla: 0 };
+  }
+  // Defender (DA:1010-1505): the defender attacks nobody; the attackers siege from the second epoch
+  if (ctx.defenderGame) {
+    if (ctx.defender) return { attacks: none, guerilla: 0 };
+    const row = ctx.letter === 'D' ? 'pyramid siege siege siege siege' : ctx.letter === 'S' ? 'none none siege siege siege' : ctx.tribe === 'Hu' ? 'none suicide siege siege siege' : 'none siege siege siege siege';
+    return { attacks: P(row), guerilla: ctx.tribe === 'SEAS' ? 0 : 11 };
   }
   if (ctx.letter === 'S' && ctx.tactic === 5) return { attacks: none, guerilla: 0 };
   if (ctx.letter === 'X') return { attacks: P(ctx.tactic === 1 ? 'scout scout scout scout scout' : 'suicide suicide suicide suicide suicide'), guerilla: 0 };

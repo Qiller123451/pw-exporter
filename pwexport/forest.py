@@ -159,7 +159,7 @@ def config(install, setting):
 def items(m, pat, deco=True, min_height=MIN_HEIGHT):
     """every tree (and undergrowth plant) of the map's forest blocks, where the game shows them:
     -> {'trees': [{'x', 'y', 'z', 'rot' (heading, radians CCW), 'kind' 0..4, 'amount', 'stump', 'block': (x, y), 'slot'}],
-        'deco': [{'x', 'y', 'z', 'kind' 0..7}]}   (x east, y north, z up; metres, like the placed objects)"""
+        'deco': [{'x', 'y', 'z', 'kind' 0..7}]}   (x east, y south, z up; metres, like the placed objects)"""
     out = {'trees': [], 'deco': []}
     if pat is None:
         return out

@@ -11,7 +11,7 @@
     m.objects         [{'type', 'name', 'cls', 'gfx', 'x', 'y', 'z', 'rot', 'quat', 'owner', 'attr'}]
                       quat = the stored orientation (x, y, z, w). The engine applies it the Direct3D way (row vectors),
                       i.e. as the rotation of the conjugate quaternion in the usual maths convention - see world_quat().
-                      rot = the heading as a counter-clockwise angle in map space (x east, y north) = -2 atan2(z, w).
+                      rot = the heading in map space (x east, y south: from east towards south) = -2 atan2(z, w).
                       Most objects only turn about the up axis; landscape pieces (plateaus, cliffs) are tilted too.
                       (Checked on the maps: harbours face the water, gates lie along their walls, plateau cliffs
                       reach into the ground only this way.)
@@ -33,7 +33,7 @@ The format (see docs/MAP_FORMAT.md and the Kaitai Struct descriptions pwexport/d
     Objs   = u32 size + a "UOF2" tree: CMGR, HMGR, OBJS { obj { clss, base, data { gobj { gfx { name, Link }, fsm, attr,
              tmrs }, ... } } } - one "obj" per placed object.
 
-Map coordinates: x east 0..w, y north 0..h, z up (metres).
+Map coordinates: x east 0..w, y south 0..h, z up (metres; left-handed, docs/MAP_FORMAT.md).
 """
 import codecs
 import os
@@ -333,6 +333,32 @@ def object_details(b):
     return [e for _, e in _objects(b)]
 
 
+def mp_header(path):
+    """the multiplayer settings of a map file (its LInf description) without reading the rest:
+    {'players': Root/Base/MaxPlayers, 'modes': the GameType list ('Deathmatch', 'Domination', 'Defender'),
+    'type': MapType ('multiplayer' | 'singleplayer')} - the skirmish map list (toolkit/remake.py maps_index)"""
+    with open(path, 'rb') as f:
+        surf = unpack(f.read())
+    found = []
+
+    def find(c):
+        for ch in c.children:
+            if ch.tag == 'LInf' and ch.data is not None:
+                found.append(ch)
+                return
+            find(ch)
+            if found:
+                return
+    find(read_tree(surf, 0))
+    d = level_info(found[0].data)['description'] if found else {}
+    try:
+        players = int(d.get('Root/Base/MaxPlayers') or 0)
+    except ValueError:
+        players = 0
+    return {'players': players or 2, 'modes': [m for m in (d.get('Root/Base/GameType') or 'Deathmatch|').split('|') if m],
+            'type': d.get('Root/Base/MapType') or 'multiplayer'}
+
+
 class Map:
     def __init__(self, surf, path=''):
         if surf[:4] != b'SURF':
@@ -364,6 +390,13 @@ class Map:
         self.max_players = sum(1 for o in self.objects if o['type'] == 'SLOC') or int(self.info.get('MaxPlayers') or 0) or 2
 
     @property
+    def walk(self):
+        """the walkable terrain (pathing()): uint8 [h/2, w/2], 1 = land units can walk there; None without a PaFi"""
+        if not hasattr(self, '_walk'):
+            self._walk = pathing(self.chunks['PaFi'].data, self.w, self.h) if 'PaFi' in self.chunks else None
+        return self._walk
+
+    @property
     def details(self):
         """object_details() of the map, aligned with self.objects (read on first use)"""
         if self._details is None:
@@ -392,6 +425,18 @@ class Map:
                 'forest_blocks': len(self.forest['blocks']),
                 'author': self.description.get('Author', ''), 'description': self.description.get('Description', ''),
                 'game_type': self.info.get('GameType', ''), 'chunks': sorted(self.chunks)}
+
+
+def pathing(b, w, h):
+    """the first grid of the PaFi chunk: where the terrain can be walked on (docs/MAP_FORMAT.md "PaFi") as a uint8
+    array [h/2, w/2] (cell (i, j) = map x 2i .. 2i + 2, y 2j .. 2j + 2), or None when it does not fit the map"""
+    if not b or len(b) < 28:
+        return None
+    W, H, _, _, W2, H2, words = struct.unpack_from('<7I', b, 0)
+    if W != w // 2 or H != h // 2 or (W2, H2) != (W, H) or words != (W * H + 31) // 32 or 28 + words * 4 > len(b):
+        return None
+    bits = np.unpackbits(np.frombuffer(b, np.uint8, words * 4, 28), bitorder='little')[:W * H]
+    return bits.reshape(H, W)
 
 
 def rotation_matrix(q):

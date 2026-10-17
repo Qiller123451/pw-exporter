@@ -9,19 +9,23 @@
 //   Terr      : u32 1, u32 width, u32 height (metres), u32 blocks x, u32 blocks y, u32 setting, f32 water level,
 //               u32 1, u8 0, u32 count, heights u16[count] (1/128 m, 2 m grid, stored in 16x16 blocks),
 //               u32 count, materials u8[count] (4 m grid, 8x8 blocks; index into the setting's 8 ground materials)
+//   PaFi      : the pathfinder's grids, 2 m cells (w/2 x h/2): u32 W, H, 2 numbers, then the land grid as
+//               u32 W, H, words + words x u32 (one bit per cell, row-major, lowest bit first; 1 = walkable terrain),
+//               then more grids (water, one per start location with the objects) - see pathing()
 //
 // parseUla(arrayBuffer) -> Promise<MapData>
 //   MapData = { info:{key:value}, name, w, h, setting, water, hx, hy, heights(Float32Array, metres),
 //               mx, my, mats(Uint8Array), objects:[{type,name,cls,x,y,z,rot,owner,attr}], plants:[{name,x,y,z,rot}],
-//               forest:{w,h,blocks:[{x,y,b}]} (forest blocks, maps/forest.js) }
-// Coordinates are map coordinates: x east 0..w, y north 0..h, z up (metres).
+//               forest:{w,h,blocks:[{x,y,b}]} (forest blocks, maps/forest.js),
+//               walk:{w,h,cells(Uint8Array, 1 = walkable)} | null (the editor's land grid, PaFi) }
+// Coordinates are map coordinates: x east 0..w, y south 0..h, z up (metres; left-handed, docs/MAP_FORMAT.md).
 
 import { parseForest } from './forest.js';
 
 export const SETTINGS = ['Northland', 'Savanna', 'Jungle', 'Icewaste', 'Ashvalley', 'TestSet', 'Cave1', 'Cave2', 'Cave3'];
 // ground texture sets the remake has (tools/build_terrain.py); other settings fall back to the closest one
 export const KNOWN_SETTINGS = { Northland: 'Northland', Savanna: 'Savanna', Jungle: 'Jungle', Icewaste: 'Icewaste', Ashvalley: 'Ashvalley',
-  Cave1: 'Cave1', Cave2: 'Cave1', Cave3: 'Cave1', TestSet: 'Jungle' };
+  Cave1: 'Cave1', Cave2: 'Cave2', Cave3: 'Cave3', TestSet: 'Jungle' };     // (the caves have their own sets: Cave2 is the volcano)
 
 const td = new TextDecoder('latin1');
 
@@ -66,14 +70,39 @@ export function chunks(b) {
   return out;
 }
 
-// LInf: u32 count + count x (key, value) length-prefixed strings
+// LInf (pwexport/ula.py level_info): u32 count + count x (key, value) length-prefixed strings; 8 slot numbers and 8
+// player key/value lists; the 200 x 200 preview picture of the map list (stored B G R A; drawn by the engine's
+// minimap renderer: docs/MINIMAP.md); the description tree ("Root/Base/DefaultCamera" ...). Strings: u32 length
+// with the closing 0, then the characters.
 function levelInfo(b) {
   const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
-  const n = dv.getUint32(0, true), kv = {};
-  let o = 4;
-  const str = () => { const l = dv.getUint32(o, true); const s = td.decode(b.subarray(o + 4, o + 3 + l)); o += 4 + l; return s; };
-  for (let i = 0; i < n && o < b.length; i++) { const k = str(); kv[k] = str(); }
-  return kv;
+  let o = 0;
+  const u32 = () => { const v = dv.getUint32(o, true); o += 4; return v; };
+  const str = () => { const l = u32(); const raw = b.subarray(o, o + l); o += l; const z = raw.indexOf(0); return td.decode(z >= 0 ? raw.subarray(0, z) : raw); };
+  const kvs = () => { const n = u32(), kv = {}; for (let i = 0; i < n && o < b.length; i++) { const k = str(); kv[k] = str(); } return kv; };
+  const kv = kvs(), out = { kv, preview: null, description: {} };
+  try {
+    o += 8 * 4;                                                    // slot numbers
+    for (let i = 0; i < 8; i++) kvs();                             // player slots
+    o += 1;
+    const w = u32(), h = u32(), npix = u32(), nbytes = u32(), bpp = u32();
+    if (w * h === npix && npix * bpp === nbytes && bpp === 4 && o + nbytes <= b.length) {
+      const px = new Uint8ClampedArray(b.subarray(o, o + nbytes));
+      for (let i = 0; i < px.length; i += 4) { const t = px[i]; px[i] = px[i + 2]; px[i + 2] = t; }
+      out.preview = { w, h, rgba: px };
+    }
+    o += nbytes + 16;
+    const tree = (prefix) => {
+      const n = u32(), name = str(), value = str(), key = prefix ? prefix + '/' + name : name;
+      if (value) out.description[key] = value;
+      const node = { name, value, subs: [] };
+      for (let i = 0; i < n; i++) node.subs.push(tree(key));
+      return node;
+    };
+    if (o + 12 <= b.length) out.tree = tree('');
+    for (const k of Object.keys(out.description)) { const s = k.split('/').pop(); if (!(s in out.description)) out.description[s] = out.description[k]; }
+  } catch (e) { /* an older map without the rest: the key/values are enough */ }
+  return out;
 }
 
 function terrain(b) {
@@ -103,6 +132,22 @@ function terrain(b) {
     }
   }
   return { w, h, setting: SETTINGS[setting] || 'Jungle', water, hx, hy, heights, mx, my, mats };
+}
+
+// ---------------------------------------------------------------- pathfinding grid
+// The map editor stores the pathfinder's grids with the map (chunk PaFi, docs/MAP_FORMAT.md). The first one says where
+// the terrain alone can be walked on: not on steep slopes (mountains, cliffs), not in the water. Cell (i, j) covers
+// map x 2i .. 2i + 2, y 2j .. 2j + 2. The per-start-location grids after it also leave out the placed objects (the
+// game blocks those itself). null when the map has none or it does not fit the terrain.
+export function pathing(b, w, h) {
+  if (!b || b.length < 28) return null;
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+  const W = dv.getUint32(0, true), H = dv.getUint32(4, true), words = dv.getUint32(24, true);
+  if (W !== Math.floor(w / 2) || H !== Math.floor(h / 2) || dv.getUint32(16, true) !== W || dv.getUint32(20, true) !== H) return null;
+  if (words !== Math.ceil(W * H / 32) || 28 + words * 4 > b.length) return null;
+  const cells = new Uint8Array(W * H);
+  for (let k = 0; k < W * H; k++) cells[k] = (b[28 + (k >> 3)] >> (k & 7)) & 1;
+  return { w: W, h: H, cells };
 }
 
 // ---------------------------------------------------------------- objects (see tools/maps/objects.py)
@@ -176,14 +221,57 @@ function plants(b) {
   return out;
 }
 
+// Rgns (pwexport/triggers.py regions): u32 version, u32 n handles + n x 4 bytes, u32 n regions: {u32 flags, guid (16
+// bytes), name, u32 colour, u32 n shapes: {u32 type (low byte 1 rect | 2 oval, bit 29 enabled), u32, f32 x y z w h d},
+// note}. Shapes are map boxes x .. x+w, y .. y+h (an oval is the ellipse inscribed in its box). The nests' areas are
+// regions "<nest>_ActionArea", "_SafeArea", "_HotspotArea" (Nest.usl).
+export function regions(b) {
+  const out = [];
+  if (!b || b.length < 12) return out;
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+  let o = 0;
+  const u32 = () => { const v = dv.getUint32(o, true); o += 4; return v; };
+  const f32 = () => { const v = dv.getFloat32(o, true); o += 4; return v; };
+  const str = () => { const l = u32(); const raw = b.subarray(o, o + l); o += l; const z = raw.indexOf(0); return td.decode(z >= 0 ? raw.subarray(0, z) : raw); };
+  try {
+    u32();
+    const handles = u32();
+    o += 4 * handles;                          // (not "o += 4 * u32()": that adds to o as it was before the read)
+    for (let n = u32(), i = 0; i < n; i++) {
+      u32(); o += 16;
+      const reg = { name: str(), shapes: [] };
+      u32();
+      for (let k = u32(), j = 0; j < k; j++) {
+        const t = u32(); u32();
+        const x = f32(), y = f32(); f32(); const w = f32(), h = f32(); f32();
+        reg.shapes.push({ oval: (t & 0xff) === 2, enabled: !!(t & 0x20000000), x, y, w, h });
+      }
+      str();
+      out.push(reg);
+    }
+  } catch (e) { /* a damaged tail: what was read */ }
+  return out;
+}
+
+export function dayTime(v) {
+  if (v == null || v === '') v = '12:0';
+  const t = String(v).split(':');
+  return t.length === 2 && Number.isFinite(+t[0]) && Number.isFinite(+t[1]) ? (+t[0]) * 3600 + (+t[1]) * 60 : 8.5 * 3600;
+}
 export async function parseUla(buf, fileName = '') {
   const blob = await unpack(buf);
   if (td.decode(blob.subarray(0, 4)) !== 'SURF') throw new Error('not a ParaWorld map');
   const c = chunks(blob);
-  const info = c.LInf ? levelInfo(c.LInf) : {};
+  const li = c.LInf ? levelInfo(c.LInf) : { kv: {}, preview: null, description: {}, tree: null };
+  const info = li.kv;
   const t = terrain(c.Terr);
   return {
-    ...t, info, file: fileName,
+    ...t, info, file: fileName, preview: li.preview, description: li.description, infoTree: li.tree || null,
+    // the camera's angle the level starts with (radians; the minimap's diamond follows it: docs/MINIMAP.md)
+    defaultCamera: Number.isFinite(+li.description.DefaultCamera) && li.description.DefaultCamera !== '' ? +li.description.DefaultCamera : 0.785,
+    // the time of day the level starts at ("Root/Base/StartTime" = "12:0"; ServerApp.usl: 12:00 when missing, 8:30
+    // when malformed), in seconds of the day
+    startTime: dayTime(li.description.StartTime),
     // the level info names the setting ("Setting": "Cave1"); the number in the terrain header is the fallback
     setting: KNOWN_SETTINGS[info.Setting] || KNOWN_SETTINGS[t.setting] || 'Jungle',
     name: info.LevelName || info.MapName || fileName.replace(/\.ula$/i, ''),
@@ -191,7 +279,9 @@ export async function parseUla(buf, fileName = '') {
     objects: c.Objs ? objects(c.Objs, t.w, t.h) : [],
     plants: plants(c.IOMG),
     forest: parseForest(c.Frst),
-    // the setting by its own name (KNOWN_SETTINGS folds the caves into one texture set): forest kinds are per setting
+    walk: pathing(c.PaFi, t.w, t.h),
+    regions: regions(c.Rgns),
+    // the setting by its own name: forest kinds are per setting
     settingName: SETTINGS.includes(info.Setting) ? info.Setting : t.setting,
   };
 }

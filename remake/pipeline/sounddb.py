@@ -3,7 +3,7 @@
 Syntax handled:
     Root { SoundPath = '05_ui/'  evt { global = '1' sound_1 { wav = 'x.wav' volume = '70' ... }  sound_2 = 'sound_1' { wav = 'y.wav' } } }
 `name = 'base' { overrides }` copies the sibling block `base` and applies the overrides.
-Later mods (BoosterPack1) override files of the same name from Base.
+Later folders of the configuration (BoosterPack1, a mod) override files of the same name from Base (paths.game).
 """
 import re, os, json, sys
 try:
@@ -13,7 +13,6 @@ except ImportError:
 from pwexport import tree as _tree   # noqa: E402
 
 TOK = re.compile(r"'([^']*)'|(\{)|(\})|(=)|(//[^\n]*)|([^\s{}=']+)")
-MODS = ['Base', 'BoosterPack1']
 
 
 def parse(text):
@@ -44,11 +43,7 @@ def events_from(tree):
 
 def init_file(name):
     """path of a Scripts/Server/init file, latest mod wins"""
-    found = None
-    for m in MODS:
-        p = paths.data(os.path.join(m, 'Scripts/Server/init', name))
-        if os.path.exists(p): found = p
-    return found
+    return paths.game().file('Scripts/Server/init/' + name)
 
 
 def load_all():

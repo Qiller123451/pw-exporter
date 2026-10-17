@@ -39,12 +39,26 @@ const NIGHT = new Set(['Bldg', 'Deko', 'Fiel', 'Misc', 'Ship']);
 const STATES = new Set(['Bldg', 'Wall', 'Fiel', 'Misc', 'Deko', 'Vgtn', 'Ship']);   // construction / damage bits 21-28
 export function lodMask(a) { return a & 0x1f; }
 // helper parts the game never draws as the object: selection volumes, shadow models, tree billboards, night lights
-export function helper(a, fourcc) {
-  if ((a >>> 18) & 1 && SELVOL.has(fourcc)) return 'pick';
+// additive: the chunk's material adds light (GSF material flag 0x4, web/materials.js). On decorations the pick bit
+// then marks the light shapes of an effect, which the game shows (fx_heal_area, fx_holy_forest, ash_lava_glow_01)
+export function helper(a, fourcc, additive = false) {
+  if ((a >>> 18) & 1 && SELVOL.has(fourcc) && !(additive && fourcc === 'Deko')) return 'pick';
   if ((a >>> 19) & 1 && fourcc === 'Vgtn') return 'billboard';
   if ((a >>> 19) & 1 && fourcc !== 'Anim' && fourcc !== 'Char') return 'shadow';
   if ((a >>> 20) & 1 && NIGHT.has(fourcc)) return 'night';
   return null;
+}
+// does a flagged object (a Mesh, or a Group of Meshes) draw with an additive material (GSF flag 0x4)?
+export function isAdditive(n) {
+  let yes = false;
+  n.traverse((o) => {
+    if (!o.isMesh) return;
+    for (const m of [].concat(o.material)) {
+      const f = m && m.userData && m.userData.gsf_flags;
+      if ((m && m.userData && m.userData.glow) || (f && parseInt(String(f).split('/')[0], 16) & 0x4)) yes = true;
+    }
+  });
+  return yes;
 }
 // the objects of a loaded glTF scene that carry part flags (glTF mesh nodes: a Mesh, or a Group of Meshes)
 export function flagged(root) {
@@ -94,7 +108,7 @@ export function describe(root, fourcc) {
       if (fourcc === 'Ress') for (let k = 0; k < 6; k++) if ((a >>> (5 + k)) & 1) res.add(k + 1);
       if (NIGHT.has(fourcc) && (a >>> 20) & 1) night = true;
     }
-    const h = helper(a, fourcc) || (isHull(n) ? 'pick' : null);
+    const h = helper(a, fourcc, isAdditive(n)) || (isHull(n) ? 'pick' : null);
     if (h === 'pick' || h === 'shadow' || h === 'billboard') helpers = true;
   }
   // how many chunks have each of the 32 bits (the Visibility checkboxes show all of them)
@@ -112,7 +126,7 @@ export function defaultState(info) {
 }
 // the game's rules (Model Parts) for one chunk
 function gameVisible(n, a, fourcc, st) {
-  let h = helper(a, fourcc) || (isHull(n) ? 'pick' : null);
+  let h = helper(a, fourcc, isAdditive(n)) || (isHull(n) ? 'pick' : null);
   if (h === 'night' && st.night) h = null;
   if ((h === 'pick' || h === 'shadow' || h === 'billboard') && st.helpers) h = null;
   if (h || (!st.fx && isFx(n))) return false;

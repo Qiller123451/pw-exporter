@@ -13,9 +13,12 @@
 import { Player } from '../player.js';
 import { PLAYER_COLORS, hex, NEUTRAL_UI } from '../colors.js';
 import { Regions } from './regions.js';
+import { mapHeading } from '../maps/frame.js';
 import { Registry, Rec, Group } from './registry.js';
-import { Prop } from './props.js';
+import { Prop } from '../prop.js';
 import { TriggerEngine, prescan } from './engine.js';
+import { TribeSwap, TRIBES, tribeOfClass } from './tribes.js';
+import { PointBuy } from '../pointbuy.js';
 
 const UNIT_TYPES = new Set(['CHTR', 'ANML', 'VHCL', 'SHIP']);
 // the landscape of the map: left to maps/source.js (instanced, resources, nests) unless a mission addresses the object
@@ -24,7 +27,7 @@ const LANDSCAPE = new Set(['TREE', 'VGTN', 'WOOD', 'STON', 'FRUI', 'DCCO', 'DECO
 const RESOURCES = new Set(['TREE', 'WOOD', 'STON', 'FRUI', 'NEST']);
 const PARTS = new Set(['PROD', 'TRRT', 'MNIO']);
 // helper objects of the editor / the scripts: a record, nothing in the world
-const HELPERS = new Set(['SLOC', 'WYPT', 'GROU', 'QMRK', 'OTHR', 'DMGL', 'CFXE', 'COLL', 'FOOD']);
+const HELPERS = new Set(['SLOC', 'WYPT', 'GROU', 'QMRK', 'OTHR', 'DMGL', 'COLL', 'FOOD', 'ITSP']);
 // big scenery that units cannot walk through (the rule of maps/source.js for landscape objects)
 const SOLID = /rock|plateau|cliff|mountain|stone(?!_jun)|ruin|pillar|wall|temple|monument|archway|statue|head|coffin|stoneglobe|berg|basalt|arc0|wreck|crater|dead_tree|log|house|barricade|cage|gate|blocker|tower|hut|jail/;
 const NO_BLOCK = /bridge|river|stream|lava|waterfall|flag|fx_|smoke|flame|decal|pile_of_goods|_dest$/;
@@ -49,13 +52,17 @@ export async function loadCampaign(id) {
 }
 
 export class Campaign {
-  // G = the game object; loaded = loadCampaign(); cfg = { campaign, difficulty }
+  // G = the game object; loaded = loadCampaign(); cfg = { campaign, difficulty, tribe (optional: the player's tribe
+  // instead of the mission's, tribes.js), army (optional: bought on the army screen, game/pointbuy.js) }
   constructor(G, loaded, cfg) {
     this.G = G;
     this.index = loaded.index; this.entry = loaded.entry;
     this.data = loaded.data;
     this.id = loaded.entry.id;
     this.difficulty = Math.max(0, Math.min(2, cfg.difficulty == null ? 1 : +cfg.difficulty));    // 0 easy, 1 medium, 2 hard
+    this.chosenTribe = TRIBES.includes(cfg.tribe) ? cfg.tribe : null;
+    this.army = cfg.army && cfg.army.cards ? cfg.army : null;               // the human's start army and resources
+    this.swap = null;                            // TribeSwap when the player plays another tribe than the mission's
     this.map = this.data.map;
     this.players = [null, null, null, null, null, null, null, null];     // Player per slot
     this.human = null;                           // = G.me
@@ -77,6 +84,7 @@ export class Campaign {
     this.skip = new Set();                       // names of map objects the landscape source must leave out
     this.plans = [];                             // per JSON object: { o, kind, ... }
     this.missing = new Map();                    // class -> [count, reason]
+    this.resourceRecs = [];                      // records of addressed trees, stones, bushes (rec.node: the resource)
     this.evAt = 0;
     this.ready = false;
   }
@@ -89,9 +97,9 @@ export class Campaign {
   emit(type, ...args) { const l = this.listeners.get(type); if (l) for (const fn of l.slice()) fn(...args); }
 
   // ------------------------------------------------------------------ coordinates
-  // map (x east, y north; metres from the map's south-west corner) <-> game (x east, z south, origin = centre)
-  toGame(mx, my) { return [mx - this.ox, this.oy - my]; }
-  toMap(x, z) { return [x + this.ox, this.oy - z]; }
+  // map (x east, y south; metres from the map's north-west corner) <-> game (x east, z south, origin = centre)
+  toGame(mx, my) { return [mx - this.ox, my - this.oy]; }
+  toMap(x, z) { return [x + this.ox, z + this.oy]; }
   // "[x y z]", "x y z" or "x, y, z" of a trigger parameter -> { x, z (game), mx, my, mz (map), zero } or null
   vec(s) {
     const m = String(s == null ? '' : s).match(/-?\d+(?:\.\d+)?(?:e-?\d+)?/gi);
@@ -100,8 +108,9 @@ export class Campaign {
     const [x, z] = this.toGame(mx, my);
     return { x, z, mx, my, mz, zero: mx === 0 && my === 0 && mz === 0 };
   }
-  // heading of the map data (objects[].rot, the z angle of obj_rot) -> the world's heading (rotation about y)
-  heading(rot) { return +rot || 0; }
+  // heading of the map data (objects[].rot, the z angle of obj_rot) -> the world's heading (rotation about y):
+  // maps/source.js mapHeading
+  heading(rot) { return mapHeading(rot); }
   player(slot) { return slot >= 0 && slot < 8 ? this.players[slot] : null; }
   text(key) { const t = this.data.texts || {}; return key in t ? t[key] : key; }
   warn(msg) { if (!this.warnings.includes(msg)) this.warnings.push(msg); }
@@ -189,18 +198,44 @@ export class Campaign {
     }
     return out;
   }
+  // the classes of the objects an OCPY action gives the player by name (mission 12's telescope tower ruin): the
+  // player is given that very object, whatever tribe it was chosen to play
+  givenClasses() {
+    const byName = new Map((this.data.objects || []).map((o) => [o.name, String(o.class || '').toLowerCase()]));
+    const out = new Set();
+    for (const t of this.data.triggers || []) for (const a of t.actions || []) if (a.type === 'OCPY' && byName.has(a.p.obj_name)) out.add(byName.get(a.p.obj_name));
+    return out;
+  }
+  // does a condition of the mission ask for the player's objects of this tribe's classes? Mission 14 lets the
+  // player bring the Norsemen, the Dustriders or the Dragon Clan and asks which tribe's workers it has
+  asksFor(tribe) {
+    const slot = String(this.humanSlot);
+    for (const t of this.data.triggers || []) {
+      for (const c of t.conditions || []) if (String(c.p.obj_owner) === slot && tribeOfClass(c.p.obj_class || '') === tribe) return true;
+    }
+    return false;
+  }
   // D = Rules, manifest = asset manifest models. Classifies every placed object and collects models and skip names.
   plan(D, manifest) {
     this.D = D; this.manifest = manifest;
     const data = this.data;
     const human = data.players.find((p) => p.present && p.type === 'human') || data.players.find((p) => p.present);
     this.humanSlot = human ? human.id : 0;
-    this.tribes = [...new Set(data.players.filter((p) => p.present && p.tribe).map((p) => p.tribe))];
-    this.fullTribes = human && human.tribe ? [human.tribe] : [];
+    this.missionTribe = human ? human.tribe || '' : '';
+    if (this.chosenTribe && this.missionTribe && this.chosenTribe !== this.missionTribe) this.swap = new TribeSwap(D, this.missionTribe, this.chosenTribe, { given: this.givenClasses(), native: this.asksFor(this.chosenTribe), models: manifest });
+    this.humanTribe = this.swap ? this.chosenTribe : this.missionTribe;
+    this.tribes = [...new Set(data.players.filter((p) => p.present && p.tribe).map((p) => (p === human ? this.humanTribe : p.tribe)))];
+    this.fullTribes = this.humanTribe ? [this.humanTribe] : [];
     // what the triggers name: classes (models loaded, scenery made addressable) and objects
     const named = this.namedByTriggers();
     this.namedClasses = new Set();
     for (const w of named) { if (this.ruleClass(w) || manifest[w.toLowerCase()]) { this.namedClasses.add(w.toLowerCase()); this.needClass(w); } }
+    // the effects the triggers play (EFCT): the models of the particle database
+    const pdb = D.extra.particles || {};
+    for (const t of data.triggers || []) for (const a of t.actions || []) {
+      const fx = a.type === 'EFCT' && pdb[String(a.p.effect_path || '').replace(/^\/+|\/+$/g, '').toLowerCase()];
+      if (fx) this.needClass(fx[0]);
+    }
     // what the triggers will create that no parameter names (engine.js prescan): the whole tribe of an AI player that
     // gets a building behaviour (AIBV Dodo / Giraffe / Schnecke / Turtle), the classes of the AIFT army tables
     const pre = prescan(this, this.G.aiData || null);
@@ -210,20 +245,29 @@ export class Campaign {
     const refNames = new Set();
     for (const g in refs) if (refs[g][1]) refNames.add(refs[g][1]);
     for (const o of data.objects) {
-      const type = o.type || '', lc = String(o.class).toLowerCase();
+      const lc = String(o.class).toLowerCase();
       const pl = { o, kind: 'none' };
       this.plans.push(pl);
-      const rule = this.ruleClass(o.class), ix = rule ? D.info(rule) : null;
+      let rule = this.ruleClass(o.class), type = o.type || '';
+      // the player's objects become the chosen tribe's (tribes.js); the type of an equivalent can differ (the
+      // Dustriders' resource collector is an animal, the Norsemen's fireplace a building)
+      if (rule && o.owner === this.humanSlot && (UNIT_TYPES.has(type) || type === 'BLDG')) {
+        const to = this.ownClass(rule);
+        if (to !== rule) { rule = to; type = D.info(to).type; pl.swapped = true; }
+      }
+      const ix = rule ? D.info(rule) : null;
       // scenery a mission addresses (by GUID, name or class), hides or gives to a player stands on its own
       const addressed = !!refs[o.guid] || refNames.has(o.name) || named.has(o.name) || this.namedClasses.has(lc) || o.visible === false || (o.owner != null && !RESOURCES.has(type));
-      if (HELPERS.has(type) || lc === 'virtual_produce_unit') { pl.kind = 'helper'; this.skip.add(o.name); continue; }
+      // (placed effects - CFX - show like scenery; a heal glow saved with a unit is not one: FightingObj.HealMe)
+      if (HELPERS.has(type) || lc === 'virtual_produce_unit' || (type === 'CFXE' && lc === 'fx_heal_passive')) { pl.kind = 'helper'; this.skip.add(o.name); continue; }
       if (PARTS.has(type)) { pl.kind = 'part'; this.skip.add(o.name); continue; }
       if (ix && UNIT_TYPES.has(ix.type) && UNIT_TYPES.has(type)) {
         pl.kind = 'unit'; pl.cls = rule; this.skip.add(o.name);
         this.classModels(rule);
         continue;
       }
-      if (ix && ix.type === 'BLDG' && type === 'BLDG' && o.owner != null && data.players[o.owner] && data.players[o.owner].present) {
+      // (and the gates of nobody - mission 16's seas_hq_gate: a CGate opens and closes whoever owns it)
+      if (ix && ix.type === 'BLDG' && type === 'BLDG' && ((o.owner != null && data.players[o.owner] && data.players[o.owner].present) || (o.owner == null && D.script(rule) === 'CGate'))) {
         pl.kind = 'building'; pl.cls = rule; this.skip.add(o.name);
         this.classModels(rule);
         continue;
@@ -237,6 +281,10 @@ export class Campaign {
         continue;
       }
       if (LANDSCAPE.has(type) && !addressed) { pl.kind = 'landscape'; continue; }
+      // trees, stones and fruit bushes a mission addresses (the tutorial highlights the bushes with OCPY) stay
+      // resources of the map source; their record follows the resource node (build: rec.node). Hidden ones stay
+      // scenery that can be shown later (OBAP).
+      if (RESOURCES.has(type) && type !== 'NEST' && o.visible !== false) { pl.kind = 'resource'; continue; }
       // everything else is scenery of its own: needs a model
       this.skip.add(o.name);
       const model = this.modelOf(o, manifest);
@@ -244,14 +292,22 @@ export class Campaign {
       pl.kind = 'prop'; pl.model = model;
       this.need.add(model);
     }
+    // the chests of the items the item spawns make (systems/items.js)
+    if (data.objects.some((o) => o.type === 'ITSP')) this.need.add('item_treasure_chest');
     // start locations: main buildings and start armies
     for (const p of data.players) {
       if (!p.present) continue;
-      if (p.include_buildings && MAIN_BUILDING[p.tribe]) this.classModels(MAIN_BUILDING[p.tribe]);
-      for (const a of p.start_army || []) this.classModels(a.class);
+      const tribe = p === human ? this.humanTribe : p.tribe;
+      if (p.include_buildings && MAIN_BUILDING[tribe]) this.classModels(MAIN_BUILDING[tribe]);
+      if (p === human && this.army) for (const c of Object.values(this.army.cards)) this.classModels(new PointBuy(this.D).resolve(c, tribe).cls);
+      else for (const a of p.start_army || []) this.classModels(p === human ? this.ownClass(a.class) : a.class);
     }
     return this;
   }
+  // the class an object of the human player gets: with another tribe chosen, the equivalent of that tribe
+  ownClass(cls) { const r = this.ruleClass(cls); return this.swap && r ? this.swap.cls(r) : r || cls; }
+  // a tech tree filter path for player p (the player's filters translated to the chosen tribe; null = none)
+  filterFor(p, path) { return this.swap && p === this.human ? this.swap.filter(path) : path; }
   // models to load on top of the full tribes and the map's landscape
   models() { return this.need; }
 
@@ -262,6 +318,7 @@ export class Campaign {
     this.world = W;
     this.ox = S.origin[0]; this.oy = S.origin[1];
     this.regions = new Regions(data.regions, (mx, my) => this.toGame(mx, my), (x, z) => this.toMap(x, z));
+    this.world.regions = this.regions;             // (named regions the buildings' behaviours use: the Scorpion's attacks)
     this.objects = new Registry(this, this.regions);
     // ---- players (triggers.md §6.7 no. 1, 2; ServerApp.usl:398-599)
     const list = [];
@@ -269,12 +326,15 @@ export class Campaign {
       if (!pd.present) continue;
       const c = PLAYER_COLORS[pd.color] || null;
       const me = pd.id === this.humanSlot;
-      const p = new Player(pd.id, pd.tribe || '', {
+      const p = new Player(pd.id, (me ? this.humanTribe : pd.tribe) || '', {
         ai: !me, name: pd.name || ('Player ' + pd.id), team: pd.team,
-        color: c ? hex(c.dark) : me ? NEUTRAL_UI.me : 0x9a9a9a, partyColor: c ? hex(c.light) : null,
+        color: c ? hex(c.dark) : me ? NEUTRAL_UI.me : 0x9a9a9a, partyColor: c ? hex(c.light) : null, colorSlot: c ? pd.color : -1,
         rules: D, diplomacy: pd.diplomacy,
       });
       p.slot = pd.id; p.data = pd;
+      // played with another tribe: buildings of the mission's tribe the player is given keep their own actions
+      // where the chosen tribe has nothing of that role (the tavern for the SEAS, rules.js actionsOf)
+      if (me && this.swap) p.foreignActions = true;
       // army pyramid and population limit of the level (Restrictions/Chars; Player.usl:281, RequirementsMgr.usl:186)
       const lim = (pd.unit_limits || []).map((u, i) => (u && u.max != null ? u.max : D.pyramid[i]));
       if (lim.length === 5 && lim.some((v, i) => v !== D.pyramid[i])) p.pyramid = lim;
@@ -286,7 +346,7 @@ export class Campaign {
     this.human = this.players[this.humanSlot];
     for (const p of list) p.tt.suspend();
     // tech tree filters of the level: mostly AntiActions = what the mission forbids (ServerApp.usl:527-535)
-    for (const p of list) for (const f of p.data.tech_filters || []) W.setFilter(p, f, true);
+    for (const p of list) for (const f of p.data.tech_filters || []) { const g = this.filterFor(p, f); if (g) W.setFilter(p, g, true); }
     // stand-ins for classes without a model
     for (const pl of this.plans) if (pl.cls) { const si = this.standInModel(pl.cls); if (si) W.standIns.set(pl.cls.toLowerCase(), si); }
     for (const w of this.namedClasses) { const r = this.ruleClass(w); const si = r && this.standInModel(r); if (si) W.standIns.set(r.toLowerCase(), si); }
@@ -295,7 +355,7 @@ export class Campaign {
     W.onEntity = (e) => this.entityCreated(e);
     for (const pl of this.plans) {
       const o = pl.o;
-      const rec = pl.rec = new Rec({ guid: o.guid, name: o.name, cls: o.class, type: o.type || '', index: o.index, handle: o.handle, slot: o.owner == null ? -1 : o.owner, x: o.x, y: o.y, data: o });
+      const rec = pl.rec = new Rec({ guid: o.guid, name: o.name, cls: pl.swapped ? pl.cls : o.class, type: pl.swapped ? this.D.info(pl.cls).type : o.type || '', index: o.index, handle: o.handle, slot: o.owner == null ? -1 : o.owner, x: o.x, y: o.y, data: o });
       rec.placed = false;
       if (pl.kind === 'landscape' || pl.kind === 'part') { this.counts[pl.kind === 'part' ? 'parts' : 'landscape']++; continue; }      // not addressable: no entry in the tables
       this.objects.add(rec);
@@ -316,12 +376,33 @@ export class Campaign {
       const o = pl.o, rec = pl.rec;
       if (pl.kind === 'missing') { this.counts.missing++; this.miss(o.class, 'no model'); }
       else if (pl.kind === 'nest') rec.placed = true;       // rec.nest: linked in wildlifeReady()
+      else if (pl.kind === 'resource') {
+        const [x, z] = this.toGame(o.x, o.y);
+        rec.node = W.resources.find((n) => n.alive && Math.abs(n.pos.x - x) < 1.5 && Math.abs(n.pos.z - z) < 1.5) || null;
+        rec.placed = !!rec.node;
+        if (rec.node) this.resourceRecs.push(rec); else this.miss(o.class, 'no resource of the map');
+      }
+      else if (pl.kind === 'prop' && o.type === 'FNTN' && rec.prop) W.addWell(rec.prop, o.attr, o.class);     // healing wells
+      else if (pl.kind === 'prop' && o.type === 'ITEM' && rec.prop) W.placeItem(o.class, rec.prop.pos.x, rec.prop.pos.z, rec.prop.rot, rec.prop);  // items
+      else if (pl.kind === 'helper' && o.type === 'DMGL') {
+        // lakes of healing / damage (systems/landmarks.js): a region of the map
+        const a = o.attr || {};
+        W.addLake({ name: o.name, region: a.region_name || '', heal: D.isA(o.class, 'CLakeOfHealing'), amount: +a.damage_per_tick || 0, types: a.damage_types || '' });
+      }
       else if (pl.kind === 'helper' && o.type === 'OTHR' && /^showfow/i.test(o.class) && this.players[o.owner]) {
         // a placed ShowFOW_Obj: its owner sees the place (the radius is not in the data: 20 m, a guess)
         const [x, z] = this.toGame(o.x, o.y);
         rec.reveal = W.revealArea(this.players[o.owner], x, z, 20, 0);
       }
     }
+    // the items the level's item spawns make (CItemMgr.GenerateItems; the level's Root/Items: S.itemPool)
+    const spawns = this.plans.filter((pl) => pl.o.type === 'ITSP').map(({ o }) => {
+      const a = o.attr || {}, [x, z] = this.toGame(o.x, o.y), yes = (v) => v === '1' || v === 'true';
+      return { x, z, rot: this.heading(o.rot), items: String(a.spawn_items || '').split('|').map((c) => c.trim()).filter(Boolean), always: yes(a.generate_always), random: yes(a.random_item) };
+    });
+    if (spawns.length && S.itemPool) W.generateItems(spawns, S.itemPool.pool, S.itemPool.max);
+    // (the items they made are objects of the mission: the triggers find them by class - GiveItem, ITEM)
+    for (const it of W.items) if (!it.rec) { const rec = new Rec({ name: this.objects.newName(it.name), cls: it.name, type: 'ITEM' }); rec.prop = it; it.rec = rec; this.objects.add(rec); }
     // passengers that start inside a transport (attributes transporter_guid / passenger_guids)
     for (const pl of this.plans) {
       const o = pl.o, a = o.attr || {};
@@ -383,8 +464,10 @@ export class Campaign {
   applyState(pl, e) {
     const o = pl.o, W = this.world, rec = pl.rec;
     if (o.max_hp > 0 && o.hp > 0 && o.hp < o.max_hp) { e.hp = Math.max(1, Math.round(e.maxHp * o.hp / o.max_hp)); if (e.kind === 'building') e.updateVisual(); }
-    // the flag bits are decoded by correlation only (CAMPAIGN_FORMAT.md §6): `visible` is certain, the others hints
-    if (o.invulnerable) W.setInvulnerable(e, true);
+    // the flag bits are decoded by correlation only (CAMPAIGN_FORMAT.md §6): `visible` is certain, the others hints.
+    // `invulnerable` (bit 31) is not applied: it is also set on trees, question marks and groups, mission 9 makes its
+    // flagged objects invulnerable by trigger, and mission 1's prison guard hu_warrior_68 has it but must be killed.
+    // Invulnerability comes from the triggers (ACDO Invulnerability) only.
     const flags = (o.visible === false ? 0 : 1) | (o.hitable === false ? 0 : 2) | (o.selectable === false ? 0 : 4);
     if (flags !== 7) this.setAppearance(rec, flags);
   }
@@ -392,12 +475,29 @@ export class Campaign {
     const o = pl.o, W = this.world, a = o.attr || {};
     const [x, z] = this.toGame(o.x, o.y);
     this.pending = pl.rec;
-    const b = W.placeBuilding(pl.cls, this.players[o.owner], x, z, this.heading(o.rot), a.building_ready !== '0');
+    // building_ready "0" = a construction site (the zeppelin wreck of mission 4). Without the attribute and with 0 hit
+    // points the building was never put up (the launch ramp of mission 9, "Order your workers to build the ramp!")
+    const ready = a.building_ready != null ? a.building_ready !== '0' : a.hitpoints == null || +a.hitpoints > 0;
+    const owner = this.players[o.owner], at = String(pl.cls).toLowerCase() === String(o.class).toLowerCase() ? { x, z, rot: this.heading(o.rot) } : this.fit(pl.cls, owner, x, z, this.heading(o.rot));
+    const b = W.placeBuilding(pl.cls, owner, at.x, at.z, at.rot, ready);
     this.pending = null;
     if (!b) { this.counts.missing++; this.miss(o.class, 'no model'); return; }
     if (b.def.gate && a.GateState != null && W.setGate) W.setGate(b, +a.GateState);     // 0 open, 1 closed, 2 automatic
+    // CLaunchPad.OnPostLoad: the Dragon Clan's telescope tower ruins (mission 12) are sites already half built
+    if (!ready && String(o.class).toLowerCase() === 'ninigi_telescope_tower_ruins' && W.addProgress) W.addProgress(b, 0.49);
     this.counts.buildings++;
     this.applyState(pl, b);
+  }
+  // a building of another tribe's class (tribes.js) can be bigger than the one the map was made for, and walls and
+  // harbours snap to their own grid / the coast: the nearest place where it fits (else where it was)
+  fit(cls, owner, x, z, rot) {
+    const W = this.world;
+    for (let k = 0; k < 160; k++) {
+      const r = k ? 1 + k * 0.25 : 0, a = k * 2.4;
+      const pl = W.placement(cls, x + Math.cos(a) * r, z + Math.sin(a) * r, rot, owner);
+      if (pl.ok && !pl.replace && !pl.existing) return { x: pl.x, z: pl.z, rot: pl.rot };
+    }
+    return { x, z, rot };
   }
   placeUnit(pl) {
     const o = pl.o, W = this.world;
@@ -419,7 +519,7 @@ export class Campaign {
     const [x, z] = this.toGame(o.x, o.y);
     const lc = pl.model;
     const landscape = LANDSCAPE.has(o.type || '');
-    const block = !NO_BLOCK.test(lc) && (o.type === 'DCCO' || o.type === 'BLDG' || SOLID.test(lc));
+    const block = !NO_BLOCK.test(lc) && (o.type === 'DCCO' || o.type === 'BLDG' || o.type === 'FNTN' || SOLID.test(lc));
     const owner = o.owner != null ? this.players[o.owner] : null;
     // scenery keeps its stored height; ship models (wrecks, moored boats, mines: model type "Ship") are stored at the
     // sea bed and float at the water level, as the game puts them when it loads the map
@@ -455,19 +555,26 @@ export class Campaign {
     if (sl.is_sequence && sl.seq_filename) return;            // SL:337-347: the sequence creates the start instead
     let stand = 3;
     if (pd.include_buildings && MAIN_BUILDING[p.tribe]) {
-      // Aje: the resource collector only for a computer player (or without an army budget), SL:386-390
-      const cls = MAIN_BUILDING[p.tribe];
-      const e = p.tribe === 'Aje' && !p.ai ? null : W.spawn(cls, p, x, z, { heading });
+      // Aje: the resource collector only for a computer player (or without an army budget), SL:386-390 - a human
+      // buys it with the army. A mission made for another tribe has no collector in its army: then it stands here.
+      const cls = MAIN_BUILDING[p.tribe], bought = p.tribe === 'Aje' && !p.ai && !(this.swap && p === this.human);
+      const e = bought ? null : W.spawn(cls, p, x, z, { heading });
       if (e) stand = e.radius;
-      else if (!(p.tribe === 'Aje' && !p.ai)) this.miss(cls, 'start building not created');
+      else if (!bought) this.miss(cls, 'start building not created');
     }
     if (sl.ignore_pointbuy) return;
+    // the army screen's army (SL:482-623 with the result the menu wrote, GIW:430-431)
+    if (p === this.human && this.army) {
+      new PointBuy(D).place(W, p, this.army, x, z, { stand: 0.99 * stand + 1.5, face: heading });
+      p.res.skulls = Math.max(0, (pd.resources || {}).iron || 0);
+      return;
+    }
     (pd.start_army || []).forEach((a, i) => {
       // SL:545-556: workers stand in three groups by caste around the start, heroes and soldiers anywhere around it
       const ang = a.caste === 'tec' ? 2.094 : a.caste === 'nat' || a.preset === 'Stina_s0' ? 4.189 : a.caste === 'res' ? 0 : (i * 2.399) % 6.283;
       const r = 0.99 * stand + 1.5 + (i % 3) * 1.2;
       const gx = x + Math.cos(ang + 0.785) * r, gz = z - Math.sin(ang + 0.785) * r;
-      const rule = this.ruleClass(a.class);
+      const rule = this.ruleClass(p === this.human ? this.ownClass(a.class) : a.class);
       const u = rule ? W.spawn(rule, p, gx, gz, { level: Math.max((a.level || 0) + 1, D.minLevel(rule, p)), heading }) : null;
       if (!u) this.miss(a.class, 'start army unit not created');
     });
@@ -489,7 +596,7 @@ export class Campaign {
       switch (e.type) {
         case 'died': case 'destroyed': case 'removed': {
           const rec = e.entity && e.entity.rec;
-          if (!rec) break;
+          if (!rec || rec.entity !== e.entity) break;          // converted meanwhile (convert): the record lives on
           // a destroyed nest spawns no more animals
           if (rec.nest) { rec.nest.amount = 0; W.wildNests = W.wildNests.filter((n) => n !== rec.nest); }
           this.objects.drop(rec);
@@ -499,6 +606,11 @@ export class Campaign {
         case 'diplomacy': this.emit('diplomacy', e); break;
         default: break;
       }
+    }
+    // a used up resource the triggers address is gone (DEAD)
+    if (this.resourceRecs.length && this.resourceRecs.some((r) => !r.node.alive)) {
+      for (const r of this.resourceRecs) if (!r.node.alive) this.objects.drop(r);
+      this.resourceRecs = this.resourceRecs.filter((r) => r.node.alive);
     }
     this.objects.compact();
     for (const p of this.props) if (p.anim) p.update(dt);
@@ -515,7 +627,7 @@ export class Campaign {
     const W = this.world, D = this.D;
     let [x, z] = this.toGame(mx, my);
     const owner = this.player(slot);
-    const rule = this.ruleClass(cls);
+    const rule = this.ruleClass(owner && owner === this.human ? this.ownClass(cls) : cls);
     let rec = null;
     if (rule) {
       const ix = D.info(rule);
@@ -564,8 +676,31 @@ export class Campaign {
     const rec = this.objects.get(ref);
     if (!rec) return false;
     const p = this.player(slot), from = rec.owner;
+    if (rec.entity && p && p === this.human && this.ownClass(rec.entity.name) !== rec.entity.name) return this.convert(rec, p);
     if (rec.entity) return this.world.setOwner(rec.entity, p);          // 'owner' is emitted from the world event
     rec._slot = p ? p.id : -1;
+    this.emit('owner', rec, from, p);
+    return true;
+  }
+  // an object given to the player in a mission played with another tribe becomes the chosen tribe's (tribes.js):
+  // the same record (name, groups) gets a new world object of the equivalent class in the same place (a building where
+  // it fits: fit), with the same share of hit points and level; 'owner' is emitted as for OCPY
+  convert(rec, p) {
+    const W = this.world, e = rec.entity, from = e.owner, to = this.ownClass(e.name);
+    const ix = this.D.info(to), x = e.pos.x, z = e.pos.z, ratio = e.hp / e.maxHp;
+    const level = e.kind === 'unit' ? e.level : undefined, built = e.kind !== 'building' || e.built;
+    if (this.G.sel) this.G.sel.delete(e);
+    W.removeEntity(e);
+    rec.entity = null;
+    rec.setClass(to, ix.type);
+    this.pending = rec;
+    const at = ix.type === 'BLDG' ? this.fit(to, p, x, z, e.heading || 0) : { x, z, rot: e.heading || 0 };
+    const n = W.spawn(to, p, at.x, at.z, { level: level != null ? Math.max(level, this.D.minLevel(to, p)) : undefined, heading: at.rot, built });
+    this.pending = null;
+    if (!n) { this.warn(`${to}: could not be created for the player (model not loaded?)`); this.objects.drop(rec); return false; }
+    n.hp = Math.max(1, Math.round(n.maxHp * ratio));
+    if (n.kind === 'building') n.updateVisual();
+    else n.home.set(n.pos.x, n.pos.z);
     this.emit('owner', rec, from, p);
     return true;
   }
@@ -607,6 +742,7 @@ export class Campaign {
     if (!e || !e.anim || !e.anim.has(name)) return false;
     if (e.kind === 'unit') { this.world.releaseTask(e); e.task = { type: 'idle' }; e.path = []; e.busyAnim = true; }
     let left = Math.max(1, Math.round(loops) || 1);
+    if (e.kind === 'building') e.lastAnim = name;          // its last pose (a gate that opened) in a saved game
     const again = () => { if (--left > 0 && e.alive) e.anim.play(name, { loop: false, restart: true, onDone: again }); else if (e.kind === 'unit') e.busyAnim = false; else if (e.idleAnim && !/open|close/.test(name)) e.idleAnim(); };
     e.anim.play(name, { loop: false, restart: true, onDone: again });
     return true;

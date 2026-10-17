@@ -104,6 +104,12 @@ export const Economy = {
     }
     if (node && node.type === 'tree') { t.phase = 'chop'; return; }
     let k, tf;
+    if (farm && res === 'power') {
+      // the sequel's power plants: the workers keep the plant running, the power goes into the grid (no carrying)
+      if (u.carry) u.setCarry(null);
+      t.farmKind = 'power'; t.loops = 1; t.phase = 'work';
+      return;
+    }
     if (farm) {
       const unlimited = farm.def.script === 'CAjeUnlimitedBuilding' || farm.def.script === 'CUnlimitedBuilding';
       k = unlimited ? K.unlimited : K.field; tf = selfTF(u) * selfTF(farm);
@@ -136,6 +142,7 @@ export const Economy = {
     const res = t.res;
     let clip;
     if (u.cls !== 'CHTR') clip = u.anim.pick('harvest', 'work_0', 'attack_front', 'standanim');
+    else if (farm && t.farmKind === 'power') { clip = u.anim.pick('hacking_dirt', 'hacking', 'potter_ground'); u.attachTool(null); }
     else if (farm && t.farmKind === 'unlimited') { clip = u.anim.pick('potter_ground', 'harvesting_bush'); u.attachTool(null); }
     else if (farm) {
       // fields: "sowing" with the seed basket for the first quarter of the grow cycle, then "scything" with the sickle
@@ -149,6 +156,11 @@ export const Economy = {
     u.anim.play(clip);
     const loopT = Math.max(0.5, u.anim.duration(clip) || 1.2);
     t.work += dt;
+    // power plants (game/sequel/power.js): each work loop is credited to the grid; the worker stays at the plant
+    if (farm && t.farmKind === 'power') {
+      if (t.work >= loopT) { t.work -= loopT; if (this.hooks && this.hooks.power) this.hooks.power(u, farm, loopT); }
+      return;
+    }
     // fields credit their harvest in chunks of 2..5 loops and advance the field's grow animation (GetCorn.usl)
     if (farm && t.farmKind === 'field') {
       const cap = this.carryCap(u, res);
@@ -236,10 +248,10 @@ export const Economy = {
   // a load reaches the storehouse: a computer player's gather factor (CAiPlayer.AddResource, Player.usl:600) multiplies
   // it; -> the part of the load that did not fit (a remainder below one unit is dropped)
   gain(p, res, amount) {
-    const g = p.aiMods ? p.aiMods.gather || 1 : 1;
-    if (g === 1) return p.deliver(res, amount, this.time);
+    const g = p.aiMods ? p.aiMods.gather || 1 : 1, before = p.res[res] || 0;
     const left = p.deliver(res, amount * g, this.time);
-    return left < 1 ? 0 : left / g;
+    if (p.gained && res in p.gained) p.gained[res] += Math.max(0, (p.res[res] || 0) - before);     // (statistics: what was stored)
+    return g === 1 ? left : left < 1 ? 0 : left / g;
   },
   // search radius: wood 64 m around the last tree, stone 100 m, food 50 m (the scripts' search_for_jobs)
   findNextNode(u) {
@@ -256,7 +268,7 @@ export const Economy = {
     // hunting chain (GetFood.usl:478): out of carcasses -> attack the next animal of the same kind within 50 m
     if (!n && res === 'food' && t.hunt) {
       const prey = this.nearestAnimal(from.x, from.z, t.hunt, 50);
-      if (prey && !(u.carry && u.carry.amount > 0)) { this.releaseTask(u); u.task = { type: 'attack', target: prey, user: true, huntFood: true }; return; }
+      if (prey && !(u.carry && u.carry.amount > 0)) { this.releaseTask(u); u.task = { type: 'attack', target: prey, user: true }; return; }
     }
     if (!n && res === 'food') n = this.nearestResource(from.x, from.z, 'food', 50, t.node, (x) => x.type !== 'corpse');
     if (u.carry && u.carry.amount > 0) { t.phase = 'deliver'; t.drop = null; t.node = n; if (n) n.workers.add(u); return; }
@@ -299,6 +311,7 @@ export const Economy = {
     if (node.type !== 'tree') return;
     node.type = 'timber';
     node.chop = 0;
+    this.forestVersion = (this.forestVersion || 0) + 1;      // (the minimap's forest)
     this.props.remove(node.propHandle);
     if (node.spriteHandles) for (const h of node.spriteHandles) this.foliage.hide(h);
     this.nav.mark(node.cells || [], -1);
@@ -339,14 +352,19 @@ export const Economy = {
     for (const r of RES) if (p.caps[r] < before[r] && p.res[r] > p.caps[r]) p.res[r] = p.caps[r];
   },
   // ------------------------------------------------------------------ trade carts (Trade.usl)
-  // A cart shuttles between two of its owner's trade buildings; each arrival pays the building's owner
-  //   win = max(1, 5 * (distance / 50) ^ 1.32)  ->  win food, win / 1.5 wood, win / 2 stone
+  // A cart sent to a friendly market (Dock) shuttles between it and its home market; each arrival pays the market's
+  // owner win = max(1, 5 * (distance / 50) ^ 1.32) of every resource: the price divisor is the flying trader's, whose
+  // prices are never set (CFlyingTraderMgr.OnInit is commented out in ServerApp.usl) - so 1 for food, wood and stone.
   isTradeBuilding(b) { return b && b.kind === 'building' && b.built && b.alive && /CWarehouse|CMarketplace/.test(b.def.script || ''); },
+  // the cart's home (TransportObj.GetHome): the market it came from, else the nearest of its owner's
+  tradeHome(u) {
+    if (!this.isTradeBuilding(u.tradeHome) || u.tradeHome.owner !== u.owner) u.tradeHome = this.buildings.filter((b) => this.isTradeBuilding(b) && b.owner === u.owner).sort((a, b) => a.distTo(u) - b.distTo(u))[0] || null;
+    return u.tradeHome;
+  },
   startTrade(u, target) {
-    const home = this.buildings.filter((b) => this.isTradeBuilding(b) && b.owner === u.owner).sort((a, b) => a.distTo(u) - b.distTo(u))[0];
-    if (!home) return false;
-    if (!target || target === home) target = this.buildings.filter((b) => this.isTradeBuilding(b) && b !== home && b.owner && u.owner.isFriend(b.owner)).sort((a, b) => b.distTo(home) - a.distTo(home))[0];
-    if (!target) return false;
+    const home = this.tradeHome(u);
+    if (!home || !this.isTradeBuilding(target) || !target.owner || !u.owner.isFriend(target.owner)) return false;
+    if (target === home) { const [x, z] = this.approachPoint(u, home); u.task = { type: 'move', x, z, user: true }; u.setPath(x, z); return true; }
     u.task = { type: 'trade', from: home, to: target, user: true };
     const [x, z] = this.approachPoint(u, target); u.setPath(x, z);
     return true;
@@ -359,9 +377,10 @@ export const Economy = {
     const D = Math.hypot(t.to.pos.x - t.from.pos.x, t.to.pos.z - t.from.pos.z);
     const win = Math.max(1, 5 * Math.pow(D / 50, 1.3219));
     const p = t.to.owner;
-    for (const [r, k] of [['food', 1], ['wood', 1.5], ['stone', 2]]) p.deliver(r, win / k, this.time);
+    for (const r of RES) p.deliver(r, win, this.time);
     this.emit('traded', { unit: u, amount: win, building: t.to });
     [t.from, t.to] = [t.to, t.from];
+    u.tradeHome = t.from;                                  // SetHome(target): the market reached is its home now
     const [x, z] = this.approachPoint(u, t.to); u.setPath(x, z);
   },
   // CWarehouse.Buy: up to 100 skulls -> resources (limited by free storage, counted in skulls)

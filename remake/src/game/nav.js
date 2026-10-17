@@ -48,6 +48,48 @@ export class NavGrid {
       c[k] = v;
     }
   }
+  // regions of the ground that are connected (8-neighbourhood, diagonals like find), labelled once the terrain is
+  // marked (mountains, water, map border) and before anything is built: a goal in another region is unreachable
+  // whatever stands there, so find() heads for the nearest cell of the start's region instead of searching in vain
+  labelRegions() {
+    const n = this.n, B = this.block, R = this.region = new Int32Array(n * n).fill(-1), st = new Int32Array(n * n);
+    let label = 0;
+    for (let k0 = 0; k0 < n * n; k0++) {
+      if (B[k0] || R[k0] >= 0) continue;
+      let top = 0; st[top++] = k0; R[k0] = label;
+      while (top) {
+        const c = st[--top], ci = c % n, cj = (c - ci) / n;
+        for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+          if (!di && !dj) continue;
+          const i = ci + di, j = cj + dj;
+          if (i < 0 || j < 0 || i >= n || j >= n) continue;
+          const k = j * n + i;
+          if (B[k] || R[k] >= 0 || (di && dj && (B[cj * n + i] || B[j * n + ci]))) continue;
+          R[k] = label; st[top++] = k;
+        }
+      }
+      label++;
+    }
+    this.regions = label;
+  }
+  // nearest free cell of region reg around cell c (ring search), or -1
+  nearestInRegion(c, reg, maxR = 80) {
+    const n = this.n, ci = c % n, cj = Math.floor(c / n), R = this.region;
+    for (let r = 0; r < maxR; r++) {
+      let best = -1, bd = 1e9;
+      for (let j = cj - r; j <= cj + r; j++) {
+        if (j < 0 || j >= n) continue;
+        const step = j === cj - r || j === cj + r ? 1 : 2 * r;
+        for (let i = ci - r; i <= ci + r; i += step || 1) {
+          if (i < 0 || i >= n) continue;
+          const k = j * n + i;
+          if (R[k] === reg && !this.block[k]) { const d = (i - ci) ** 2 + (j - cj) ** 2; if (d < bd) { bd = d; best = k; } }
+        }
+      }
+      if (best >= 0) return best;
+    }
+    return -1;
+  }
   // cells a unit of radius r needs between its centre and the nearest obstacle
   need(r) { return Math.max(1, Math.ceil(r / this.cell - 0.25)); }
   fits(k, need) { return this.clear[k] >= need; }
@@ -134,21 +176,33 @@ export class NavGrid {
     return this.nearestFree(c, maxR);
   }
   // path from (sx,sz) to (tx,tz) for a unit of the given radius; returns [[x,z],...] or null
-  find(sx, sz, tx, tz, radius = 0.7, maxIter = 30000, who = null) {
+  // breach: closed gates of the enemy count as passable at a high cost - an attacker whose way they block attacks
+  // the first of them (World unitUpdate); the result then has .gate. this.found: the goal was reached.
+  find(sx, sz, tx, tz, radius = 0.7, maxIter = 30000, who = null, breach = false) {
     const n = this.n;
     const need = this.need(radius);
     if (need > 1) this.updateClearance();
     this.who = who;
+    this.found = false;
     const gates = this.gateAt.size > 0;
     const ok0 = need > 1 ? (k) => this.clear[k] >= need : (k) => !this.block[k];
-    const ok = gates ? (k) => ok0(k) && !this.gateBlocks(k, who) : ok0;
+    // only an enemy's gate is broken; a closed gate of one's own side or of a neutral stays shut
+    const enemyGate = (k) => { const g = this.gateAt.get(k); return !!g && this.gateBlocks(k, who) && !!who && !!g.owner && who.isEnemy(g.owner); };
+    const ok = gates ? (breach ? (k) => ok0(k) && (!this.gateBlocks(k, who) || enemyGate(k)) : (k) => ok0(k) && !this.gateBlocks(k, who)) : ok0;
+    const toll = gates && breach ? (k) => (enemyGate(k) ? 25 : 0) : () => 0;
     const sIdx = this.idx(sx, sz);
     const s = ok(sIdx) ? sIdx : this.nearestFit(sIdx, need, 8);
-    const tIdx = this.idx(tx, tz);
+    let tIdx = this.idx(tx, tz);
+    // a goal the start's ground region does not reach (across mountains or water): the nearest point that it does
+    const R = this.region;
+    if (R && R[s] >= 0) {
+      const tr = R[this.block[tIdx] ? this.nearestFree(tIdx, 6) : tIdx];
+      if (tr !== R[s]) { const k = this.nearestInRegion(tIdx, R[s]); if (k >= 0) { tIdx = k; tx = this.center(k)[0]; tz = this.center(k)[1]; } }
+    }
     const tb = !ok(tIdx);
     const t = tb ? this.nearestFit(tIdx, need) : tIdx;
-    if (!tb && ok(sIdx) && this.los(sx, sz, tx, tz, need)) return [[tx, tz]];
-    if (s === t) return [tb ? this.center(t) : [tx, tz]];
+    if (!tb && ok(sIdx) && this.los(sx, sz, tx, tz, need)) { this.found = true; return [[tx, tz]]; }
+    if (s === t) { this.found = true; return [tb ? this.center(t) : [tx, tz]]; }
     const stamp = ++this.cur;
     const { g, f, from, heap, closed, block } = this;
     const tcx = t % n, tcz = Math.floor(t / n);
@@ -173,14 +227,16 @@ export class NavGrid {
         const k = j * n + i;
         if (!ok(k) || closed[k] === stamp) continue;
         if (di && dj && (!ok(cj * n + i) || !ok(j * n + ci))) continue;
-        const ng = g[c] + (di && dj ? 1.41421 : 1);
+        const ng = g[c] + (di && dj ? 1.41421 : 1) + toll(k);
         if (this.stamp[k] !== stamp || ng < g[k]) { this.stamp[k] = stamp; g[k] = ng; f[k] = ng + h(k) * 1.02; from[k] = c; push(k); }
       }
     }
     const end = found ? t : best;
+    this.found = found;
     const cells = [];
     for (let c = end; c !== -1 && c !== s; c = from[c]) cells.push(c);
     cells.reverse();
+    const gk = breach ? cells.find((c) => enemyGate(c)) : undefined;
     const pts = cells.map((c) => this.center(c));
     if (found && !tb && pts.length) pts[pts.length - 1] = [tx, tz];
     const out = [];
@@ -192,6 +248,7 @@ export class NavGrid {
       [ax, az] = pts[j];
       i = j + 1;
     }
+    if (gk !== undefined && out.length) out.gate = this.gateAt.get(gk);
     return out.length ? out : null;
   }
 }

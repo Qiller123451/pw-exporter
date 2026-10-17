@@ -24,7 +24,7 @@ export class Rec {
     this.handle = o.handle || null;             // [index, serial] of the original handle manager
     this.data = o.data || null;                 // the JSON object (placed objects)
     this.entity = null;                         // world Unit / Building (rec.entity.rec === rec)
-    this.prop = null;                           // campaign/props.js Prop (scenery, items, non-tech-tree objects)
+    this.prop = null;                           // game/prop.js Prop (scenery, items, non-tech-tree objects)
     this.groupObj = null;                       // type GROU: its Group
     this.group = null;                          // the Group this object is a member of (at most one, GroupObj.usl:93)
     this.alive = true;
@@ -39,6 +39,8 @@ export class Rec {
   get isUnit() { return UNIT_TYPES.has(this.type); }
   // 0-based level as the triggers count it
   get level0() { return this.entity && this.entity.kind === 'unit' ? this.entity.level - 1 : 0; }
+  // the object became another class (the player's objects in a mission played with another tribe, tribes.js)
+  setClass(cls, type) { this.cls = cls; this.lc = String(cls).toLowerCase(); if (type) this.type = type; }
 }
 
 export class Group {
@@ -58,6 +60,15 @@ export class Registry {
     this.counter = new Map();                   // run-time names: class -> next number
     this.dirty = false;
   }
+  // ------------------------------------------------------------------ classes
+  // does the record's object count as class `lc` (lower case)? Its own class, or for the player's objects in a
+  // mission played with another tribe the chosen tribe's equivalent of the class the mission names (tribes.js)
+  classIs(rec, lc) {
+    if (rec.lc === lc) return true;
+    const S = this.C.swap;
+    return !!S && rec.slot === this.C.humanSlot && String(S.standsFor(lc) || '').toLowerCase() === rec.lc;
+  }
+
   // ------------------------------------------------------------------ records
   add(rec) {
     rec.listed = true;
@@ -140,7 +151,8 @@ export class Registry {
   posOf(rec) {
     const e = rec.entity;
     if (e) { const p = e.inside && e.inside.pos ? e.inside.pos : e.pos; return [p.x, p.z]; }
-    if (rec.prop) return [rec.prop.pos.x, rec.prop.pos.z];
+    if (rec.prop) { const c = rec.prop.item && rec.prop.item.carrier, p = c ? c.pos : rec.prop.pos; return [p.x, p.z]; }   // (a carried item: where its carrier is)
+    if (rec.node) return [rec.node.pos.x, rec.node.pos.z];
     return this.C.toGame(rec._x, rec._y);
   }
   inRegion(rec, region) {
@@ -156,13 +168,15 @@ export class Registry {
     const cls = q.cls ? String(q.cls).toLowerCase() : null;
     const ex = q.exclude && q.exclude.length ? new Set(q.exclude.map((c) => String(c).toLowerCase())) : null;
     const out = [];
+    const ex1 = ex ? [...ex] : null;
     for (const r of this.all) {
       if (!r.alive || !r.placed) continue;
       if (r.entity && r.entity.alive === false) continue;     // dying: its "died" event is handled at the end of the slice
-      if (types && !types.has(r.type)) continue;
       if (q.owner !== undefined && q.owner !== null && r.slot !== q.owner) continue;
-      if (cls && r.lc !== cls) continue;
-      if (ex && ex.has(r.lc)) continue;
+      if (cls && !this.classIs(r, cls)) continue;
+      // the type of an equivalent can differ (the Dustriders' resource collector is an animal, the fireplace a building)
+      if (types && !types.has(r.type) && !(cls && r.lc !== cls)) continue;
+      if (ex1 && ex1.some((c) => this.classIs(r, c))) continue;
       if (q.filter && !q.filter(r)) continue;
       if (region && !this.inRegion(r, region)) continue;
       out.push(r);
@@ -209,14 +223,14 @@ export class Registry {
     if (!this.inRegion(rec, this.regions.get(g('rgn_guid', '')))) return false;
     const name = g('obj_name', 'NA');
     if (name !== 'NA') return rec.guid === g('obj_guid', 'NA') || rec.name === name;
-    const types = g('obj_type', 'All').split('|').filter(Boolean);
-    if (!types.includes('All') && !types.includes(rec.type)) return false;
     const owner = parseInt(g('obj_owner', '-2'), 10);
     if (owner >= -1 && rec.slot !== owner) return false;
-    const cls = g('obj_class', 'NA');
-    if (cls !== 'NA' && rec.lc !== cls.toLowerCase()) return false;
+    const cls = g('obj_class', 'NA').toLowerCase();
+    if (cls !== 'na' && !this.classIs(rec, cls)) return false;
+    const types = g('obj_type', 'All').split('|').filter(Boolean);
+    if (!types.includes('All') && !types.includes(rec.type) && !(cls !== 'na' && rec.lc !== cls)) return false;
     const ex = g('exclude_class', '').split('|').map((s) => s.trim().toLowerCase()).filter(Boolean);
-    return !ex.includes(rec.lc);
+    return !ex.some((c) => this.classIs(rec, c));
   }
 }
 export { Regions };

@@ -40,6 +40,9 @@
       if (d < 18 && !e.def.structure) near++;
       if (d < bd) { bd = d; best = e; }
     }
+    // things to destroy that nobody would come near on his own (boats, guns across the water): when nobody is at
+    // the bot's throat, the nearest of the objective's targets
+    if (ob.type === 'destroy' && near < 2) { let tb = null, td = 1e9; for (const q of M.targets) { if (!q.alive || q.locked) continue; const d = q.pos.distanceTo(P.pos); if (d < td) { td = d; tb = q; } } if (tb && (!best || best.def.structure || bd > 14)) { best = tb; bd = td; } }
     // on a ride (rides.js): the mammoth goes for the nearest target and strikes; the gunship's guns follow it
     if (P.ride) {
       const R = P.ride, tg = M.targets.filter((q) => q.alive).sort((a, b) => a.pos.distanceTo(P.pos) - b.pos.distanceTo(P.pos))[0] || best;

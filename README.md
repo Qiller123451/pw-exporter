@@ -5,11 +5,13 @@ Community tools for **ParaWorld** (SEK / Sunflowers, 2006):
 * **Model & Map Exporter** – every unit, building, animal and map of the game in 3D, with animations, add-ons and
   player colours; export to GLB, glTF, OBJ, Collada, STL, PLY (FBX, .blend, USD and Alembic with Blender), maps to 3D
   files, height maps and raw data with [Kaitai Struct](https://kaitai.io) descriptions of the map format.
-* **ParaWorld Remake** – the game rebuilt for the web browser: skirmish against the computer with all four tribes on
-  the original maps or random maps, with the rules, models, sounds and interface of your installation.
+* **ParaWorld Remake** – the game rebuilt for the web browser: the campaign and skirmishes of up to eight players
+  with all four tribes on the original maps or random maps, with the rules, models, sounds and interface of your
+  installation.
 * **ParaWorld Shooter** – a third-person action game made from the same data: the SEAS Gunner and the Executioner
   MKII against swarms of Dustriders in the Holy City – alone, or as part of a full SEAS assault – and against the
-  Norsemen on an island of the game's own making, with a war mammoth to ride and a gunship to fly.
+  Norsemen on an island of the game's own making, with a war mammoth to ride and a gunship to fly, and against the
+  Dragon Clan on a second one.
 
 ![The launcher](docs/screenshots/11_launcher.png)
 
@@ -40,7 +42,10 @@ listens on your computer.
      textures, interface and rules of your installation), then **Play**.
 
 Settings, caches and the remake's game data are kept in `%APPDATA%\ParaWorldToolkit` (Linux/macOS:
-`~/.config/paraworld-toolkit`); set the environment variable `PWTOOLKIT_HOME` to keep them somewhere else.
+`~/.config/paraworld-toolkit`). The caches and the game data take several GB (about 2 GB per configuration, plus the
+films): **Toolkit data → Change** at the bottom of the launcher moves them to another folder, e.g. onto the drive
+ParaWorld is on; the settings stay where they are. The environment variable `PWTOOLKIT_DATA` sets that folder too,
+`PWTOOLKIT_HOME` moves everything (settings included).
 `python -m toolkit --port 8420 --no-browser` starts the server without opening a browser.
 
 ## Model & Map Exporter
@@ -58,6 +63,9 @@ Settings, caches and the remake's game data are kept in `%APPDATA%\ParaWorldTool
   height map, material map, object list (CSV), JSON, preview picture, unpacked map data plus Kaitai Struct
   descriptions (`pwexport/data/ksy/paraworld_ula.ksy`, `paraworld_surf.ksy`).
 * Command line for scripts and batch exports (`python -m pwexport.cli`, `python -m pwexport.ula`).
+* **HD models** (a proof of concept, for now the shooter's Gunner, Executioner MKII and gun turret): finer meshes and
+  4x textures (Real-ESRGAN, no PyTorch needed), and a version rebuilt in Blender - made on your computer with
+  `python -m pwexport.hd`, shown by the viewer and the shooter next to the originals: [docs/HD_MODELS.md](docs/HD_MODELS.md).
 
 The full guide with a tutorial: **[docs/EXPORTER.md](docs/EXPORTER.md)**.
 
@@ -69,19 +77,45 @@ A browser remake built from the original game's data: the original tech tree (Bo
 the original server scripts' rules (special moves, auras, the army pyramid, epochs, walls, harbours and fleets,
 nests), the computer opponent for every tribe, the original maps, sounds, music, menus and interface art.
 
-* Start a skirmish from the title screen: your tribe, the computer's tribe and difficulty, a random jungle map or one
-  of the maps of your installation (maps you install into the game appear by themselves).
+* Start a skirmish from the title screen as in the original's setup: up to eight players (you and computer players
+  with their tribe, personality, level 0–9, team, colour, handicap and start position), Deathmatch, Domination or
+  Defender, a random jungle map or one of the maps of your installation (maps you install into the game appear by
+  themselves), and the army budget: buy your start army and resources on the "My Army" page with the game's points.
+* In the game: the diplomacy window (your opinion of every player, tribute), the chat (`Enter`; "AI2: help" asks a
+  computer player), and at the end the game's statistics with their time line.
 * **Debug mode** (skirmish option): everything is free and instant for you, building requirements included.
-* Controls follow the original: left click selects, right click orders, drag to box-select, `Ctrl+1–9` groups,
-  the mouse wheel zooms, `Esc` opens the menu.
+* Controls follow the original (its key table): left click selects, right click orders (dragged: a formation arrow),
+  `Q A Y` / `E D C` / `X` then `1–0` press the command bar's buttons, `V` attack, `B` move, `H` headquarters,
+  `Ctrl+0–9` groups, the mouse wheel zooms, `Esc` opens the menu; the whole list is under Controls in the menu.
+* The interface is laid out like the original's: the army pyramid on the left, the info window and command bar at the
+  bottom left, the minimap as the original draws it (a diamond in the setting's relief colours, fog of war, ping and
+  zoom buttons) in the bottom right corner with the tooltip window above it - the tooltips with the original's own
+  texts ([remake/docs/MINIMAP.md](remake/docs/MINIMAP.md), [remake/docs/TOOLTIPS.md](remake/docs/TOOLTIPS.md)).
 
 **Computer player.** The opponent is a port of the original's script AI (behaviours, attack plans per epoch,
 difficulty handicaps, defence): [remake/docs/COMPUTER_PLAYER.md](remake/docs/COMPUTER_PLAYER.md).
 
-**Campaign (work in progress).** The original single player missions are read from the installation and run by a
-trigger engine written after the original scripts. Mission 11 (Arena) plays to the end, mission 1 (Stranded) part of
-the way; the others are greyed out in the menu until they are adapted. See
+**Campaign.** The original single player missions are read from the installation and run by a trigger engine
+written after the original scripts. All 17 missions play to the end, each with any of the four tribes (the player's
+buildings and units become the chosen tribe's), with the official game or a mod (MIRAGE ...). The story films are
+converted for the browser in the background the first time the campaign menu opens (ffmpeg: the one on the PATH,
+else the pip package `imageio-ffmpeg`, installed automatically); until then a film's lines are shown as subtitles.
+Missions with an army budget open the army screen first: the mission's own army, and what the bonus points of the
+mission before buy on top of it. See
 [remake/docs/CAMPAIGN_RUNTIME.md](remake/docs/CAMPAIGN_RUNTIME.md) §13 and [docs/CAMPAIGN_FORMAT.md](docs/CAMPAIGN_FORMAT.md).
+
+**Saved games.** Campaign missions, skirmishes and the sequel can be saved and loaded from the menu: slots in the
+browser, or a `.pwsave` file to keep or move; `F5` quick save, `F8` quick load.
+
+![ParaWorld: Containment - the diner in Copper Basin](docs/screenshots/sequel_liftoff.png)
+
+**ParaWorld: Containment (1964).** A new campaign of ten missions written for the remake, a sequel to the original's
+ending: the rifts have opened into our world, and SEAS has to contain the outbreak across 1960s America (and once in
+ParaWorld). Its own mechanics: rifts sealed by stabilizers, townsfolk to evacuate, tranquilizers and capture trucks,
+electrified nets, night and searchlights, command powers, and electricity - a fifth resource made in power plants
+and carried home over pole lines the dinosaurs can cut. The 1960s towns, cars and machines are made in Blender from
+CC0 materials and painted in ParaWorld's weathered look (remake/art/sequel).
+[remake/docs/SEQUEL.md](remake/docs/SEQUEL.md).
 
 How it is built: [remake/docs/ARCHITECTURE.md](remake/docs/ARCHITECTURE.md),
 [DATA_PIPELINE.md](remake/docs/DATA_PIPELINE.md), [GAMEPLAY_RULES.md](remake/docs/GAMEPLAY_RULES.md),
@@ -93,7 +127,7 @@ How it is built: [remake/docs/ARCHITECTURE.md](remake/docs/ARCHITECTURE.md),
 ![The Gunner at the city gate](docs/screenshots/20_shooter.png)
 
 A fast third-person (or first-person) swarm shooter with the models, animations, maps and sounds of your
-installation. Three missions:
+installation. Four missions:
 
 * **The Holy City** (campaign mission 5): alone through the ruined city, district by district – 17 objectives.
 * **The Assault** (the fan-made map *Holy City defender* of the MIRAGE mod; greyed out without it): the SEAS land
@@ -103,6 +137,9 @@ installation. Three missions:
   landing beach through a palisade and a village, up a pass into the snow, across a frozen lake to the fortress of
   the rune gate – 18 objectives. For one of them you ride a **war mammoth** (tusks, stamp, charge: the only thing
   that breaks the stone gate of the pass), for another you fly a **SEAS gunship** over the fortress.
+* **Dragon Fire**: the second map of the game's own making and the fourth enemy, the Dragon Clan - smoke towers,
+  rocket towers, mine fields, gatlings and flame trikes; from the beach through the rice terraces, the bamboo forest,
+  the town and the harbour up the volcano to the temple court and the Seismosaurus titan - 22 objectives.
 
 * Two characters, swapped at any time with `Tab`: the **Gunner** (machine gun, flamethrower, rocket launcher, knife)
   and the **Executioner MKII** (claw combo on the left mouse button, minigun while the right one is held, a ramming
@@ -113,6 +150,9 @@ installation. Three missions:
 * Districts that are not open yet are shut off by rubble and a faint energy wall; the rubble is blown away when the
   next objective opens them.
 * Armour, executions that restore it, damage numbers, three difficulties, a session log for crash reports.
+* HD models (a proof of concept): with HD versions of the Gunner, the Executioner MKII and the gun turret made
+  (`python -m pwexport.hd`, [docs/HD_MODELS.md](docs/HD_MODELS.md)) the settings offer "Models": Original / HD / HD
+  remodelled.
 
 | | |
 |---|---|
@@ -120,6 +160,8 @@ installation. Three missions:
 | ![The Assault: the first wave on the beach](docs/screenshots/25_shooter_assault.png) | ![The Assault: the war towers of the outer line](docs/screenshots/26_shooter_towers.png) |
 | ![Iron Winter: before the palisade](docs/screenshots/27_shooter_frost.png) | ![Iron Winter: on the war mammoth](docs/screenshots/28_shooter_mammoth.png) |
 | ![Iron Winter: the gunship over the cape](docs/screenshots/29_shooter_gunship.png) | ![Iron Winter: the Triceratops titan in the fortress](docs/screenshots/30_shooter_titan.png) |
+| ![Dragon Fire: the rice terraces behind the stakes](docs/screenshots/31_shooter_dragon.png) | ![Dragon Fire: the town under the volcano](docs/screenshots/32_shooter_dragon_town.png) |
+| ![Dragon Fire: the fleet at the quay](docs/screenshots/33_shooter_dragon_fleet.png) | ![Dragon Fire: the Seismosaurus titan](docs/screenshots/34_shooter_dragon_titan.png) |
 
 **Start:** prepare the remake's game data once (launcher → *ParaWorld Remake → Prepare the game data*), then
 double-click **`Start ParaWorld Shooter.bat`** (or run `python -m shooter`). The game opens in the browser – use
@@ -165,6 +207,8 @@ Contributions welcome – keep game files out of commits (`.gitignore` blocks th
   of the model part flags per model type.
 * [three.js](https://threejs.org) (MIT license; `pwexport/web/vendor/three`, and bundled into `remake/game/game.js`),
   [esbuild](https://esbuild.github.io), [Kaitai Struct](https://kaitai.io).
+* [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) by Xintao Wang et al. (BSD-3-Clause): the network is
+  rewritten in numpy in `pwexport/hd/esrgan.py`; its published weights are downloaded when HD models are made.
 * ParaWorld © SEK / Sunflowers / Ubisoft. This project is an unofficial fan work; it contains no files of the game
   and only reads the files of your own copy. Models, textures, sounds and texts stay the property of their owners.
 

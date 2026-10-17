@@ -14,6 +14,13 @@ onto it, which numbers it uses and what is approximated.
 | `ai/army.js` | `AiGoalMinistryOfDefense`, `AiGoalKindergarten`, special moves of `AiTaskAttackObject` | the standing army by unit mix, level-ups, special moves |
 | `ai/attack.js` | `AiGoalDisturbAttack`, `AiModuleFightDefault`, the attack goals, `AiTaskBuildSquad`, `AiTaskAttackObject`, `AiGoalSingleplayerAttack` | the strategist, `Attack` objects (squad → gather → walk → fight), scripted waves, landings, pest patrol, scout |
 | `ai/defense.js` | `AiModuleDefenseDefault`, `AiGoalDefendOutpost`, `AiGoalGuardVillage`, `AiGoalDefendMode`, `AiGoalBuildTowers` | danger detection, defenders, worker cover, militia, guard point, towers, defence areas |
+| `ai/walls.js` | `AiGoalBuildVillageWalls`, `AiTaskBuildWalls` / `BuildGate` / `BuildTowers` | the village wall: ring, segments, gates, towers at segment starts, archers on the wall |
+| `ai/outposts.js` | `AiGoalBuildOutpost`, `AiGoalIslandSurveillance`, the attack outpost of `AiGoalBuildArmy`, `EM.StartOutpost` | outposts with a crew and buildings of their own; stone outposts; the attack outpost; campaign outpost waves |
+| `ai/trade.js` | `AiGoalManageMarketPlaces` | a Schnecke's trade route: outpost market, towers along the way, carts |
+| `ai/naval.js` | `AiGoalAttackShips`, `AiGoalWatercrossing`, `AiModuleArea` (transfers, touries) | ship attacks; squads crossing the water in transports; units left on another land fetched home |
+| `ai/items.js` | `AiGoalGetItem`, `DisturbAttack.CheckGetItem`, `AiTaskAttackObject` (items on the way) | fetching items in the first epochs; squads pick up what lies on their way |
+| `ai/gametypes.js` | the Defender and KingOfTheHill branches of `AiGoalDisturbAttack`, `AiGoalGuardVillage`, `AiModuleFightDefault.CheckForTimers`, `CAiUtilityMgr` | Domination flag attacks, the defender's crystal guard, the timer attack of the last 5 minutes (docs/spec/ai_gametypes.md) |
+| `ai/chat.js` | `AiGoalGuardVillage.CryForHelp`, `AiModuleControl` (AI requests) | the cry for help to friends; answers to "AI<n>: help / food / wood / stone / gift" |
 | `ai.js` | | keeps `import { TribeAI } from './game/ai.js'` working |
 
 ## How it plays
@@ -86,7 +93,8 @@ has a 0-9 list per AI slot). Campaign maps pass their own value. `ai.json` → `
   one by one.
 - The handicaps live on the `Player` (`player.aiMods = { gather, buildTime, researchTime, weaponTime, attack,
   defense, pyramid, unitLimit }`) and are read by the systems (economy `gain`, production `productionTime` /
-  `pyramidFor`, construction, combat `attackDuration` / `takeDmg`).
+  `pyramidFor`, combat `attackDuration` / `takeDmg`); `buildTime` scales the production of units, like the
+  original's, not the construction of buildings.
 
 ## Interface (campaign triggers)
 
@@ -105,7 +113,8 @@ brain.update(dt)                              // nothing while paused (Mikrobe) 
 world.setAggro(units, state)                  // AIAM: 0 stand ground, 1 defensive (20 m), 2 aggressive, -1 passive
 ```
 Positions are game coordinates `{x, z}`. `mapOptions`: `{ walls, markplace_outpost, harbour, warpgate,
-hunt_animals, watermap }` (the map's AI options). `levelName` ('Single 04' ...) selects the level-specific rows
+hunt_animals, watermap }` (the map's AI options: a campaign level's, and on a skirmish map its `Root/AIOptions`
+over the defaults - harbour and water map from the map's water, hunting on; `maps/source.js aiOptions`). `levelName` ('Single 04' ...) selects the level-specific rows
 of the attack plan. `brain.launched` lists every attack that set out (`{ t, go, type, n, scripted, hunt, result }`),
 `brain.attacks` the running ones. Test switches in the URL: `?aib=Dodo,Giraffe` (personality by player id),
 `?aid=4` (difficulty), `?noaidata` (play on the built-in fallbacks).
@@ -138,11 +147,37 @@ of the attack plan. `brain.launched` lists every attack that set out (`{ t, go, 
   animals within 170 m (food) / 220 m (skulls) by kind and distance and sizes the party by the animal (one or two
   for a peaceful one, hit points / 150 otherwise; nothing above 400 / 1000 hit points before / from epoch 3 for
   skulls). Hunters walk and attack their prey only (an attack-move would take on everything they pass).
-- **Velociraptor handlers** have no raptors in the remake yet, so the Aje train spearmen in their place.
-- **Not built / not done**: walls, mines, outposts, trade routes, ship attacks and transports for the AI's own
-  squads, guerilla raids, trap detection, item pick-up, flank way points of the ranged army, calls for help,
-  Defender and King of the Hill modes, point-buy presets, units spawned for late squads at difficulty 9.
-  `RessourceOutpost` / `AttackOutpost` waves return null; `Item_Attack` runs as an ordinary wave.
+- **Walls** (`ai/walls.js`, docs/spec/ai_group6.md §1): the ring is the original engine's WallPlacer, which the
+  scripts only call; the remake's: the convex hull of the village's buildings 12 m out on the wall grid, its runs
+  of placeable tiles as segments of at most 12 tiles, the gate in the middle of a straight stretch of a segment of
+  4+ tiles (built as a wall piece first: the remake's gates replace one), one tile left open in shorter ones. The
+  archers on the wall: the original never sends them (it searches around a position it never sets); the remake
+  does what the code means. SEAS gets no gates (its gate class "seas_fence_gate" does not exist: kept). Enclosed
+  workers are not killed (KE): the gates open for their owner.
+- **Outposts** (`ai/outposts.js`, §2): an outpost is the engine's object in the original; here a place with the
+  buildings within 60 m of it. Failed starts count against the five (kept). Outposts on other islands are not
+  started (the crew's transfer by ship is not done for them). Hu and Ninigi have no settings tables: their crews are
+  2 workers and the cheapest fighter. Aje's OP_ResAll wants both of its rows (the original overwrote the tower).
+- **Trade** (`ai/trade.js`, §3): carts at most 6 (the original has no limit); the attack for a damaged market gets
+  the enemies at it as targets (the original's list is empty). The route's areas are approximated by distances.
+- **At sea** (`ai/naval.js`, §4): the landing is the water off the target nearest it (the original's
+  GetShipLandingPos / the levels' tables are not used); the ship attack ranks ships before harbours (the original's
+  test ranks every building lower); mine belts are not laid.
+- **Chat** (`ai/chat.js`, §5): the original answers any other text with its Eliza chatbot (engine code): no answer
+  here; skulls asked for get no answer (as in the original). The support squad is the "coop" attack (not one of the
+  plan's three). The requests come from the chat bar ("AI<n>: ..." in a line to all, `ui/chat.js`) and the
+  diplomacy window (Send = gift, Request = the resource, `ui/diplomacy.js`).
+- **Army budget** (skirmish with points, docs/spec/pointbuy.md §8): the brain buys its start army when it starts
+  (`main.js createBrains`, `game/pointbuy.js aiPreset`): `<Tribe>/AiPBPreset<sub><Easy|Medium|Hard>`, then without the
+  difficulty, then the generic files; the tier of the budget or the largest below it [?engine]; the generic files'
+  `warrior` / `scout` become the tribe's own units [?engine].
+- **Items** (`ai/items.js`, §6): campaign `Item_Attack` still runs as an ordinary wave.
+- **Game types** (`ai/gametypes.js`, docs/spec/ai_gametypes.md §6): the timer attack of the last 5 minutes only
+  goes against an enemy holder and runs once at a time (the original also "attacks" its own and allied units, again on
+  every fight think); the siege army is always `SiegeAttack_4` in every game type, as in the original (SI:152).
+- **Not built / not done**: mines, guerilla raids, trap detection, flank way points of the ranged army, the never
+  enabled `CAiGoalKotH` (its trigger mode cannot be switched on: FM:186), units spawned for late squads at
+  difficulty 9.
 
 ## Measured (default skirmish map, 640 m, `tests/ai_match.js` and `_notes/tools/human.js`)
 
@@ -195,5 +230,5 @@ afterwards with the same picture):
 
 ## Tests
 
-`tests/ai_match.js` (AI against AI, timelines), `tests/ai_defence.js`, `tests/ai_campaign.js`; all three are in
-`tests/regress.sh`. In `?manual` mode nothing draws, so long matches call `G.fx.update` themselves.
+`tests/ai_match.js` (AI against AI, timelines), `tests/ai_defence.js`, `tests/ai_campaign.js`, `tests/ai_walls.js`,
+`tests/ai_outpost.js`, `tests/ai_trade.js`, `tests/ai_items.js`, `tests/ai_chat.js`; all are in `tests/regress.sh`. In `?manual` mode nothing draws, so long matches call `G.fx.update` themselves.

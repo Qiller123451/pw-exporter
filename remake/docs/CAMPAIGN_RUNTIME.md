@@ -13,11 +13,11 @@ action needs. §11 describes the trigger engine that makes the mission play (`sr
 
 | what | how |
 |---|---|
-| config | `{ campaign: <mission id 0-16>, difficulty: 0 | 1 | 2 }` (easy, medium, hard) instead of the skirmish config |
-| URL (tests) | `index.html?manual&campaign=11&difficulty=1` (also `&reveal`, `&debug`) |
-| menu | title → Campaign → mission list (localised titles and descriptions) → difficulty → Start mission |
+| config | `{ campaign: <mission id 0-16>, difficulty: 0 | 1 | 2, tribe: '' | 'Hu' | 'Aje' | 'Ninigi' | 'SEAS' }` (easy, medium, hard; tribe: §1.1) instead of the skirmish config |
+| URL (tests) | `index.html?manual&campaign=11&difficulty=1` (also `&tribe=SEAS`, `&reveal`, `&debug`) |
+| menu | title → Campaign → mission list (localised titles and descriptions) → your tribe → difficulty → game data (toolkit only: the official game or a mod, §1.2) → Start mission |
 | restart / next | `sessionStorage 'pwr.autostart'` holds the config, the page reloads (as for skirmish). "Next mission" on the end screen starts `G.campaign.next()` |
-| data | `campaign/index.json` → `[{ id, key, map, data, name, title, description, tribe, point_buy }]` in playing order (`Campaigns.txt`); `campaign/<pack>/<rel>.ula.json` = the mission JSON. Served by `toolkit/remake.py` (`campaign_file`, `campaign_index`), cached under `<built data>/campaign/pw-campaign_1/<lang>/`; a mission file is rebuilt when the map or `pwexport/campaign.py` is newer |
+| data | `campaign/index.json` → `[{ id, key, map, data, name, title, description, tribe, point_buy, min_credits }]` in playing order (`Campaigns.txt`); `campaign/<pack>/<rel>.ula.json` = the mission JSON. Served by `toolkit/remake.py` (`campaign_file`, `campaign_index`), cached under `<built data>/campaign/pw-campaign_1/<lang>/`; a mission file is rebuilt when the map or `pwexport/campaign.py` is newer |
 
 Order of a start (`main.js startGame`): `loadCampaign(id)` → `new Campaign(G, loaded, cfg).plan(rules, manifest)` →
 map source (the landscape, without the objects the campaign places itself: `cfg.skipObjects`) → `loadModels` →
@@ -30,6 +30,74 @@ events of the slice have been forwarded to the campaign's listeners by then). Pe
 
 What a mission does **not** have: `G.ai` is `null` (there is no single opponent), no skirmish win / lose rule
 (`checkEnd` returns at once), no warp gate rule, no "defeat the …" message.
+
+### 1.1 Another tribe (`tribes.js`)
+
+Every mission can be played with any tribe. With `cfg.tribe` set to a tribe other than the mission's (the human
+player's tribe in the data), `plan()` makes a `TribeSwap(rules, missionTribe, chosenTribe)` (`G.campaign.swap`) and:
+
+- the human `Player` is the chosen tribe (its tech tree, main building, start resources, all its models loaded);
+- every object the player owns becomes the chosen tribe's object of the same role: placed objects (`plan`: the
+  type may change - the Dustriders' resource collector is an animal, its Norse equivalent a building; a building
+  can be bigger than the one the map was made for, and harbours and walls snap to the coast / their grid:
+  `setup.fit` places it at the nearest free spot, test `tests/campaign_fit.js`), the start
+  army (`startLocation`), objects created for the player by triggers (`spawn`) and objects given to the player
+  later (`setOwner` → `convert`: same record, new world object of the equivalent class, same share of hit points
+  and level). Heroes, Special and World objects stay as they are;
+- class conditions and queries about classes of the mission's tribe accept the equivalent for the player's objects
+  (`Registry.classIs` → `TribeSwap.standsFor`: `select`, `matches`, `BLDG`; an equivalent's type may differ from the
+  queried type). Classes of the other tribes are meant as they are, and nothing is translated when the mission's
+  conditions ask for the chosen tribe's own classes (`setup.asksFor`: mission 14 lets the original player bring
+  Norsemen, Dustriders or Dragon Clan and plays the matching landing film). A class the chosen tribe has nothing
+  for (no houses for the Dragon Clan, no tavern for the SEAS ... `null` in the table) keeps its class; such a
+  class, or one whose equivalent only comes in a later epoch (`TribeSwap.missing`: the Norse chariot comes with
+  epoch 2, the other tribes' archer carriers with epoch 3 or a hero's invention), makes `BLDG`, `TECH`, `REGN` and
+  `UNTT TRMO` conditions about the player's objects of it true at once - except a class outside the table whose
+  object an `OCPY` gives the player by name (`setup.givenClasses`: mission 12's telescope
+  tower ruin): the player has that very object;
+- a building of the mission's tribe the player owns offers its own tribe's actions (`player.foreignActions`,
+  `Rules.actionsOf`): the SEAS hire heroes in the Norsemen's tavern;
+- a level filter that forbids a building the chosen tribe's epochs need (the Dragon Clan: lumber mill and dojo) is
+  dropped, so the epoch an objective asks for stays reachable;
+- tech tree filters of the level (`tech_filters`) and of `TECH` actions / conditions are translated path by path
+  (`filterFor`: `Build/<type>/<class>[_level]`, `Upgrades/<main building>/age_N`, `BuildObjects/<class>`; heroes
+  keep their path under the new tribe; other tribe-specific upgrades are dropped).
+- The Dustriders buy their resource collector with the army (StartLocation.usl:386-390); in a mission made for
+  another tribe it stands at the start location like the other tribes' main buildings.
+
+Which class stands in for which (`TribeSwap.equivalent`) starts from a role table (`ROLES` in `tribes.js`), made
+from the base game's data: the build menus of the tech tree (`/Actions/<tribe>/Build`: which building or worker
+makes an object, at which menu position) and the script classes of the class files (CFireplace, CRallyBuilding,
+CStonemason, CWall ...). The classes the chosen tribe can make in the loaded game data - with a mod's tech tree
+(§1.2) that includes the mod's new buildings and units - compete with it by closeness (`profile`, `distance`):
+
+- what the object is (building, character, animal or vehicle, ship) and does: wall piece or gate, harbour, worker
+  (builds and gathers; every Dustrider builds), gatherer, healer, transport, population room, the kinds of units it
+  makes (animals and vehicles count alike), the goods it takes in, armed or not, fighting from afar or up close;
+- how big (its footprint in the models' manifest), sturdy, dear and late in the game it is (a class of a later
+  epoch than the original's is farther);
+- its name: classes whose names end in the same noun are of a kind (`aje_tent`, `seas_small_tent`; generic nouns -
+  dino, ship, nest, field ... - and sizes do not count).
+
+The table's class stands unless a class of the same kind by name fits about as well and the table's does not share
+the name (MIRAGE: the Dustriders' tent becomes the SEAS small tent, the clay wall the SEAS wall, the spearmen the
+SEAS spearmen); a table class the data cannot match at all stands too (the Dustriders' main building is an animal).
+A role the table leaves empty takes a class of the same kind by name or a very close one (MIRAGE: the SEAS get the
+Norse tavern as their pub, the temple as their laboratory); a role whose class the mod lacks takes the closest one
+(MIRAGE has no SEAS cart: the trade dino). Classes outside the table map to the class of the same name in the chosen
+tribe when there is one (`hu_harbour` → `ninigi_harbour`), else to one of the same kind by name, else keep their
+class. In the base game the table's roles stand. Tests: `tests/tribe_match.mjs` (node; base and, with
+`PW_REMAKE_MOD_DATA`, MIRAGE), `tests/campaign_tribes.js` (in `regress.sh`: mission 4 as Norsemen, 13 as SEAS).
+
+### 1.2 Game data of a mod
+
+Served by the toolkit, the remake runs with the data of one configuration: `/remake/` the official game (Base +
+BoosterPack1), `/remake/mod/<id>/` a mod with everything it requires (`pwexport/mods.py`, e.g. MIRAGE = Base +
+BoosterPack3 + MIRAGE) - the same game code with that configuration's data (DATA_PIPELINE.md "Configurations"). The
+campaign menu's "Game data" choice (`/api/toolkit/remake/configs`; hidden without the toolkit) builds a
+configuration's data on first use (progress in the menu, `/api/toolkit/remake/build {mod}` and `/state?mod=`), then
+loads that configuration's page with the mission in `pwr.autostart`. Settings (localStorage) are shared by all
+configurations; `CONFIG_MOD` (ui/menu.js) is the page's own. Test: `tests/campaign_mod_menu.py <toolkit url>`.
 
 ### Ending a mission
 
@@ -69,7 +137,8 @@ slots of a mission (`player.ai === true`) are to get one each, asleep until `AIB
 | `tribes`, `fullTribes` | tribes of the present players; tribes whose models are loaded completely (§7) |
 | `world` | the `World` |
 
-Coordinates. Mission data is in **map** coordinates (x east, y north, metres from the south-west corner, z up);
+Coordinates. Mission data is in **map** coordinates (x east, y south, metres from the north-west corner, z up; left-handed,
+docs/MAP_FORMAT.md);
 the world runs in **game** coordinates (x east, **z south**, origin = map centre, y up).
 
 ```js
@@ -307,7 +376,9 @@ without a model are not placed (listed in `C.warnings`).
    player's `include_buildings` is set (Aje: the resource collector only for a computer player); the start army
    (`start_army`, 0-based levels, `Stina_s0` already replaced by `special_eusmilus`) and the start resources -
    both only if the start location is not `ignore_pointbuy`, as in the script. Resources of `-1` (the missions
-   with the army screen) become the tribe's default stock.
+   with the army screen) become the tribe's default stock. A mission started from the campaign menu with an army
+   budget (`PB_Available`) brings the army of its army screen instead (`cfg.army`, `menu.js campaignArmy`,
+   docs/spec/pointbuy.md §11): its cards placed by caste at their slot levels, its resources.
 5. The **camera** at the human player's start location, yaw = `map.default_camera + π/2`.
 
 Left to the trigger engine / mission UI: the level's `black_start`, day time, quests, question mark display,
@@ -323,7 +394,7 @@ everything in `triggers[]`.
   slots with resources in the data therefore start with 0 (mission 1 slot 1, mission 10 slot 4, mission 12 slots
   1-3) - their triggers give them resources (`PLCP` + `RSRC`).
 * **Scenery** (props) has no hit points and cannot be attacked: ownerless or non-tech-tree buildings (city walls,
-  the Valhalla gate, cages), townsfolk, healing wells (they heal: §11.1), item spawns (the chest model; the item
+  the Valhalla gate, cages), townsfolk, healing wells (wells of the world: §11.1), item spawns (the chest model; the item
   is taken by walking up to it: §11.1). Props block the ground by their model's pathfinder boxes, else by a circle like landscape objects; the
   map's own path grid is not read, bridges are not walkable.
 * **Nests** (`NEST`) are the map's respawning animal nests (`world.wildNests`, `rec.nest`). In a mission the nest
@@ -376,7 +447,8 @@ citations of the original scripts are in the code.
 | end | `QUIT` / `SQNZ quit` → `G.endMission(true)`; `GAOV` → `G.endMission(false, { text })` 4 s later (the engine stops firing triggers during these 4 s and after the end) |
 | patrols | `WYPT`: `engine.patrols: Map<unit, { pts, mode, i }>`, checked 4 × per second: the unit is sent to the next point when it stands idle at the current one; a unit that fights on the way goes on afterwards; an order from elsewhere (player, `ACDO`) ends the patrol; mode 0 ends with the `WAYR` push |
 | items | the world has no inventory. `ItemSpawn` objects (`attr.spawn_items`) are items lying on the map: a character of the human player within 3 m takes it (`rec.items`), the `ITEM` conditions hear it, the item's tech tree filter `Filters/Items/<class>_filter` is enabled at once (what `TECH` conditions test as "item used") |
-| healing wells | `FNTN` objects (`engine.wells`: `{ rec, max, fill, refill }` from `maxhitpoints`, `hitpoints`, `refill_dur`; `MiscObj.usl` `CFountain`): a hurt unit of the human player that stands idle within 6 m gets what it lacks, or what the well has left; the well refills completely in `refill` seconds. The original sends a unit to the well with an order; the remake has none |
+| healing wells, lakes | `FNTN` objects are props that are wells of the world (`W.addWell`, `systems/landmarks.js`, ARCHITECTURE.md "Healing wells, lakes, weather"): the right click sends units, they drink what they lack. `DMGL` objects (lakes of healing / damage) act on their region (`attr.region_name`, a region of the mission) every 3 s |
+| weather | the level's program (Root/WeatherData; mission 8 snows); `WTHR` with chgtype 1: the next track |
 | delayed work | `engine.after(seconds, fn)` on game time (spawn queues, `CPLX` passengers) |
 
 `G.campaign.errors` = `[trigger name, node type, message]` of everything that threw (an action, a condition callback):
@@ -459,7 +531,7 @@ Not used by the campaign and not implemented (never true, one warning): `CHKO`, 
 | `ACND` | implemented | deactivate covers sub-folders, activate only the folder itself |
 | `QUIT` | implemented | G.endMission(true) |
 | `GAOV` | implemented | G.endMission(false) 4 s later with the reason text |
-| `BONI` | implemented | G.campaign.boni (not carried to the next mission: there is no army screen) |
+| `BONI` | implemented | G.campaign.boni; a won mission gives the next one at least that army budget (main.js G.endMission) |
 | `FDBK` | ignored | designer debug texts, off in the original too; printed with &trace |
 | `SQNZ` | implemented | G.mission.playSequence; end event, camera_data, quit |
 | `DGSC` | implemented | G.mission.playDialog; DSEN on its end |
@@ -469,6 +541,7 @@ Not used by the campaign and not implemented (never true, one warning): `CHKO`, 
 | `INBA` | implemented | refreshed when a variable changes |
 | `TIMR` | implemented | create / pause / unpause / kill |
 | `PSND` | implemented | G.audio.play if the sound event exists |
+| `MUSI` | implemented | G.audio.mus.trigger (engine/music.js); no mission of the campaign uses it |
 | `ACDO` | implemented | WalkAction, Aggressive Walk, Attack, SetPos, RotateTo, SetAnim, Invulnerability, AbortTask, Stop, Kill, FullHeal, Open / Close / Auto Gate, SetRallyPoint, BuildUp; GiveItem approximated; JumpOffWall ignored |
 | `WYPT` | approximated | patrol driver in the engine (once / circle / back and forth); fighters walk as an attack-move; straightwalk ignored (path finding) |
 | `COBJ` | implemented |  |
@@ -480,7 +553,7 @@ Not used by the campaign and not implemented (never true, one warning): `CHKO`, 
 | `DELO` | implemented |  |
 | `ADGR` | implemented |  |
 | `TRSP` | approximated | mount: board orders to the nearest passengers; dismount: every transporter of the query unloads |
-| `EFCT` | ignored | particle effect (decoration) |
+| `EFCT` | implemented | the model of the particle database (`Scripts/Game/sequencer/particles.txt`, gamedata `particles`) plays its clip for loop_value × its length (`TriggerEngine.playEffect`); not kept in saved games |
 | `OBAP` | implemented | visible / hitable / selectable; the other bits are kept on the record |
 | `VARS` | implemented |  |
 | `RSRC` | implemented |  |
@@ -508,9 +581,10 @@ that comes out of a spawn building appears on the line between the building and 
 free ground reaches from `pos` (never behind the building's wall).
 
 Approximations a player can notice: units leaving a spawn building appear in front of it (no walk out of the
-gate's tunnel); `§buildup` variants of spawned classes are not applied; particle effects (`EFCT`) and the
-highlight of handed-over units (`OCPY chk_highlight`) are not shown; items are taken by walking over them and work
-at once (no inventory).
+gate's tunnel); `§buildup` variants of spawned classes are not applied; the highlight of handed-over units
+(`OCPY chk_highlight`) is not shown; an effect that is playing when the game is saved is gone after loading (mission
+1's dust cloud has no model in the installation); items are taken by walking over them and work at once (no
+inventory).
 
 ### 11.6 Models the triggers need
 
@@ -542,16 +616,46 @@ the two playthroughs are part of the regression.
 
 ## 13. Mission status (what the Campaign menu offers)
 
-The menu lists every mission of the installation and greys out those that are not adapted yet
+All 17 missions are open. The menu would grey out a mission that is not adapted yet
 (`Menu.MISSIONS` in `src/ui/menu.js`; adding `?allmissions` to the address unlocks all of them for testing).
 
-| mission | menu | state (2026-10-03) |
+| mission | menu | state (2026-10-11) |
 |---|---|---|
+| 0 Tutorial | open | played to the end by the scripted test (`tests/campaign_play_00.js`, all 29 steps, every quest) with each of the four tribes |
+| 1 - 10 | open | played to the end by the scripted tests (`tests/campaign_play_01.js` ... `_10.js`) with each of the four tribes |
 | 11 Arena | open | played to the end by the scripted test (`tests/campaign_play_11.js`): 7 waves, guard squads, the boss, both sequences, `QUIT` |
-| 1 Stranded | open, marked "preview" | the scripted test reaches step 16 of 21 (five quests accomplished: the Norsemen, the spearmen, Stina, the wild cats, Béla); it stops at "the guards of the prison camp are beaten" - not yet analysed whether the game or the test bot is at fault |
-| 2, 5, 8 | greyed out | their trigger chains run to `QUIT` against the mock world (`tests/campaign_play_mock.mjs`); not yet played in the game |
-| 0, 3, 4, 6, 7, 9, 10, 12 - 16 | greyed out | load and run (world setup test of all 17); no playthrough yet. Missing models per mission: §9 and `_notes` of the work tree |
+| 12 Sea Battles | open | played to the end by the scripted test (`tests/campaign_play_12.js`, 44 game minutes) with each of the four tribes |
+| 13 The Rush | open | played to the end by the scripted test (`tests/campaign_play_13.js`, about 50 game minutes: two guard squads on the walls, the main attack) with each of the four tribes |
+| 14 Prisoners | open | played to the end by the scripted test (`tests/campaign_play_14.js`) with each of the four tribes (the landing film of the tribe the player brings) |
+| 15 New World Order | open | played to the end by the scripted test (`tests/campaign_play_15.js`: five pumping stations to take and hold, two guards each) with each of the four tribes |
+| 16 Showdown! | open | played to the end by the scripted test (`tests/campaign_play_16.js`: the SEAS bases, the Scorpio, Babbit's combat suit) with each of the four tribes |
+
+The scripts play the main quests only (side quests are left alone) on the default difficulty. The long ones take
+10 - 60 minutes each per tribe; `tests/regress.sh` runs missions 0, 1, 7 and 10, the others are run by hand:
+`for t in Hu Aje Ninigi SEAS; do python3 tests/evaljs.py tests/campaign_play_09.js "&campaign=9&tribe=$t"; done`.
+
+The playthroughs share `tests/campaign_bot.js` (`// include:` line, tests/evaljs.py): moving and hunting with
+teleport-on-stuck, building, producing (with missing prerequisites), gathering towards a stock, promoting, camera
+moves for the tutorial's UNTT CAME conditions; its cheats (healing, wearing down nearby enemies, resource top-ups)
+are counted in the report. Run one with another tribe: `tests/evaljs.py tests/campaign_play_00.js "&campaign=0&tribe=SEAS"`.
+
+Fixed on the way (2026-10-10): placed ITEM objects are items (the tutorial's artifact); trees, stones and fruit
+bushes a mission addresses stay resources (the tutorial's bushes had become scenery: no food); the map's bit-31
+object flag is not invulnerability (mission 1's prison guard). COBJ / CPLX without `obj_owner` create for player 0
+(the editor does not store 0; mission 7's Taslow joins the player). A building without `building_ready` and with 0
+hit points is a construction site (mission 9's launch ramp; `building_ready` "0" was already one). A building of
+another tribe the player was given is put up with that tribe's build action (the ramp takes 4000 s, not the 10 s
+default). A class without an equivalent that the mission places on the map is not "missing" for another tribe: the
+player gets that very object (mission 12's telescope tower ruin). Those ruins are sites already half built
+(CLaunchPad.OnPostLoad: AddProgress 49; `setup.placeBuilding`, `World.addProgress`).
+
+Fixed on the way (2026-10-11): a building swapped for the chosen tribe's can be bigger: it goes to the nearest free
+spot (`setup.fit`). A crowd sent to one place no longer stands still at its start: a unit queued behind a standing
+neighbour nearer the goal waits instead of re-planning its path forever (`Unit.queuedBehind`, mission 13's main
+attack). In a mod configuration the HUD cards, menu art and cursors are those of every folder, the mod's replacing
+Base's file by file (MIRAGE had lost most of the icons of units and buildings; `pipeline/build_ui.py`).
 
 What is still open for all missions: no savegames; scenery buildings without hit points; stand-in models for a few
-campaign-only classes; cutscenes are shown as subtitles with a camera move, not as the original animation; the army
+campaign-only classes; the pre-rendered films play (converted by the toolkit, MISSION_UI.md "Story films"), but the
+cutscenes made in the engine are shown as subtitles with a camera move, not as the original animation; the army
 building screen before missions 4, 5, 9, 11, 16 does not exist (the preset army is used).

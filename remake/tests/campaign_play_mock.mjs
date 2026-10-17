@@ -15,6 +15,9 @@ if (!fs.existsSync(path.join(dir, `single_${n}.json`))) { console.log(`   (no mi
 const data = JSON.parse(fs.readFileSync(path.join(dir, `single_${n}.json`), 'utf8'));
 const G = makeGame(data, { id: +n });
 const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
-const out = await new AsyncFunction('G', 'location', fs.readFileSync(script, 'utf8'))(G, { search: '' });
+let src = fs.readFileSync(script, 'utf8');
+const inc = /^\/\/\s*include:\s*(\S+)/.exec(src);            // "// include: campaign_bot.js": helpers in front (as tests/evaljs.py)
+if (inc) src = fs.readFileSync(path.join(path.dirname(script), inc[1]), 'utf8') + '\n' + src;
+const out = await new AsyncFunction('G', 'location', src)(G, { search: '' });
 console.log(out);
 process.exit(/^FAIL/m.test(out) ? 1 : 0);

@@ -9,6 +9,7 @@ import * as THREE from 'three';
 export class AnimCtl {
   constructor(root, clips) {
     this.root = root;
+    root.userData.animCtl = this;                // the particle emitters an animation drives ask it (engine/particles.js)
     this.mixer = new THREE.AnimationMixer(root);
     this.byName = new Map();
     for (const c of clips) this.byName.set(c.name.toLowerCase(), c);

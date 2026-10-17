@@ -5,15 +5,30 @@
 // Screens: title -> skirmish setup | campaign (mission list) -> (game) -> pause menu -> settings / controls -> end of game.
 // The menu never touches game state directly; it calls the hooks it was given (start, restart, quit, apply).
 
-import { PLAYER_COLORS } from '../game/colors.js';
-import { listMaps, loadMapInfo, drawPreview } from './mappreview.js';
+import { skirmishWindow } from './skirmish.js';
+import { armyPage } from './pointbuy.js';
+import { statsWindow } from './stats.js';
+import { PointBuy, RES } from '../game/pointbuy.js';
+import { TribeSwap } from '../game/campaign/tribes.js';
+import { MISSIONS as SEQUEL_MISSIONS } from '../game/sequel/missions.js';
+import { SEQUEL_MOD, SEQUEL_CLASSES } from '../game/sequel/rules.js';
+import { HelpBook } from './helpbook.js';
 
 export const DEFAULT_SETTINGS = {
-  showIncome: false, mentor: true, shadows: 'on', grass: 'on', fpsCap: 60, resScale: 1, uiScale: 0, perf: false, edgeScroll: true, autoMenu: true, antialias: true, speed: 1,
-  sound: true, volMaster: 0.8, volSfx: 0.9, volVoice: 1, volMusic: 0.45,
+  showIncome: false, mentor: true, autosave: true, autosaveMin: 10, shadows: 'on', grass: 'on', particles: 'on', weather: true, fpsCap: 60, resScale: 1, uiScale: 0, perf: false, edgeScroll: true, autoMenu: true, tipNear: true, minimapRotate: false, minimapPlayerColors: true, antialias: true, speed: 1,
+  sound: true, volMaster: 0.8, volSfx: 0.9, volVoice: 1, volMusic: 0.45, volAtmo: 0.8,
+  // the two-player skirmish of the URL parameters (main.js quickConfig: tests) and the start of skirmishSetup
   skirmish: { me: 'SEAS', ai: 'Aje', aiLevel: 'normal', seed: 1234, warpgate: true, debug: false, meColor: 'blue', aiColor: 'red' },
-  campaign: { mission: 1, difficulty: 1 },      // last mission chosen in the campaign menu; difficulty 0 easy, 1 medium, 2 hard
+  // the skirmish setup window's (ui/skirmish.js, game/skirmish.js); null = made from `skirmish` on first use
+  skirmishSetup: null,
+  // last mission chosen in the campaign menu; difficulty 0 easy, 1 medium, 2 hard; tribe: the player's tribe ('' = the
+  // mission's own, game/campaign/tribes.js); mod: game data configuration ('' = official game);
+  // credits: { <mission id>: the bonus points of the mission before, its army budget if more than MinCredits }
+  campaign: { mission: 1, difficulty: 1, tribe: '', mod: '', credits: {} },
 };
+// The configuration of game data this page runs with: the toolkit serves the official game under /remake/ and a mod
+// configuration (MIRAGE = Base + BoosterPack3 + MIRAGE ...) under /remake/mod/<id>/ (toolkit/remake.py).
+export const CONFIG_MOD = decodeURIComponent((location.pathname.match(/\/mod\/([^/]+)\/[^/]*$/) || [])[1] || '');
 export function loadSettings() {
   let s = {};
   try { s = JSON.parse(localStorage.getItem('pwr.settings') || '{}'); } catch (e) { s = {}; }
@@ -35,6 +50,8 @@ function el(tag, cls, parent, html) {
   return e;
 }
 
+const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[c]);
+
 export class Menu {
   // hooks: { start(config), startCampaign(config) (from a running game: reloads), restart(), quit(), exit(), applySettings(s), sound(name) }
   constructor(G, hooks = {}) {
@@ -53,10 +70,11 @@ export class Menu {
     this.G.menuOpen = false;
     if (this.inGame && this.G.setPaused) this.G.setPaused(this.wasPaused);
   }
+  // opts: title (the title screen's background), noPause (a window of the running game: diplomacy, chat history)
   open(title, html, opts = {}) {
     if (!this.G.menuOpen) this.wasPaused = this.G.paused;
     this.G.menuOpen = true;
-    if (this.inGame && this.G.setPaused) this.G.setPaused(true);
+    if (this.inGame && this.G.setPaused) this.G.setPaused(opts.noPause ? this.wasPaused : true);
     this.back.classList.toggle('title', !!opts.title);
     this.win.innerHTML = `<h2>${title}</h2>` + html;
     this.back.classList.remove('hidden');
@@ -67,24 +85,28 @@ export class Menu {
   // ---------------------------------------------------------------- before the game
   title() {
     this.inGame = false;
-    this.open('ParaWorld', `<h3>ParaWorld</h3><p>Remake</p><div class="btns">
-      ${this.btn('campaign', 'Campaign')}${this.btn('skirmish', 'Skirmish')}${this.btn('settings', 'Options')}${this.btn('help', 'Controls')}${this.btn('exit', 'Exit game')}</div>`, { title: true });
-    this.bind({ campaign: () => this.campaign(), skirmish: () => this.skirmish(), settings: () => this.settings(() => this.title()), help: () => this.help(() => this.title()),
+    this.open('ParaWorld', `<h3>ParaWorld</h3><p>Remake${CONFIG_MOD ? ' · ' + CONFIG_MOD.replace(/[<>&"]/g, '') : ''}</p><div class="btns">
+      ${this.btn('campaign', 'Campaign')}${this.btn('sequel', 'Containment (1964)')}${this.btn('skirmish', 'Skirmish')}${this.btn('load', 'Load game')}${this.btn('settings', 'Options')}${this.btn('book', 'Help')}${this.btn('help', 'Controls')}${this.btn('exit', 'Exit game')}</div>`, { title: true });
+    this.bind({ campaign: () => this.campaign(), sequel: () => this.sequel(), skirmish: () => this.skirmish(), load: () => this.loadWin(() => this.title()), settings: () => this.settings(() => this.title()), help: () => this.help(() => this.title()), book: () => this.helpBook(null, () => this.title()),
       exit: () => this.hooks.exit && this.hooks.exit() });
   }
   // Which campaign missions the menu offers. The trigger engine runs every mission, but only those listed here have
   // been played through and checked (docs/CAMPAIGN_RUNTIME.md "Mission status"); the others are greyed out.
   // 'ready' = played to the end by the scripted test; 'preview' = starts and plays part of the way. `?allmissions` in the address unlocks everything.
-  static MISSIONS = { 1: 'preview', 11: 'ready' };
+  static MISSIONS = { 0: 'ready', 1: 'ready', 2: 'ready', 3: 'ready', 4: 'ready', 5: 'ready', 6: 'ready', 7: 'ready', 8: 'ready', 9: 'ready', 10: 'ready', 11: 'ready', 12: 'ready', 13: 'ready', 14: 'ready', 15: 'ready', 16: 'ready' };
   static missionOpen(id) { return !!Menu.MISSIONS[id] || new URLSearchParams(location.search).has('allmissions'); }
   // the original single player campaign: the missions of the installation (campaign/index.json: id, title,
-  // description, tribe), a difficulty, start. The config of a mission is { campaign: id, difficulty: 0 | 1 | 2 }.
+  // description, tribe), a difficulty, the tribe to play, start. The config of a mission is { campaign: id,
+  // difficulty: 0 | 1 | 2, tribe: '' | 'Hu' | 'Aje' | 'Ninigi' | 'SEAS' }.
   async campaign() {
     const s = this.G.settings, k = s.campaign;
     const esc = (t) => String(t || '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' })[c]);
     this.open('Campaign', `<div class="pwgrp"><b>Mission</b><div class="missions"><div class="mlist" id="c_list"><div>Reading the missions…</div></div><div class="mtext" id="c_text"></div></div></div>
+      <div class="pwgrp"><b>Your tribe</b><div class="tribes" id="c_tribe"><div class="tribe ${k.tribe ? '' : 'on'}" data-t=""><i style="background-position:0 -${4 * 21}px"></i>As in the mission</div>${Object.entries(TRIBE_INFO).map(([t, i]) =>
+        `<div class="tribe ${t === k.tribe ? 'on' : ''}" data-t="${t}"><i style="background-position:0 -${i.icon * 21}px"></i>${i.name}</div>`).join('')}</div></div>
       <div class="pwgrp"><b>Difficulty</b><div class="set"><span>How strong the opponents are</span><select class="pwsel" id="c_diff">
-        ${['Easy', 'Medium', 'Hard'].map((v, i) => `<option value="${i}" ${+k.difficulty === i ? 'selected' : ''}>${v}</option>`).join('')}</select></div></div>
+        ${['Easy', 'Medium', 'Hard'].map((v, i) => `<option value="${i}" ${+k.difficulty === i ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+        <div class="set hidden" id="c_modrow"><span>Game data</span><select class="pwsel" id="c_mod"></select></div><small id="c_modnote"></small></div>
       <div class="btns row">${this.btn('back', 'Back', 'small')}${this.btn('start', 'Start mission', 'small')}</div>`, { title: true });
     const list = this.win.querySelector('#c_list'), text = this.win.querySelector('#c_text');
     let missions = [], shown = null;
@@ -96,7 +118,8 @@ export class Menu {
       const start = this.win.querySelector('[data-a="start"]');
       if (start) start.classList.toggle('off', !open);
       list.querySelectorAll('div').forEach((d) => d.classList.toggle('on', +d.dataset.id === m.id));
-      const tribe = TRIBE_INFO[m.tribe] ? `You play the ${TRIBE_INFO[m.tribe].name}.` : '';
+      const own = TRIBE_INFO[m.tribe], pick = TRIBE_INFO[k.tribe];
+      const tribe = pick && k.tribe !== m.tribe ? `You play the ${pick.name}${own ? ` (the mission was made for the ${own.name})` : ''}.` : own ? `You play the ${own.name}.` : '';
       const note = !open ? 'This mission is not adapted for the remake yet.' : Menu.MISSIONS[m.id] === 'preview' ? 'Preview: the first part of this mission plays; it cannot be finished yet.' : '';
       text.innerHTML = `<b>${esc(m.title || m.name)}</b>${esc(m.description).replace(/\n/g, '<br>')}<small>${tribe}</small>${note ? `<small class="mnote">${note}</small>` : ''}`;
       shown = m;
@@ -104,13 +127,46 @@ export class Menu {
     this.bind({
       back: () => this.title(),
       start: () => {
-        if (!missions.length || !shown || !Menu.missionOpen(shown.id)) return;
+        if (!missions.length || !shown || !Menu.missionOpen(shown.id) || this.busy) return;
         k.mission = shown.id;
         k.difficulty = +this.win.querySelector('#c_diff').value;
         saveSettings(s);
-        this.close();
-        if (this.hooks.start) this.hooks.start({ campaign: k.mission, difficulty: k.difficulty });
+        const cfg = { campaign: k.mission, difficulty: k.difficulty, tribe: k.tribe || '' };
+        const conf = configs.find((c) => c.id === k.mod);
+        const go = (c) => {
+          if (conf && conf.id !== CONFIG_MOD) { this.campaign().then(() => this.switchConfig(conf, c)); return; }
+          this.close();
+          if (this.hooks.start) this.hooks.start(c);
+        };
+        // a mission with an army budget: the army screen first (CampaignMenu.usl:199-206)
+        if (shown.point_buy) this.campaignArmy(shown, cfg, () => this.campaign(), go);
+        else go(cfg);
       },
+    });
+    this.win.querySelectorAll('#c_tribe .tribe').forEach((t) => {
+      t.onclick = () => {
+        this.win.querySelectorAll('#c_tribe .tribe').forEach((x) => x.classList.remove('on'));
+        t.classList.add('on'); k.tribe = t.dataset.t; saveSettings(s); this.click();
+        if (shown) show(shown.id);
+      };
+    });
+    // the game data configuration (official game or a mod): offered when the toolkit serves the remake
+    let configs = [];
+    this.busy = false;                    // a configuration's data is being built (switchConfig)
+    this.configs().then((list) => {
+      configs = list;
+      const row = this.win.querySelector('#c_modrow'), sel = this.win.querySelector('#c_mod');
+      if (!row || !configs.length) return;
+      if (!configs.some((c) => c.id === k.mod)) k.mod = CONFIG_MOD;
+      sel.innerHTML = configs.map((c) => `<option value="${esc(c.id)}" ${c.id === k.mod ? 'selected' : ''}>${esc(c.name)}${c.version ? ' ' + esc(c.version) : ''}</option>`).join('');
+      row.classList.remove('hidden');
+      const note = () => {
+        const c = configs.find((x) => x.id === k.mod);
+        this.win.querySelector('#c_modnote').textContent = !c ? '' : (c.id ? `Data folders: ${c.folders.join(' + ')}. ` : '') +
+          (c.built || c.id === CONFIG_MOD ? '' : 'Its game data is built from your installation when the mission starts (several minutes, once).');
+      };
+      sel.onchange = () => { k.mod = sel.value; saveSettings(s); note(); };
+      note();
     });
     try {
       const r = await fetch('campaign/index.json');
@@ -124,125 +180,197 @@ export class Menu {
     show(+k.mission);
     const on = list.querySelector('.on'); if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest' });
   }
-  skirmish() {
-    const s = this.G.settings, k = s.skirmish;
-    const tribeRow = (id, cur) => `<div class="tribes" data-row="${id}">` + Object.entries(TRIBE_INFO).map(([t, i]) =>
-      `<div class="tribe ${t === cur ? 'on' : ''}" data-t="${t}"><i style="background-position:0 -${i.icon * 21}px"></i>${i.name}</div>`).join('') + '</div>';
-    // party colour swatches (ACColors.txt PlayerColor0..7) + "none" = untinted models
-    const colorRow = (id, cur) => `<div class="pcolors" data-row="${id}"><span>Colour</span>` +
-      [{ id: 'none', name: 'No colour' }, ...PLAYER_COLORS].map((c) => `<i class="pc ${c.id === (cur || 'none') ? 'on' : ''}" data-c="${c.id}" title="${c.name}"` +
-        (c.light ? ` style="background:rgb(${c.light.join(',')})"` : '') + `></i>`).join('') + '</div>';
-    this.open('Skirmish', `<div class="pwgrp"><b>Your tribe</b>${tribeRow('me', k.me)}${colorRow('meColor', k.meColor)}</div>
-      <div class="pwgrp"><b>Computer opponent</b>${tribeRow('ai', k.ai)}${colorRow('aiColor', k.aiColor)}
-        <div class="set" style="margin-top:10px"><span>Difficulty</span><select class="pwsel" id="k_lvl">
-          ${['easy', 'normal', 'hard'].map((v) => `<option value="${v}" ${k.aiLevel === v ? 'selected' : ''}>${v[0].toUpperCase() + v.slice(1)}</option>`).join('')}</select>
-        <label class="pwcheck full"><input type="checkbox" id="k_warp" ${k.warpgate !== false ? 'checked' : ''}><i></i>Warp gate victory (epoch V: hold a finished warp gate for 10 minutes)</label>
-        <label class="pwcheck full"><input type="checkbox" id="k_debug" ${k.debug ? 'checked' : ''}><i></i>Debug mode: everything is free and builds instantly (for you, not the computer)</label></div></div>
-      <div class="pwgrp"><b>Map</b><div class="mapsel">
-        <canvas id="k_prev" width="150" height="150"></canvas>
-        <div class="mapinfo">
-          <select class="pwsel" id="k_map"><option value="">Random jungle</option></select>
-          <label class="pwbtn small mapfile">Open map file…<input type="file" id="k_file" accept=".ula" hidden></label>
-          <div class="seedrow" id="k_seedrow"><span>Seed</span> <input class="pwsel" id="k_seed" type="number" value="${k.seed}" style="width:90px"></div>
-          <div class="mapdesc" id="k_desc"></div>
-        </div></div></div>
-      <div class="btns row">${this.btn('back', 'Back', 'small')}${this.btn('start', 'Start game', 'small')}</div>`, { title: true });
-    this.initMapPicker(k);
-    this.win.querySelectorAll('.tribes').forEach((row) => row.querySelectorAll('.tribe').forEach((t) => {
-      t.onclick = () => { row.querySelectorAll('.tribe').forEach((x) => x.classList.remove('on')); t.classList.add('on'); k[row.dataset.row] = t.dataset.t; this.click(); };
-    }));
-    this.win.querySelectorAll('.pcolors').forEach((row) => row.querySelectorAll('.pc').forEach((c) => {
-      c.onclick = () => { row.querySelectorAll('.pc').forEach((x) => x.classList.remove('on')); c.classList.add('on'); k[row.dataset.row] = c.dataset.c; this.click(); };
-    }));
-    this.bind({
-      back: () => this.title(),
-      start: () => {
-        k.aiLevel = this.win.querySelector('#k_lvl').value;
-        k.seed = +this.win.querySelector('#k_seed').value || 1;
-        if (this.mapError) { this.mapDesc(this.mapError, true); return; }
-        k.warpgate = this.win.querySelector('#k_warp').checked;
-        k.debug = this.win.querySelector('#k_debug').checked;
-        saveSettings(s);
-        this.close();
-        if (this.hooks.start) this.hooks.start({ ...k });
-      },
-    });
+  // The army screen of a campaign mission (GameInfoWindow in GIWT_SINGLEPLAYER, GIW:343-397): the level's army preset
+  // of the human player's tribe, fixed and paid from the budget max(Credits, MinCredits) - Credits = the bonus points
+  // of the mission before (settings.campaign.credits, main.js G.endMission) - the shop limited to the units the level
+  // allows, its resources (a "-1" one: the tribe's start stock, locked - the original gives 0 [?engine]).
+  // go(cfg + army) starts it, back() returns.
+  async campaignArmy(m, cfg, back, go) {
+    const G = this.G, D = G.data, PB = new PointBuy(D, G.aiData), k = G.settings.campaign;
+    let data = null;
+    try { const r = await fetch(m.data); if (r.ok) data = await r.json(); } catch (e) { data = null; }
+    const hp = data && (data.players || []).find((p) => p.type === 'human');
+    if (!hp || !PB.ready) { go(cfg); return; }
+    const mt = hp.tribe, tribe = cfg.tribe || mt;
+    // another tribe than the mission's: its equivalents of the preset's and the shop's classes (campaign/tribes.js)
+    const swap = tribe !== mt ? new TribeSwap(D, mt, tribe) : null;
+    const conv = (c) => { if (!swap || /^(worker|Resource|Technics|Nature|Blocked)$/.test(c)) return c; const e = swap.equivalent(c); return e === undefined ? c : e; };
+    const pb = hp.point_buy || {}, src = (pb.tribes || {})[tribe] || (pb.tribes || {})[mt] || {};
+    const units = {};
+    for (const [slot, c] of Object.entries(src)) { const x = conv(c); if (x) units[slot] = x; }
+    const own = (hp.allowed_units && (hp.allowed_units.infantry || {})[tribe]) ? tribe : mt;
+    const allowed = new Set([...((hp.allowed_units && hp.allowed_units.infantry || {})[own] || []), ...((hp.allowed_units && hp.allowed_units.cavalry || {})[own] || []),
+      ...(((hp.heroes || {})._by_tribe || {})[own] || [])].map(conv).filter(Boolean));
+    const res = hp.resources || {}, def = (D.start(tribe) || {}).res || {}, lockedRes = {};
+    for (const r of RES) if (res[r] < 0) lockedRes[r] = def[r] || 0;
+    const preset = { units, res: { food: res.food, wood: res.wood, stone: res.stone } };
+    const buildings = hp.include_buildings !== false;
+    const credits = Math.max((k.credits || {})[m.id] || 0, m.min_credits != null ? m.min_credits : PB.cost({ cards: units, res: {} }, tribe));
+    const total = PB.total(credits, tribe, { mp: false, buildings });
+    const load = () => PB.load(preset, tribe, total, { fixed: true, buildings, mp: false, lockedRes });
+    armyPage(this, { tribe, credits, total, shown: credits, army: load(), mp: false, buildings, allowed, defaults: load,
+      limits: (hp.unit_limits || []).map((l) => (l && l.max != null ? l.max : null)), title: `${D.ui('_MyArmy', 'My Army')} · ${m.title || m.name}`,
+      back, done: (army) => go({ ...cfg, army }) });
   }
-
-  // map list (maps/index.json) + "open file", preview and description of the chosen map
-  async initMapPicker(k) {
-    const sel = this.win.querySelector('#k_map'), file = this.win.querySelector('#k_file');
-    const maps = await listMaps();
-    let group = null, lastFolder = null;
-    for (const m of maps) {
-      if (m.folder !== lastFolder) { group = document.createElement('optgroup'); group.label = m.folder || 'Maps'; sel.appendChild(group); lastFolder = m.folder; }
-      const o = document.createElement('option'); o.value = m.path; o.textContent = m.file.replace(/\.ula$/i, ''); group.appendChild(o);
-    }
-    if (k.map === 'file:' && k.mapName) {
-      const o = document.createElement('option'); o.value = 'file:'; o.textContent = k.mapName + ' (file)'; sel.insertBefore(o, sel.options[1]);
-    }
-    sel.value = [...sel.options].some((o) => o.value === (k.map || '')) ? (k.map || '') : '';
-    k.map = sel.value;
-    sel.onchange = () => { k.map = sel.value; this.showMap(k); this.click(); };
-    file.onchange = async () => {
-      const f = file.files && file.files[0];
-      if (!f) return;
-      const buf = await f.arrayBuffer();
-      try {
-        // keep the file for "Restart" (the page reloads); maps are a few hundred KB
-        let bin = ''; const b = new Uint8Array(buf); for (let i = 0; i < b.length; i += 0x8000) bin += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
-        sessionStorage.setItem('pwr.mapfile', btoa(bin));
-      } catch (e) { /* too big for sessionStorage: restart will ask again */ }
-      await loadMapInfo('file:' + f.name, buf);
-      k.map = 'file:'; k.mapName = f.name;
-      let o = [...sel.options].find((x) => x.value === 'file:');
-      if (!o) { o = document.createElement('option'); o.value = 'file:'; sel.insertBefore(o, sel.options[1]); }
-      o.textContent = f.name + ' (file)';
-      sel.value = 'file:';
-      this.showMap(k);
-    };
-    this.showMap(k);
-  }
-  mapDesc(html, bad) { const d = this.win.querySelector('#k_desc'); if (d) { d.innerHTML = html; d.classList.toggle('bad', !!bad); } }
-  async showMap(k) {
-    const cv = this.win.querySelector('#k_prev'), seedRow = this.win.querySelector('#k_seedrow');
-    if (!cv) return;
-    this.mapError = null;
-    seedRow.style.display = k.map ? 'none' : '';
-    const ctx = cv.getContext('2d');
-    if (!k.map) {
-      ctx.fillStyle = '#29401c'; ctx.fillRect(0, 0, cv.width, cv.height);
-      ctx.fillStyle = '#e0c890'; ctx.font = 'bold 13px Trebuchet MS'; ctx.textAlign = 'center'; ctx.fillText('random', cv.width / 2, cv.height / 2);
-      this.mapDesc('A new jungle for every seed: two bases, forests, herds of dinosaurs.');
-      return;
-    }
-    this.mapDesc('Reading the map…');
+  // the mod configuration of the game data this page runs on (gamedata.json "mod"; older data: the page's address)
+  static dataMod(G) { const m = G.raw && G.raw.json && G.raw.json.mod; return m != null ? m : CONFIG_MOD; }
+  // the configurations the toolkit offers ([] when the remake runs without the toolkit, e.g. the dev server)
+  async configs() {
     try {
-      const md = await loadMapInfo(k.map === 'file:' ? 'file:' + k.mapName : k.map);
-      if (this.win.querySelector('#k_prev') !== cv) return;
-      await drawPreview(cv, md);
-      const i = md.info, starts = md.objects.filter((o) => o.type === 'SLOC').length;
-      const esc = (t) => String(t || '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' })[c]);
-      this.mapDesc(`<b>${esc(md.name)}</b><br>${md.setting} · ${md.hx * 2} × ${md.hy * 2} m · ${starts} start locations` +
-        (i.Author ? `<br>by ${esc(i.Author)}` : '') + (i.Description ? `<br><i>${esc(i.Description).slice(0, 160)}</i>` : '') +
-        (starts < 2 ? '<br>No start locations - the bases are placed automatically.' : ''));
+      const r = await fetch('/api/toolkit/remake/configs');
+      return r.ok ? await r.json() : [];
+    } catch (e) { return []; }
+  }
+  // start a mission with another configuration's data: build it if needed (progress in the window), then load the
+  // page of that configuration, which starts the mission at once (main.js: pwr.autostart)
+  async switchConfig(conf, cfg) {
+    const note = this.win.querySelector('#c_modnote'), say = (t) => { if (note) note.textContent = t; };
+    const go = () => {
+      try { sessionStorage.setItem('pwr.autostart', JSON.stringify(cfg)); } catch (e) { /* ignore */ }
+      location.href = conf.url;
+    };
+    const state = async () => (await fetch('/api/toolkit/remake/state?mod=' + encodeURIComponent(conf.id))).json();
+    this.busy = true;
+    try {
+      let st = await state();
+      if (st.ready) return go();
+      if (!st.building) {
+        const r = await (await fetch('/api/toolkit/remake/build', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mod: conf.id }) })).json();
+        if (!r.ok) throw new Error(r.error || 'another build is running - try again when it is done');
+      }
+      for (;;) {
+        await new Promise((res) => setTimeout(res, 1000));
+        st = await state();
+        if (st.building) { say(`Building the game data of ${conf.name}: ${st.stage} (${Math.round(100 * (st.frac || 0))} %)`); continue; }
+        if (st.ready) return go();
+        throw new Error(st.error || st.reason || 'the build failed');
+      }
     } catch (e) {
-      this.mapError = 'This map could not be read: ' + e.message;
-      this.mapDesc(this.mapError, true);
+      say(`The game data of ${conf.name} could not be built: ${e.message}`);
+      this.busy = false;
     }
   }
+  // the skirmish setup: ui/skirmish.js
+  skirmish() { skirmishWindow(this); }
 
   // ---------------------------------------------------------------- in game
   main() {
     this.inGame = true;
-    this.open('Menu', `<div class="btns">${this.btn('resume', 'Resume game')}${this.btn('settings', 'Options')}${this.btn('help', 'Controls')}
+    this.open('Menu', `<div class="btns">${this.btn('resume', 'Resume game')}${this.btn('save', 'Save game')}${this.btn('load', 'Load game')}${this.btn('settings', 'Options')}${this.btn('book', 'Help')}${this.btn('help', 'Controls')}
       ${this.btn('restart', this.G.campaign ? 'Restart mission' : 'Restart skirmish')}${this.btn('quit', 'Quit to main menu')}${this.btn('exit', 'Exit game')}</div>`);
     this.bind({
-      resume: () => this.close(), settings: () => this.settings(() => this.main()), help: () => this.help(() => this.main()),
+      resume: () => this.close(), save: () => this.saveWin(), load: () => this.loadWin(() => this.main()), settings: () => this.settings(() => this.main()), help: () => this.help(() => this.main()), book: () => this.helpBook(null, () => this.main()),
       restart: () => this.confirm(this.G.campaign ? 'Restart the mission?' : 'Restart the skirmish?', () => this.hooks.restart && this.hooks.restart(), () => this.main()),
       quit: () => this.confirm('Quit to the main menu?', () => this.hooks.quit && this.hooks.quit(), () => this.main()),
       exit: () => this.confirm('Exit the game?', () => this.hooks.exit && this.hooks.exit(), () => this.main()),
     });
+  }
+  // ---------------------------------------------------------------- the sequel campaign (docs/SEQUEL.md)
+  sequel() {
+    const s = this.G.settings;
+    s.sequel = s.sequel || { mission: 1, difficulty: 1, unlocked: 1 };
+    const k = s.sequel;
+    this.open('ParaWorld: Containment', `<div class="pwgrp"><b>1964. The dinosaurs have come to our world.</b><div class="missions"><div class="mlist" id="q_list">${SEQUEL_MISSIONS.map((m) =>
+      `<div data-id="${m.id}">${m.id}. ${esc(m.title)}${m.id < (k.unlocked || 1) ? ' ✔' : ''}</div>`).join('')}</div><div class="mtext" id="q_text"></div></div></div>
+      <div class="pwgrp"><b>Difficulty</b><div class="set"><span>How strong the outbreak is</span><select class="pwsel" id="q_diff">
+        ${['Easy', 'Medium', 'Hard'].map((t, i) => `<option value="${i}" ${+k.difficulty === i ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+        <small id="c_modnote">${Menu.dataMod(this.G) === SEQUEL_MOD ? '' : `Played with the ${SEQUEL_MOD} mod's game data (its SEAS).`}</small></div>
+      <div class="btns row">${this.btn('back', 'Back', 'small')}${this.btn('start', 'Start mission', 'small')}</div>`, { title: true });
+    const list = this.win.querySelector('#q_list'), text = this.win.querySelector('#q_text');
+    const show = (id) => {
+      const m = SEQUEL_MISSIONS.find((x) => x.id === id) || SEQUEL_MISSIONS[0];
+      k.mission = m.id;
+      list.querySelectorAll('div').forEach((d) => d.classList.toggle('on', +d.dataset.id === m.id));
+      // what the mission brings in (missions.js unlocks)
+      const news = (m.unlocks || []).map((u) => (SEQUEL_CLASSES[Array.isArray(u) ? u[0] : u] || {}).desc).filter(Boolean);
+      text.innerHTML = `<b>${esc(m.title)}</b><small>${esc(m.place)} — ${esc(m.date)}</small>${m.briefing.map((p) => esc(p)).join('<br><br>')}` +
+        (news.length ? `<small class="mnote">New: ${esc(news.join(', '))}</small>` : '');
+    };
+    list.querySelectorAll('div').forEach((d) => { d.onclick = () => { show(+d.dataset.id); this.click(); }; d.ondblclick = () => this.win.querySelector('[data-a="start"]').click(); });
+    show(+k.mission || 1);
+    this.bind({
+      back: () => this.title(),
+      start: async () => {
+        if (this.busy) return;
+        k.difficulty = +this.win.querySelector('#q_diff').value;
+        saveSettings(s);
+        const cfg = { sequel: k.mission, difficulty: k.difficulty };
+        // the MIRAGE configuration's data (built from the installation the first time: switchConfig)
+        if (Menu.dataMod(this.G) !== SEQUEL_MOD) {
+          const conf = (await this.configs()).find((c) => c.id === SEQUEL_MOD);
+          if (conf) { this.switchConfig(conf, cfg); return; }
+          this.win.querySelector('#c_modnote').textContent = `ParaWorld: Containment needs the ${SEQUEL_MOD} mod: install it into your ParaWorld folder and start again.`;
+          return;
+        }
+        this.close();
+        if (this.hooks.start) this.hooks.start(cfg);
+      },
+    });
+  }
+  // ---------------------------------------------------------------- saved games (ui/saves.js, game/save.js)
+  // the saves as a list: one row per save (name, what, game time, date); pick(meta) on a click
+  async saveList(box, pick) {
+    let list = [];
+    try { list = await this.hooks.saves(); } catch (e) { box.innerHTML = `<div class="na">The saved games cannot be read: ${esc(e.message)}</div>`; return []; }
+    const t = (s) => `${Math.floor(s / 3600) ? Math.floor(s / 3600) + ':' : ''}${String(Math.floor(s / 60) % 60).padStart(Math.floor(s / 3600) ? 2 : 1, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+    box.innerHTML = list.length ? list.map((m, i) => `<div data-i="${i}"><b>${esc(m.name)}</b><span>${esc(m.title || '')}${m.mod ? ' · ' + esc(m.mod) : ''}</span>` +
+      `<em>${t(m.gameTime || 0)} · ${new Date(m.date).toLocaleString()}</em></div>`).join('') : '<div class="na">No saved games yet</div>';
+    box.querySelectorAll('[data-i]').forEach((d) => {
+      d.onclick = () => { box.querySelectorAll('div').forEach((x) => x.classList.toggle('on', x === d)); pick(list[+d.dataset.i], false); this.click(); };
+      d.ondblclick = () => pick(list[+d.dataset.i], true);
+    });
+    return list;
+  }
+  saveWin() {
+    this.inGame = true;
+    const name0 = this.hooks.saveName ? this.hooks.saveName() : 'Saved game';
+    this.open('Save game', `<div class="pwgrp"><b>Name</b><input class="pwinput" id="sv_name" maxlength="60" value="${esc(name0)}"></div>
+      <div class="pwgrp"><b>Saved games</b><div class="slist" id="sv_list"><div>…</div></div></div><small id="sv_note"></small>
+      <div class="btns row">${this.btn('back', 'Back', 'small')}${this.btn('save', 'Save', 'small')}</div>`);
+    const inp = this.win.querySelector('#sv_name'), note = this.win.querySelector('#sv_note');
+    let over = null;           // the save picked in the list: saving replaces it
+    this.saveList(this.win.querySelector('#sv_list'), (m, dbl) => { over = m.quick ? null : m; inp.value = m.name; if (dbl) this.win.querySelector('[data-a="save"]').click(); });
+    inp.oninput = () => { if (over && inp.value !== over.name) over = null; };
+    inp.focus(); inp.select();
+    const save = async () => {
+      if (this.busy) return;
+      this.busy = true; note.textContent = 'Saving…';
+      try { await this.hooks.save(inp.value.trim() || name0, over ? over.id : null); this.busy = false; this.close(); } catch (e) { this.busy = false; note.textContent = 'The game could not be saved: ' + e.message; }
+    };
+    inp.onkeydown = (e) => { if (e.key === 'Enter') save(); e.stopPropagation(); };
+    this.bind({ back: () => this.main(), save });
+  }
+  loadWin(back) {
+    this.open('Load game', `<div class="pwgrp"><b>Saved games</b><div class="slist" id="ld_list"><div>…</div></div></div><small id="ld_note"></small>
+      <div class="btns row">${this.btn('back', 'Back', 'small')}${this.btn('del', 'Delete', 'small')}${this.btn('exp', 'Export', 'small')}${this.btn('imp', 'Import', 'small')}${this.btn('load', 'Load', 'small')}</div>
+      <input type="file" id="ld_file" accept=".pwsave,application/gzip,application/json" style="display:none">`, { title: !this.inGame });
+    const box = this.win.querySelector('#ld_list'), note = this.win.querySelector('#ld_note'), file = this.win.querySelector('#ld_file');
+    let sel = null;
+    const fill = () => { sel = null; return this.saveList(box, (m, dbl) => { sel = m; if (dbl) load(); }); };
+    const load = () => {
+      if (!sel || this.busy) return;
+      const go = () => { note.textContent = 'Loading…'; this.hooks.load(sel).catch((e) => { note.textContent = 'The game could not be loaded: ' + e.message; }); };
+      if (this.inGame && !this.G.over) this.confirm('Load this game? What is not saved of the running game is lost.', go, () => this.loadWin(back)); else go();
+    };
+    fill();
+    file.onchange = async () => {
+      const f = file.files && file.files[0];
+      if (!f) return;
+      try { const m = await this.hooks.importSave(f); note.textContent = `"${m.name}" was added.`; fill(); } catch (e) { note.textContent = 'This file is not a saved game: ' + e.message; }
+      file.value = '';
+    };
+    this.bind({
+      back, load,
+      del: () => { if (!sel) return; const m = sel; this.confirm(`Delete "${esc(m.name)}"?`, async () => { await this.hooks.deleteSave(m.id); this.loadWin(back); }, () => this.loadWin(back)); },
+      exp: () => { if (sel) this.hooks.exportSave(sel.id).catch((e) => { note.textContent = e.message; }); },
+      imp: () => file.click(),
+    });
+  }
+  // the page of another game data configuration (a mod), with a game to start there
+  async openConfig(mod, cfg) {
+    const conf = (await this.configs()).find((c) => c.id === mod);
+    if (!conf) throw new Error(`this game was saved with ${mod || 'the official game data'}, which is not available here`);
+    this.switchConfig(conf, cfg);
   }
   confirm(text, yes, no) {
     this.open('Question', `<p style="color:var(--pw-text)">${text}</p><div class="btns row">${this.btn('no', 'No', 'small')}${this.btn('yes', 'Yes', 'small')}</div>`);
@@ -253,17 +381,26 @@ export class Menu {
     const opt = (v, cur, label) => `<option value="${v}" ${String(v) === String(cur) ? 'selected' : ''}>${label}</option>`;
     const chk = (id, on, label) => `<label class="pwcheck full"><input type="checkbox" id="${id}" ${on ? 'checked' : ''}><i></i>${label}</label>`;
     const rng = (id, v) => `<input type="range" class="pwrange" id="${id}" min="0" max="100" value="${Math.round(v * 100)}">`;
+    // the original's option texts (main_uk.ltf, gamedata.json "ui") once the game data is loaded
+    const ui = (k, d) => (this.G.data && this.G.data.ui ? this.G.data.ui(k, d) : d);
     this.open('Options', `<div class="pwgrp"><b>Game</b><div class="set">
         ${chk('s_income', s.showIncome, 'Show resource income per minute')}
         ${chk('s_edge', s.edgeScroll, 'Scroll at screen edges')}
         ${chk('s_automenu', s.autoMenu !== false, 'Open the build / produce menu when selecting workers or buildings')}
+        ${chk('s_tipnear', s.tipNear !== false, 'Tooltips next to what the mouse is over (off: the original window above the minimap)')}
         ${chk('s_mentor', s.mentor !== false, 'Show the mentor\'s hints in campaign missions')}
+        ${chk('s_mmrot', !!s.minimapRotate, ui('_UI_OptionsM_CheckBox_RotateMinimap', 'Rotate Minimap'))}
+        ${chk('s_mmcol', s.minimapPlayerColors !== false, ui('_UI_OptionsM_CheckBox_UsePlayerColors', 'Use Player Colors'))}
+        ${chk('s_autosave', s.autosave !== false, ui('_UI_OptionsM_AutoSave', 'Enable autosave'))}
+        <span>Autosave every</span><select class="pwsel" id="s_autosavemin">${[5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60].map((v) => opt(v, s.autosaveMin || 10, v + ' min')).join('')}</select>
         <span>Game speed</span><select class="pwsel" id="s_speed">${opt(0.5, s.speed, 'Slow')}${opt(1, s.speed, 'Normal')}${opt(1.5, s.speed, 'Fast')}${opt(2, s.speed, 'Very fast')}</select>
         <span>Interface size</span><select class="pwsel" id="s_ui">${opt(0, s.uiScale, 'Automatic')}${opt(1, s.uiScale, '100 %')}${opt(1.25, s.uiScale, '125 %')}${opt(1.5, s.uiScale, '150 %')}${opt(1.75, s.uiScale, '175 %')}</select>
       </div></div>
       <div class="pwgrp"><b>Graphics</b><div class="set">
         <span>Shadows</span><select class="pwsel" id="s_shadows">${opt('off', s.shadows, 'Off')}${opt('on', s.shadows, 'On')}${opt('high', s.shadows, 'High')}</select>
         <span>Grass</span><select class="pwsel" id="s_grass">${opt('off', s.grass, 'Off')}${opt('on', s.grass, 'On')}${opt('dense', s.grass, 'Dense')}</select>
+        <span>Particle effects</span><select class="pwsel" id="s_particles">${opt('off', s.particles, 'Off')}${opt('low', s.particles, 'Low')}${opt('on', s.particles, 'On')}${opt('high', s.particles, 'High')}</select>
+        ${chk('s_weather', s.weather !== false, 'Weather (snow, rain)')}
         <span>Frame rate limit</span><select class="pwsel" id="s_fps">${opt(30, s.fpsCap, '30 fps')}${opt(60, s.fpsCap, '60 fps')}${opt(120, s.fpsCap, '120 fps')}${opt(0, s.fpsCap, 'Unlimited')}</select>
         <span>Render resolution</span><select class="pwsel" id="s_res">${opt(0.5, s.resScale, '50 %')}${opt(0.67, s.resScale, '67 %')}${opt(0.75, s.resScale, '75 %')}${opt(1, s.resScale, '100 %')}</select>
         ${chk('s_aa', s.antialias, 'Anti-aliasing (after restart)')}
@@ -275,45 +412,64 @@ export class Menu {
         <span>Effects</span>${rng('s_vs', s.volSfx)}
         <span>Speech</span>${rng('s_vv', s.volVoice)}
         <span>Music</span>${rng('s_vmu', s.volMusic)}
+        <span>Ambience</span>${rng('s_vat', s.volAtmo ?? 0.8)}
       </div></div>
       <div class="btns">${this.btn('ok', 'OK')}</div>`, { title: !this.inGame });
     const $ = (id) => this.win.querySelector('#' + id);
     const apply = () => {
-      s.showIncome = $('s_income').checked; s.edgeScroll = $('s_edge').checked; s.autoMenu = $('s_automenu').checked; s.mentor = $('s_mentor').checked; s.speed = +$('s_speed').value; s.uiScale = +$('s_ui').value;
-      s.shadows = $('s_shadows').value; s.grass = $('s_grass').value; s.fpsCap = +$('s_fps').value; s.resScale = +$('s_res').value; s.antialias = $('s_aa').checked; s.perf = $('s_perf').checked;
-      s.sound = $('s_sound').checked; s.volMaster = $('s_vm').value / 100; s.volSfx = $('s_vs').value / 100; s.volVoice = $('s_vv').value / 100; s.volMusic = $('s_vmu').value / 100;
+      s.showIncome = $('s_income').checked; s.edgeScroll = $('s_edge').checked; s.autoMenu = $('s_automenu').checked; s.tipNear = $('s_tipnear').checked; s.mentor = $('s_mentor').checked; s.minimapRotate = $('s_mmrot').checked; s.minimapPlayerColors = $('s_mmcol').checked; s.speed = +$('s_speed').value; s.uiScale = +$('s_ui').value; s.autosave = $('s_autosave').checked; s.autosaveMin = +$('s_autosavemin').value;
+      s.shadows = $('s_shadows').value; s.grass = $('s_grass').value; s.particles = $('s_particles').value; s.weather = $('s_weather').checked; s.fpsCap = +$('s_fps').value; s.resScale = +$('s_res').value; s.antialias = $('s_aa').checked; s.perf = $('s_perf').checked;
+      s.sound = $('s_sound').checked; s.volMaster = $('s_vm').value / 100; s.volSfx = $('s_vs').value / 100; s.volVoice = $('s_vv').value / 100; s.volMusic = $('s_vmu').value / 100; s.volAtmo = $('s_vat').value / 100;
       saveSettings(s);
       if (this.hooks.applySettings) this.hooks.applySettings(s);
     };
     this.win.querySelectorAll('input,select').forEach((i) => { i.onchange = apply; i.oninput = apply; });
     this.bind({ ok: () => { apply(); back ? back() : this.close(); } });
   }
+  // the in-game help (ui/helpbook.js): at a topic (file#key) or the start; F1 opens it on what is under the mouse,
+  // being placed or selected (the game pauses while it is open, as the original's)
+  helpBook(ref, back) { this.inGame = !!this.G.ready; (this.book = this.book || new HelpBook(this)).open(ref, back); }
+  helpFor() { this.inGame = true; (this.book = this.book || new HelpBook(this)).openFor(this.G, null); }
   help(back) {
     this.open('Controls', `<table class="keys">
-      <tr><td>Left click / drag</td><td>Select / box select (Shift adds, double-click selects all of a type)</td></tr>
+      <tr><td>Left click / drag</td><td>Select / box select (Shift adds) · double-click: all of that kind on screen (Ctrl: of that type, Shift: everything)</td></tr>
+      <tr><td>F1</td><td>Help on what is under the mouse or selected</td></tr>
       <tr><td>Right click</td><td>Move, attack, gather, build, repair, deliver, heal (healers), enter a bunker / transport, set rally point</td></tr>
-      <tr><td>Special moves</td><td>Units with abilities (and gates, markets ...) show the star menu; targeted moves ask for a target</td></tr>
+      <tr><td>Right drag</td><td>Draw an arrow: the group lines up there facing the arrow, the longer the arrow the wider the ranks</td></tr>
+      <tr><td>Shift / Ctrl + right click</td><td>Add a waypoint · patrol between here and there</td></tr>
+      <tr><td>Q · A · Y</td><td>Build menu (workers) or produce menu: top · middle · bottom row, then 1 – 0 for its buttons</td></tr>
+      <tr><td>E · D · C · X</td><td>Special moves: top · middle · bottom row · stances (then 1 hold, 2 defensive, 3 aggressive)</td></tr>
+      <tr><td>V · B · N · S</td><td>Attack · move · attack-move · stop</td></tr>
+      <tr><td>H · T Z U I O P L K</td><td>Headquarters · next HQ, barracks, farm, machine maker, harbour, temple, weapon smith, tavern</td></tr>
       <tr><td>Walls</td><td>Click the start point, then the end point: a line of segments is placed</td></tr>
-      <tr><td>Arrows · screen edge</td><td>Scroll · Mouse wheel: zoom · Middle drag or Q/E: rotate</td></tr>
-      <tr><td>A · M · S · H</td><td>Attack-move · Move · Stop · Hold position</td></tr>
-      <tr><td>B</td><td>Build menu (workers)</td></tr>
+      <tr><td>Arrows · screen edge · wheel</td><td>Scroll · zoom · PgUp/PgDn zoom · End reset</td></tr>
+      <tr><td>Middle drag · Alt + left / middle + right drag</td><td>Pan · turn the camera (Alt + right drag: pan)</td></tr>
       <tr><td>Army pyramid</td><td>Drag a card into a higher row to level the unit up (skulls), into a lower row to level it down; drop it on another card to swap</td></tr>
-      <tr><td>U · right click on a card</td><td>Level up by one</td></tr>
-      <tr><td>Ctrl+1–9 · 1–9</td><td>Assign / select group (double tap centres)</td></tr>
-      <tr><td>. (period) · Space</td><td>Next idle worker · centre on selection</td></tr>
-      <tr><td>R · Del</td><td>Rally point · destroy selected</td></tr>
+      <tr><td>Ctrl+U · right click on a card</td><td>Level up by one</td></tr>
+      <tr><td>Ctrl+0–9 · 0–9</td><td>Assign / select group (double tap centres; Ctrl+digit with nothing selected keeps the view)</td></tr>
+      <tr><td>W · Shift+W · Ctrl+W · .</td><td>Next idle worker · add one · all idle workers · next idle worker</td></tr>
+      <tr><td>Space · Home</td><td>Last alert · centre on selection</td></tr>
+      <tr><td>R · Del · Shift+Del</td><td>Rally point · destroy the first selected · destroy all selected</td></tr>
       <tr><td>Alt (hold)</td><td>Show all health bars</td></tr>
-      <tr><td>L</td><td>Quest log (campaign) · cutscenes: click or Space = next line, Esc = skip</td></tr>
-      <tr><td>P · F9 · Esc/F10</td><td>Pause · performance overlay · menu</td></tr>
+      <tr><td>J</td><td>Quest log (campaign) · cutscenes: click or Space = next line, Esc = skip</td></tr>
+      <tr><td>Ctrl+A · F2 · F3</td><td>All your units on screen · camera follows the selected unit · free camera</td></tr>
+      <tr><td>Numpad + − × ÷</td><td>Game speed faster · slower · normal · pause</td></tr>
+      <tr><td>F5 / Ctrl+S · F8 · Backspace</td><td>Quick save · quick load · hide the interface</td></tr>
+      <tr><td>Pause · F1 · F9 · Esc/F10</td><td>Pause · these controls · performance overlay · menu</td></tr>
       </table><div class="btns">${this.btn('back', 'Back')}</div>`, { title: !this.inGame });
     this.bind({ back: () => (back ? back() : this.close()) });
   }
+  // The end of a game (the original's CEndScreen, EndScreen.usl 34-256; docs/spec/ui_groups7_9.md §5): the
+  // victory / defeat picture, "You were victorious!" / "You have been defeated!" and why, the game paused, and the
+  // buttons Retry (a won mission: Continue), Load Game, View Statistics, Back to Main menu, Quit. A won mission also
+  // lists its quests and bonus points; a skirmish keeps "Keep playing" (the remake's: watch the game go on).
   // stats: { time, kills, lost, epoch, enemy (skirmish) | mission: { title, text (reason line of a defeat), points (bonus
   // points, optional), next (index entry | null), difficulty } }
   end(won, stats) {
     this.inGame = true;
-    const m = stats.mission, C = this.G.campaign;
+    const m = stats.mission, C = this.G.campaign, D = this.G.data;
     const esc = (t) => String(t || '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' })[c]);
+    const ui = (k, d) => (D ? D.ui('_EndScreen_' + k, d) : d);
     const tx = (k, d) => (C && C.data && C.data.texts && C.data.texts[k]) || d;
     let body;
     if (m) {
@@ -328,17 +484,32 @@ export class Menu {
         ${quests.length ? `<div class="endq">${quests.map((q) => `<div class="q ${st(q)}"><i>${mark[st(q)]}</i><span>${esc(q.headline || q.name)}</span><em>${q.accomplished && pts(q) ? '+' + pts(q) : ''}</em></div>`).join('')}</div>` : ''}
         ${m.points != null || max ? `<p class="points">Bonus points: ${m.points != null ? m.points : earned}${m.points == null && max ? ' of ' + max : ''}</p>` : ''}`;
     } else {
-      body = `<h3 class="${won ? 'won' : 'lost'}">${won ? 'Victory!' : 'Defeat'}</h3>
-      <p>${won ? `The ${stats.enemy} have been defeated.` : 'Your settlement has fallen.'}</p>`;
+      body = `<h3 class="${won ? 'won' : 'lost'}">${esc(won ? ui('YouWin', 'You were victorious!') : ui('YouLose', 'You have been defeated!'))}</h3>
+      ${stats.text ? `<p>${esc(stats.text)}</p>` : ''}`;
     }
-    this.open(won ? 'Victory' : 'Defeat', `<img class="gameover" src="assets/ui/menu/menue__decoration__gameover_${won ? 'victory' : 'defeat'}.png" alt="">
+    const cont = m && won;                                     // Continue: the next mission
+    const canNext = cont && m.next && (m.sequel || Menu.missionOpen(m.next.id));
+    const caption = m ? ui('Campaign', 'Campaign') : ui('Skirmish', 'Skirmish');
+    this.open(caption, `<img class="gameover" src="assets/ui/menu/menue__decoration__gameover_${won ? 'victory' : 'defeat'}.png" alt="">
       ${body}
       <table class="keys"><tr><td>Time</td><td>${stats.time}</td></tr><tr><td>Enemies killed</td><td>${stats.kills}</td></tr>
       <tr><td>Units lost</td><td>${stats.lost}</td></tr>${m ? '' : `<tr><td>Epoch reached</td><td>${stats.epoch}</td></tr>`}</table>
-      <div class="btns row">${m && m.next && Menu.missionOpen(m.next.id) ? this.btn("next", "Next mission", "small") : m ? '' : this.btn('watch', 'Keep playing', 'small')}${this.btn('restart', m && !won ? 'Try again' : 'Play again', 'small')}${this.btn('quit', 'Main menu', 'small')}</div>`);
+      <div class="btns">${cont ? this.btn('next', ui('Continue', 'Continue'), canNext ? '' : 'off') : this.btn('restart', ui('Retry', 'Retry'))}
+        ${this.btn('load', ui('LoadGame', 'Load Game'))}${this.G.world && this.G.world.stats ? this.btn('stats', ui('ViewStatistics', 'View Statistics')) : ''}
+        ${m ? '' : this.btn('watch', 'Keep playing')}${this.btn('quit', ui('BackToMenu', 'Back to Main menu'))}${this.hooks.exit ? this.btn('exit', ui('QuitToWindows', 'Quit')) : ''}</div>`);
     this.bind({
       watch: () => this.close(), restart: () => this.hooks.restart && this.hooks.restart(), quit: () => this.hooks.quit && this.hooks.quit(),
-      next: () => { const s = this.G.settings; s.campaign.mission = m.next.id; saveSettings(s); if (this.hooks.startCampaign) this.hooks.startCampaign({ campaign: m.next.id, difficulty: m.difficulty }); },
+      exit: () => this.hooks.exit && this.hooks.exit(),
+      load: () => this.loadWin(() => this.end(won, stats)),
+      stats: () => statsWindow(this.G, () => this.end(won, stats)),
+      next: () => {
+        if (!canNext) return;
+        if (m.sequel) { if (this.hooks.startCampaign) this.hooks.startCampaign({ sequel: m.next.id, difficulty: m.difficulty }); return; }
+        const s = this.G.settings; s.campaign.mission = m.next.id; saveSettings(s);
+        const cfg = { campaign: m.next.id, difficulty: m.difficulty, tribe: (this.G.config || {}).tribe || '' };
+        const go = (c) => { if (this.hooks.startCampaign) this.hooks.startCampaign(c); };
+        if (m.next.point_buy) this.campaignArmy(m.next, cfg, () => this.end(won, stats), go); else go(cfg);
+      },
     });
   }
 }

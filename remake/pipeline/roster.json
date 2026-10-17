@@ -108,6 +108,7 @@
   ]
  },
  "extra_models": [
+  "fx_unique_pickup",
   "seas_wehrspinne_top",
   "seas_wehrspinne_dest",
   "product_wood_jun",
@@ -137,7 +138,11 @@
   "ninigi_rb_bird",
   "ninigi_small_tower_upgrade",
   "hu_large_tower_upgrade_balista",
-  "hu_large_tower_upgrade"
+  "hu_large_tower_upgrade",
+  "questionmark_red",
+  "questionmark_green",
+  "questionmark_yellow",
+  "exclamation_yellow"
  ],
  "archives": [
   "jungle_vegetation",

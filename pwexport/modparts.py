@@ -26,8 +26,8 @@ far enough to see what it attaches: it follows the class chain (super calls, the
 object's class name (the scripts branch on it), runs loops over literal arrays, and records every
 AddObj / AddObjFlex / AddObjCaptain / AddObjCustomized / AddCustWithParent ... call with the created object, the link,
 the offset and the parent part. Conditions it cannot decide (upgrades, game state) are followed both ways; what
-they attach becomes an optional part. Procedures other than OnInit that attach something (upgrade handlers) give
-optional parts too. The rider's seat is the class's GetCaptainLink, evaluated with the build-ups OnInit made.
+they attach becomes an optional part. A building runs SetReady after OnInit (it is shown finished: the turrets and build-ups it sets there). Procedures
+other than these that attach something (upgrade handlers) give optional parts too. The rider's seat is the class's GetCaptainLink, evaluated with the build-ups OnInit made.
 
     parts = derive(install, techtree, classes)['seas_rex']      # raw entries like data/composites.json, plus 'offset'
     normalized(install, techtree, classes)['seas_rex']          # composites.normalize()d, with 'offset' and 'derived'
@@ -103,7 +103,12 @@ def read_classes(text, out):
             params = [a.strip().split()[-1] for a in p.group(2).split(',') if a.strip()]
             procs.setdefault(p.group(1), (params, body[p.end():pe]))
         consts = dict(re.findall(r'\bconst\s+[\^\w.]+\s+(\w+)\s*=\s*([^;]+);', body))
-        out[name] = {'parent': parent, 'procs': procs, 'consts': consts}
+        # the constructor's literal member values (MIRAGE's great cannon: m_bRotator=false)
+        init = {}
+        c = re.search(r'\bconstructor\s*\(\s*\)(.*?)\bendconstructor', body, re.S)
+        if c:
+            init = dict(re.findall(r'^\s*(m_\w+)\s*=\s*(true|false|-?\d+(?:\.\d+)?f?|"[^"]*")\s*;', c.group(1), re.M))
+        out[name] = {'parent': parent, 'procs': procs, 'consts': consts, 'init': init}
 
 
 def _block_end(text, start, opener, closer):
@@ -358,6 +363,8 @@ class Run:
                 val = self.value(v, {})
                 if val is not UNK:
                     self.members[k] = val
+            for k, v in (classes[c].get('init') or {}).items():
+                self.members[k] = self.value(v, {})
         self.parts = []                 # attach records in script order
         self.objs = 0
         self.main = None                # the main build-up (SetBuildUp)
@@ -510,6 +517,10 @@ class Run:
                 if isinstance(a, (int, float)) and isinstance(b, (int, float)):
                     return {'<': a < b, '>': a > b, '<=': a <= b, '>=': a >= b}[op]
                 return None
+        m = re.match(r'^(m_x\w+)\.IsValid\(\)$', s)
+        if m:                               # an object handle of the new object: valid once the script made it
+            v = self.members.get(m.group(1), None)
+            return True if isinstance(v, Obj) else (False if v is None else None)
         m = re.match(r'^HasBuildUp\s*\(\s*(?:CBuildUpBase\.TYPE_(\w+))?\s*\)$', s)
         if m:
             return (m.group(1) in self.types) if m.group(1) else bool(self.types)
@@ -757,8 +768,17 @@ class Run:
                            'turret': 'turret' in env['__proc'].lower() or 'turret' in ' '.join(args).lower()})
 
     # ---- entry points
-    def init(self):
+    def init(self, building=False):
         self.call('OnInit', [False])
+        if building and self.find('SetReady'):
+            # a building is shown finished: the game calls SetReady when it is built (MIRAGE's machine gun nest puts
+            # its gun on there, "if(m_bBuildingReady)")
+            # - only its turrets and what it puts on build-ups are taken (what it links to itself otherwise is what a
+            # finished building spawns: cranes, nests, animals)
+            self.members['m_bBuildingReady'] = True
+            n = len(self.parts)
+            self.call('SetReady', [])
+            self.parts[n:] = [p for p in self.parts[n:] if p.get('turret') or p['fn'].startswith('Add')]
         # a class with its own LinkCaptainObj seats the captain itself (the velociraptor handler on its leash)
         hit = self.find('LinkCaptainObj')
         if hit and self.has_captain and self.classes[hit[0]]['parent'] and hit[0] != self.chain()[-1] and 'RideAction' not in self.classes[hit[0]]['procs']['LinkCaptainObj'][1]:
@@ -1026,13 +1046,13 @@ def derive_one(install, tt, classes_txt, tribe, typ, name, node):
     run.seat0, run.types0 = None, set()
     if run.cls:
         try:
-            run.init().optional()
+            run.init(building=typ == 'BLDG').optional()
         except RecursionError:
             pass
     return entries(run, tt, classes_txt, tribe, typ, name, node)
 
 
-VERSION = '6'
+VERSION = '8'
 
 
 def table(install, tt, classes_txt, skip=(), cache_dir=None):

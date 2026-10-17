@@ -40,8 +40,10 @@ NIGHT = {'Bldg', 'Deko', 'Fiel', 'Misc', 'Ship'}
 STATES = {'Bldg', 'Wall', 'Fiel', 'Misc', 'Deko', 'Vgtn', 'Ship'}      # construction / damage / epoch bits 9-13, 21-28
 
 
-def helper(a, fourcc):
-    if (a >> 18) & 1 and fourcc in SELVOL:
+def helper(a, fourcc, additive=False):
+    """additive: the chunk's material adds light (GSF material flag 0x4); on decorations the pick bit then marks the
+    light shapes of an effect, which the game shows (fx_heal_area, fx_holy_forest, ash_lava_glow_01)"""
+    if (a >> 18) & 1 and fourcc in SELVOL and not (additive and fourcc == 'Deko'):
         return 'pick'
     if (a >> 19) & 1 and fourcc == 'Vgtn':
         return 'billboard'
@@ -78,6 +80,16 @@ def _is_hull(j, n):
     return 0 < cnt <= 24 and max(b - a for a, b in zip(mn, mx)) > 8
 
 
+def _is_additive(j, n):
+    """does the chunk draw with an additive material (GSF material flag 0x4, material extras gsf_flags)?"""
+    for p in j['meshes'][n['mesh']]['primitives']:
+        if 'material' in p:
+            g = (j['materials'][p['material']].get('extras') or {}).get('gsf_flags')
+            if g and int(str(g).split('/')[0], 16) & 4:
+                return True
+    return False
+
+
 def _is_fx(j, n):
     """sprite clouds of effects (billboards with a particle_* texture: smoke, dust, sparks)"""
     if (n.get('extras') or {}).get('kind') != 'foliage':
@@ -101,7 +113,7 @@ def visible_nodes(j, owned=True, flags=None, level=4, dmg=0, age=None, night=Fal
     out = set()
     for n in nodes:
         a = n['extras']['attr']
-        h = helper(a, fourcc) or ('pick' if _is_hull(j, n) else None)
+        h = helper(a, fourcc, _is_additive(j, n)) or ('pick' if _is_hull(j, n) else None)
         if h == 'night' and night:
             h = None
         if h or (not fx and _is_fx(j, n)):

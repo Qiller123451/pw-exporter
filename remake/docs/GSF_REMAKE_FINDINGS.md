@@ -7,7 +7,7 @@ the byte-wise MSB numbering, the scripts' VIS flags use raw bits). Checked by re
 |---|---|
 | 0–8 | LOD mask (bit 0 = full detail) |
 | 9–13 | epoch variants I–V (buildings change with the owner's epoch) |
-| 18 | selection / pick volume (all kinds) |
+| 18 | selection / pick volume (all kinds); on decorations with an additive material (flag 0x4) the light shapes of an effect, shown (fx_heal_area, fx_holy_forest, ash_lava_glow_01) |
 | 19 | shadow model |
 | 20 | night lights (buildings); on animals: wound |
 | 21–24 | construction level 0–3 |
@@ -18,7 +18,8 @@ the byte-wise MSB numbering, the scripts' VIS flags use raw bits). Checked by re
 * Pathfinder table (model info `+44` ptr, `+48` count): 32-byte records `[u32 type][3 f32][3 f32][u32 attr]`,
   type 1 = box (min corner + size, Z up), type 0 = sphere (projectile collision). Used as building footprints.
 * Links used by the game: `Bl_0..9` builder spots, `Cr_1..4` cranes, `D_01..16` damage fire/smoke, `Spwn` spawn point,
-  `Ex_1` exit, `we` turret / weapon build-up, `Dri1`/`Ride` riders, `Db_1`/`Db_2` collector drawbar + wagon,
+  `Ex_1` exit, `we` turret / weapon build-up, `Dri1`/`Ride` riders, `Dri0..9` of an open transporter's build-up the
+  passengers' seats, `Db_1`/`Db_2` collector drawbar + wagon,
   `Proj` projectile start.
 * Wall pieces (hu_palisade etc.) are hubs with arms in 8 directions (one part group per arm, positioned about 4 m
   from the centre); the engine's WallMap shows the arms towards connected neighbours. A straight segment = hub +

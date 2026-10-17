@@ -67,7 +67,8 @@ const lp = locked.map((u) => [u.pos.x, u.pos.z]);
 step(20);
 S = B.census(true);
 ok(locked.every((u) => !S.pool.includes(u) && !S.fighters.includes(u)), 'AILU: locked units are not in the pool');
-ok(locked.every((u, i) => Math.hypot(u.pos.x - lp[i][0], u.pos.z - lp[i][1]) < 2 && u.task.type === 'idle'), 'AILU: locked units get no orders');
+// (idle units may still be pushed aside a little by others walking past: a few metres, not an order)
+ok(locked.every((u, i) => Math.hypot(u.pos.x - lp[i][0], u.pos.z - lp[i][1]) < 4 && u.task.type === 'idle' && !u.path.length), 'AILU: locked units get no orders');
 
 // --- AIDA: a defence area
 const ap = { x: home.x + 40, z: home.z - 30 };

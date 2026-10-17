@@ -1,4 +1,5 @@
-// Weather: falling snow where the country is high enough (CFG.weather.snow = {from, full, count, size, fall}).
+// Weather: falling snow where the country is high enough (CFG.weather.snow = {from, full, count, size, fall}) -
+// or ash, on a volcano (CFG.weather.ash: the same, with a colour).
 //
 // One cloud of points in a box around the camera; every flake falls and drifts, and one that leaves the box comes
 // in again on the other side, so the box can follow the camera without the snow jumping. How thick it snows goes
@@ -10,7 +11,7 @@ import { CFG } from './config.js';
 export class Weather {
   constructor(game) {
     this.g = game;
-    const S = this.S = { count: 1600, box: 70, height: 46, size: 0.5, fall: 7, drift: 2.2, ...((CFG.weather && CFG.weather.snow) || {}) };
+    const S = this.S = { count: 1600, box: 70, height: 46, size: 0.5, fall: 7, drift: 2.2, ...((CFG.weather && (CFG.weather.snow || CFG.weather.ash)) || {}) };
     const n = S.count, pos = new Float32Array(n * 3), seed = new Float32Array(n);
     for (let i = 0; i < n; i++) { pos[i * 3] = (Math.random() - 0.5) * S.box; pos[i * 3 + 1] = Math.random() * S.height; pos[i * 3 + 2] = (Math.random() - 0.5) * S.box; seed[i] = Math.random() * 6.283; }
     const geo = new THREE.BufferGeometry();
@@ -22,6 +23,7 @@ export class Weather {
     gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.4, 'rgba(255,255,255,0.7)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
     x.fillStyle = gr; x.fillRect(0, 0, 32, 32);
     this.mat = new THREE.PointsMaterial({ map: new THREE.CanvasTexture(c), size: S.size, transparent: true, opacity: 0, depthWrite: false, sizeAttenuation: true, fog: true });
+    if (S.color !== undefined) this.mat.color.set(S.color);       // (ash: grey flakes, CFG.weather.ash)
     this.points = new THREE.Points(geo, this.mat);
     this.points.frustumCulled = false; this.points.renderOrder = 12; this.points.visible = false;
     game.scene.add(this.points);

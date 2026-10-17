@@ -1,28 +1,49 @@
-import { colorById, hex, NEUTRAL_UI } from './game/colors.js';
+import { colorById, hex, NEUTRAL_UI, PLAYER_COLORS } from './game/colors.js';
+import { resolveSetup, defaultSetup } from './game/skirmish.js';
+import { Chat } from './ui/chat.js';
+import { diplomacyWindow } from './ui/diplomacy.js';
+import { PointBuy } from './game/pointbuy.js';
 import { watchRenderer, loopError, report, reportError, setReportContext, watchGlobalErrors } from './ui/diagnostics.js';
 import * as THREE from 'three';
 import { Renderer, RTSCamera } from './engine/renderer.js';
 import { initAssets, loadModel, Assets } from './engine/assets.js';
-import { HeightField, buildTerrain, FogOfWar } from './engine/terrain.js';
+import { HeightField, buildTerrain, FogOfWar, refreshTerrain, refreshSplat } from './engine/terrain.js';
+import { GroundBrushes, levelGround, brushCells } from './game/ground.js';
 import { PropField, FoliageField, treeSprites, holeUniforms, spriteLight } from './engine/props.js';
 import { FX } from './engine/fx.js';
+import { Particles } from './engine/particles.js';
+import { Weather } from './engine/weather.js';
+import { Atmo } from './engine/atmo.js';
 import { Audio } from './engine/audio.js';
+import { HOME_CLASS } from './engine/music.js';
 import { Feedback } from './ui/feedback.js';
+import { GAME_FX_MODEL } from './ui/gamefx.js';
+import { ModelFx } from './engine/modelfx.js';
+import { MIRAGE_FX_MODELS } from './game/systems/moves_mirage.js';
 import { Rules } from './game/rules.js';
 import { World } from './game/world.js';
 import { Player } from './game/player.js';
-import { generatedSource, originalSource } from './game/maps/source.js';
+import { generatedSource, originalSource, slopeWalkable } from './game/maps/source.js';
 import { parseUla } from './game/maps/ula.js';
 import { setForestData } from './game/maps/forest.js';
 import { buildWater } from './engine/water.js';
 import { GrassLayer, GRASS_DENSITY } from './engine/grass.js';
 import { TribeAI } from './game/ai.js';
-import { initAtlas, preloadAtlasImages } from './ui/atlas.js';
+import { initAtlas, preloadAtlasImages, setCardNames } from './ui/atlas.js';
 import { HUD } from './ui/hud.js';
 import { Input } from './ui/input.js';
-import { Overlay, Minimap } from './ui/overlay.js';
-import { Menu, loadSettings, saveSettings, TRIBE_INFO } from './ui/menu.js';
+import { Overlay } from './ui/overlay.js';
+import { Minimap, minimapButtons } from './ui/minimap.js';
+import { Menu, loadSettings, saveSettings, TRIBE_INFO, CONFIG_MOD } from './ui/menu.js';
+import { snapshot, restore } from './game/save.js';
+import { Sequel } from './game/sequel/runtime.js';
+import { sequelData, SEQUEL_MOD } from './game/sequel/rules.js';
+import { lockedBefore } from './game/sequel/missions.js';
+import { onRoad } from './game/sequel/maps.js';
+import { SequelUI } from './ui/sequel_ui.js';
+import { listSaves, putSave, getSave, deleteSave, exportSave, importSave, quickId } from './ui/saves.js';
 import { Campaign, loadCampaign } from './game/campaign/setup.js';
+import { Regions } from './game/campaign/regions.js';
 import { MissionUI } from './ui/mission.js';
 
 const params = new URLSearchParams(location.search);
@@ -32,8 +53,13 @@ const BUILD = typeof __BUILD__ !== 'undefined' ? __BUILD__ : 'dev';
 setReportContext(() => {
   const c = G.config || {};
   return [`build ${BUILD}`, `browser ${navigator.userAgent}`, `gpu ${G.gpu || '?'}`,
-    (c.campaign != null ? `campaign mission ${c.campaign}, difficulty ${c.difficulty}, ` : `game: ${c.me || '?'} vs ${c.ai || '?'}, map ${c.map || 'random jungle'}${c.map ? '' : ', seed ' + c.seed}, `) +
-    `time ${G.world ? G.world.time.toFixed(1) + ' s' : '-'}, units ${G.world ? G.world.units.length : '-'}`].join('\n');
+    (c.campaign != null ? `campaign mission ${c.campaign}, difficulty ${c.difficulty}${c.tribe ? ', tribe ' + c.tribe : ''}, ` : `game: ${c.me || '?'} vs ${c.ai || '?'}, map ${c.map || 'random jungle'}${c.map ? '' : ', seed ' + c.seed}, `) +
+    `time ${G.world ? G.world.time.toFixed(1) + ' s' : '-'}, units ${G.world ? G.world.units.length : '-'}`,
+    // what the graphics card had to draw in the last frame (a context loss: which part was too much)
+    G.renderer ? `frame: ${G.renderer.renderer.info.render.calls} draws, ${G.renderer.renderer.info.render.triangles} triangles, ` +
+      `${G.renderer.renderer.info.memory.textures} textures, ${(G.renderer.renderer.info.programs || []).length} shaders, ` +
+      `${G.particles ? G.particles.drawn || 0 : 0} sprites (particles ${G.settings.particles || 'on'}), pixel ratio ${G.renderer.renderer.getPixelRatio()}, ` +
+      `shadows ${G.settings.shadows}, ${window.innerWidth}x${window.innerHeight}` : ''].filter(Boolean).join('\n');
 });
 if (!MANUAL) watchGlobalErrors();
 const REASON = {
@@ -74,6 +100,8 @@ async function loadCore() {
     fetch('forest.json').then((r) => (r.ok ? r.json() : null)).then(setForestData).catch(() => setForestData(null)),
   ]);
   G.data = new Rules(tt, json);
+  G.raw = { tt, json };                           // (the sequel campaign reads its own rules from them: game/sequel/rules.js)
+  setCardNames((name) => { const d = G.data.exists(name) ? G.data.def(name, null) : null; return d && d.desc ? String(d.desc).replace(/^_/, '') : null; });
   await preloadAtlasImages();
   Input.loadCursors('assets/ui/');
 }
@@ -97,6 +125,21 @@ async function loadModels(tribes, need = new Set()) {
   const optional = (n) => M[n].map || LANDSCAPE.test(M[n].arch) || wild.has(n);
   const want = new Set(Object.keys(M).filter((n) => !skip.some((p) => n.startsWith(p)) && (!optional(n) || need.has(n))));
   for (const n of need) if (M[n]) want.add(n);
+  // the parts the tribes' objects and the map's own objects attach (game/compose.js), also from map archives: the
+  // machine gun nest's gun seas_hq_machinegun_nest_top (campaign headquarters; MIRAGE builds the nest)
+  for (const [name, ix] of D.index) {
+    const s1 = D.stats(name, 1, null), gfx = String((s1 && s1.gfx) || D.classGfx(name) || '').toLowerCase();
+    if (!tribes.includes(ix.tribe) && !need.has(gfx)) continue;
+    for (const s of D.composites(name)) for (const g of [s.gfx, ...(s.variants || [])]) if (g && M[g.toLowerCase()]) want.add(g.toLowerCase());
+  }
+  // a class whose tech tree model doesn't exist is drawn with its class file's model (unitModel): load that one
+  // (MIRAGE's Stina: Stina_s2 .. s5 -> stina_s0, which the campaign maps also use)
+  for (const [name, ix] of D.index) {
+    if (ix.tribe === 'World' || skip.some((p) => name.toLowerCase().startsWith(p))) continue;
+    const cg = D.classGfx(name);
+    if (!cg || !M[cg] || want.has(cg)) continue;
+    for (let l = 1; l <= 5; l++) { const s = D.stats(name, l, null); if (s && s.gfx && !M[s.gfx.toLowerCase()]) { want.add(cg); break; } }
+  }
   for (const n of [...want]) if (M[n].anims) want.add(M[n].anims.toLowerCase());
   // keep the anim packs other tribes' units borrow (e.g. seas_worker animates with hu_worker_s1)
   const animated = new Set();
@@ -106,10 +149,11 @@ async function loadModels(tribes, need = new Set()) {
   }
   for (const k in M) { const a = M[k].anims; if (a) animated.add(a.toLowerCase()); if (/_rider_|_crane_|collector_[a-e]$|_rally_point/.test(k)) animated.add(k); }
   // wall pieces: arms tagged by direction (assets.js tagWallArms; towers and traps are not wall pieces)
-  const walls = new Set();
+  const walls = new Set(), gates = new Set();
   for (const [name, ix] of D.index) if (ix.type === 'BLDG') {
     const d = D.def(name, null);
     if (d && d.wallKind === 'wall') for (let l = 1; l <= 5; l++) { const s = D.stats(name, l, null); if (s && s.gfx) walls.add(s.gfx.toLowerCase()); }
+    if (d && d.wallKind === 'gate') for (let l = 1; l <= 5; l++) { const s = D.stats(name, l, null); if (s && s.gfx) gates.add(s.gfx.toLowerCase()); }
   }
   const names = [...want].filter((n) => M[n]);
   G.templates = G.templates || new Map();
@@ -118,7 +162,7 @@ async function loadModels(tribes, need = new Set()) {
   const worker = async () => {
     while (queue.length) {
       const n = queue.shift();
-      try { G.templates.set(n, await loadModel(n, { static: !animated.has(n), wallArms: walls.has(n) || /^(hu_small_wall|hu_re_enforced_wall)$/.test(n) })); } catch (e) { console.warn('model failed', n, e); }
+      try { G.templates.set(n, await loadModel(n, { static: !animated.has(n), wallArms: walls.has(n) || /^(hu_small_wall|hu_re_enforced_wall)$/.test(n), gate: gates.has(n) })); } catch (e) { console.warn('model failed', n, e); }
       done++;
       progress(0.05 + 0.8 * done / names.length, `Loading models ${done} / ${names.length}`);
     }
@@ -144,10 +188,13 @@ function spriteTexture(uri) {
   return t;
 }
 
-// minimap colour of each ground texture: the setting's averages (tools/build_terrain.py) or the source's own
-async function minimapColors(S) {
-  if (S.minimapColors) return S.minimapColors;
-  try { return (await (await fetch(`assets/terrain/${S.setting}/setting.json`)).json()).minimap; } catch (e) { return null; }
+// the setting's minimap colour table (pipeline/build_terrain.py: Texture/Scape/<Setting>/minimap_colors.tga, 6 rows of
+// 21 colours); null with game data built before it (the minimap then stays empty until "Rebuild game data")
+async function minimapTable(S) {
+  try {
+    const t = (await (await fetch(`assets/terrain/${S.setting}/setting.json`)).json()).minimap;
+    return Array.isArray(t) && t.length === 6 && t[0].length >= 15 ? t : null;
+  } catch (e) { return null; }
 }
 // Build the world from a map source (game/maps/source.js): terrain, water, landscape objects, resources.
 async function buildWorld(cfg, S) {
@@ -168,7 +215,33 @@ async function buildWorld(cfg, S) {
   try { terrainTex = await Promise.all(S.textures.map(ld)); } catch (e) {
     terrainTex = await Promise.all((S.fallbackTextures || ['grass_green.jpg', 'grass_yellow.jpg', 'dirt.jpg', 'rock.jpg']).map(ld)); scales = undefined;
   }
-  const splat = S.splat(hf);
+  // the map's ground materials, and over them the 4 m cells the ground brush of a building put down painted
+  // (W.adaptTerrain): a painted cell counts as its material, blended with its neighbours like the map's own cells
+  const baseSplat = S.splat(hf), painted = new Map(), half = S.size / 2;
+  const cellOf = (x, z) => { const i = Math.floor((x + half) / 4), j = Math.floor((z + half) / 4); return [i, j, i * 4 + 2 - half, j * 4 + 2 - half]; };
+  const splat = (x, z) => {
+    const base = baseSplat(x, z);
+    if (!painted.size) return base;
+    const fx = (x + half) / 4 - 0.5, fz = (z + half) / 4 - 0.5, i = Math.floor(fx), j = Math.floor(fz), u = fx - i, v = fz - j;
+    let w = null, rest = 0;
+    for (const [ci, cj, k] of [[i, j, (1 - u) * (1 - v)], [i + 1, j, u * (1 - v)], [i, j + 1, (1 - u) * v], [i + 1, j + 1, u * v]]) {
+      const m = painted.get(ci * 65536 + cj);
+      if (m == null) { rest += k; continue; }
+      w = w || new Array(base.length).fill(0);
+      w[m] += k;
+    }
+    if (!w) return base;
+    for (let k = 0; k < base.length; k++) w[k] += base[k] * rest;
+    return w;
+  };
+  // the terrain texture showing ground material k of the setting (scape_<k>.jpg), else the nearest kind of ground
+  const GROUND_NEAR = { 5: [6, 3, 4, 1], 3: [5, 6, 1], 2: [0], 6: [5, 3], 4: [5, 7], 0: [2], 1: [3, 5], 7: [4, 5] };
+  const slotOf = (k) => {
+    for (const m of [k, ...(GROUND_NEAR[k] || [])]) { const i = S.textures.findIndex((t) => t.split('/').pop() === `scape_${m}.jpg`); if (i >= 0) return i; }
+    return null;
+  };
+  G.groundWeights = splat;                         // (tests: the ground materials at a point)
+  G.groundSlot = slotOf;                           // (tests)
   const terrain = await buildTerrain(hf, splat, terrainTex, { scales });
   scene.add(terrain);
   if (S.skirt) {
@@ -188,29 +261,66 @@ async function buildWorld(cfg, S) {
   }
 
   G.fow = new FogOfWar(S.size, 4);
-  if (params.has('reveal')) G.fow.revealAll = true;
+  if (params.has('reveal') || (cfg.slots && cfg.fog === false)) G.fow.revealAll = true;     // (the setup's "Disable fog of war": FOWEnabled)
   G.props = new PropField(scene);
+  G.particles = new Particles(scene);
+  G.props.particles = G.particles;
+  Assets.onClone = (root) => G.particles.track(root);
+  G.particles.seen = (x, z) => G.fow.explored_(x, z);
+  G.particles.level = G.settings.particles || 'on';
   G.foliage = new FoliageField(scene, 64);
   G.foliage.light.set(0.86, 0.9, 0.8);
   spriteLight.copy(G.foliage.light);              // 2D parts of buildings (lanterns) lit like the foliage
   G.fx = new FX(scene, height);
+  G.weather = new Weather(scene);                 // snow and rain of the level's weather program (engine/weather.js)
+  G.weather.enabled = G.settings.weather !== false;
   G.audio.muted = !G.settings.sound;
   G.feedback = new Feedback(G);
   const P = S.play;
   const W = G.world = new World({
     scene, data: G.data, templates: tpl, height, size: S.size, play: P, wallGrid: S.wallGrid,
-    playHalf: Math.min(P.x1 - P.x0, P.z1 - P.z0) / 2, water: S.water, setting: S.setting,
+    playHalf: Math.min(P.x1 - P.x0, P.z1 - P.z0) / 2, water: S.water, setting: S.setting, startTime: S.startTime,
     fx: G.fx, audio: G.audio, props: G.props, foliage: G.foliage, fow: G.fow,
     // campaign missions have no built-in victory: no warp gate rule either (GameOverMgr.usl:95-103, multiplayer only)
-    rules: { warpgate: !G.campaign && cfg.warpgate !== false, warpgateMinutes: cfg.warpgateMinutes || 10 },
+    rules: { warpgate: !G.campaign && !G.sequel && cfg.warpgate !== false, warpgateMinutes: cfg.warpgateMinutes || 10,
+      multiplayer: !G.campaign && !G.sequel,
+      // the skirmish setup's game type and diplomacy lock (game/skirmish.js, systems/gameover.js)
+      mode: cfg.slots ? cfg.mode || 'deathmatch' : 'deathmatch', defenderMin: cfg.defenderMin || 45, diplomacyLocked: !!(cfg.slots && (cfg.lockDiplomacy || cfg.mode === 'domination' || cfg.mode === 'defender')) },          // a multiplayer level (CLevelInfo.IsMultiplayer): the skirmish maps
   });
+  G.mfx = new ModelFx(W);                          // the game's effect models (engine/modelfx.js, ui/gamefx.js)
   // keep units inside the playable area and out of the water (ships use their own grid, see nav.water)
   const nav = W.nav;
   for (let j = 0; j < nav.n; j++) for (let i = 0; i < nav.n; i++) {
     const [x, z] = nav.center(j * nav.n + i);
     if (x < P.x0 + 2 || x > P.x1 - 2 || z < P.z0 + 2 || z > P.z1 - 2) nav.block[j * nav.n + i]++;
   }
+  W.mapKind = S.kind;                              // (the wall map's height rules: wallmap.js heightAt)
   if (S.water != null) W.markWater(S.water);
+  // where land units can walk: the map's pathfinder grid, else a slope rule (maps/source.js slopeWalkable: the
+  // sequel's cliffs and the random maps' mountains)
+  W.markTerrain(S.walkable || slopeWalkable((x, z) => W.height(x, z), S.maxSlope));
+  nav.labelRegions();                              // before anything is built (nav.js: goals across mountains)
+  if (W.waterNav) W.waterNav.labelRegions();
+  // AdaptTerrain: under a building put down in the game the ground is levelled and takes the brush's materials
+  // (game/ground.js)
+  const brushes = new GroundBrushes(await fetch('assets/terrain/objbrush.json').then((r) => r.json()).catch(() => null));
+  W.groundLog = [];                                // what was done, in order (a saved game does it again: game/save.js)
+  W.adaptTerrain = (gfx, x, z, rot) => {
+    const b = brushes.get(gfx);
+    if (!b) return false;
+    const r = levelGround(hf, b, brushes.mpp, x, z, rot);
+    if (r) refreshTerrain(terrain, hf, r);
+    let paintedAny = false;
+    for (const [i, j, m] of brushCells(b, brushes.mpp, x, z, rot, cellOf)) {
+      const k = slotOf(m);
+      if (k != null) { painted.set(i * 65536 + j, k); paintedAny = true; }
+    }
+    const R = Math.hypot(b.w, b.h) * brushes.mpp / 2 + 8;
+    if (paintedAny) refreshSplat(terrain, hf, splat, x - R, z - R, x + R, z + R);
+    W.groundLog.push([gfx, x, z, rot]);
+    W.emit('ground', { x, z, r: R });               // the grass follows the new ground
+    return true;
+  };
 
   // ---------------------------------------------------------------- map content
   const kinds = new Set();
@@ -237,7 +347,7 @@ async function buildWorld(cfg, S) {
     for (const f of (ex && ex.foliage) || []) {
       const fruit = f.size <= 2.01;
       for (let i = 0; i < f.pts.length; i += 3) {
-        const lx = f.pts[i], ly = f.pts[i + 2], lz = -f.pts[i + 1];
+        const lx = -f.pts[i], ly = f.pts[i + 2], lz = -f.pts[i + 1];       // GSF -> world: (-x, z, -y)
         const k = Math.floor(brnd() * 2);
         list.push({ x: x + lx * c + lz * s, y: y + ly + (fruit ? 0.1 : 0), z: z - lx * s + lz * c, size: fruit ? 0.55 + brnd() * 0.3 : f.size * 0.55,
           uv: fruit ? FRUIT[k] : LEAF[k], detail: fruit ? false : i % 2 === 1, tint: fruit ? 0.9 : 0.35 + Math.min(1, ly / 2) * 0.5 + brnd() * 0.15 });
@@ -268,6 +378,8 @@ async function buildWorld(cfg, S) {
   // undergrowth: camera-facing leaf sprites (same technique as the tree canopies)
   const bushTex = spriteTexture('jng_small_a.png');
   const BUSH_CELLS = [[0, 0.25, 0.25, 0.5], [0.25, 0.25, 0.5, 0.5], [0.5, 0.25, 0.75, 0.5], [0, 0.5, 0.25, 0.75], [0.25, 0.5, 0.5, 0.75], [0, 0, 0.25, 0.25], [0.25, 0, 0.5, 0.25]];
+  // the map's plants and decoration, for W.clearVegetation: {x, z, prop, sprites, cells}
+  const decorList = W.decorIndex = [];
   for (const d of S.decor) {
     const y = d.y != null ? d.y : height(d.x, d.z);
     if (/^jungle_(bush_|underwood_|mountain_bush)/.test(d.model)) {
@@ -278,7 +390,7 @@ async function buildWorld(cfg, S) {
         const cell = pal === 0 ? BUSH_CELLS[3 + Math.floor(brnd() * 2)] : pal === 1 ? BUSH_CELLS[Math.floor(brnd() * 3)] : BUSH_CELLS[Math.floor(brnd() * BUSH_CELLS.length)];
         list.push({ x: d.x + Math.cos(a) * r, y: y + hy, z: d.z + Math.sin(a) * r, size: (1.3 + brnd() * 1.1) * sc, uv: cell, detail: i >= 5, tint: Math.min(1, hy / (1.5 * sc)) * 0.7 + brnd() * 0.25 });
       }
-      G.foliage.add(bushTex, list);
+      decorList.push({ x: d.x, z: d.z, sprites: [G.foliage.add(bushTex, list)] });
       continue;
     }
     if (/^jungle_(flowers|reed|wildrice|beachgrass)/.test(d.model)) {
@@ -293,15 +405,35 @@ async function buildWorld(cfg, S) {
         const a = brnd() * 6.283, r = brnd() * 1.1;
         list.push({ x: d.x + Math.cos(a) * r, y: y + 0.6 + brnd() * 0.4, z: d.z + Math.sin(a) * r, size: 0.6 + brnd() * 0.35, uv: FLOW[kindF * 2 + Math.floor(brnd() * 2)], detail: true, tint: 0.85 });
       }
-      G.foliage.add(miscTex, list);
+      decorList.push({ x: d.x, z: d.z, sprites: [G.foliage.add(miscTex, list)] });
       continue;
     }
     if (!tpl(d.model, true)) continue;
     kind(d.model, { castShadow: d.block || /bush|underwood|tree/.test(d.model), holes: /tree|palm/.test(d.model) });
-    G.props.add(d.model, d.x, y, d.z, d.rot, d.scale, d.q);
-    addSprites(d.model, d.x, y, d.z, d.rot, d.scale, { ground: !/tree|palm|bamboo|deco/.test(d.model) });
-    if (d.block) nav.markCircle(d.x, d.z, Math.min(24, radiusOf(d.model) * d.scale * 0.7));
+    const prop = G.props.add(d.model, d.x, y, d.z, d.rot, d.scale, d.q);
+    const sprites = addSprites(d.model, d.x, y, d.z, d.rot, d.scale, { ground: !/tree|palm|bamboo|deco/.test(d.model) });
+    const cells = d.block ? nav.markCircle(d.x, d.z, Math.min(24, radiusOf(d.model) * d.scale * 0.7)) : null;
+    // the sequel's houses, cars and camps stand where the story put them (not plants)
+    if (!/^sq_/.test(d.model)) decorList.push({ x: d.x, z: d.z, prop, sprites, cells });
   }
+  // a building put down: the decoration, plants, trees and stumps within its radius go (ServerApp.usl PlaceObj,
+  // object types DECO, VGTN, WOOD and ForestMgr.RemoveStumps); fruit bushes and stones stay
+  W.vegetationLog = [];
+  W.clearVegetation = (x, z, r) => {
+    for (const e of decorList) {
+      if (e.gone || Math.hypot(e.x - x, e.z - z) > r) continue;
+      e.gone = true;
+      if (e.prop) G.props.remove(e.prop);
+      for (const h of e.sprites || []) G.foliage.hide(h);
+      if (e.cells) nav.mark(e.cells, -1);
+    }
+    for (const n of W.resources) {
+      if ((n.type !== 'tree' && n.type !== 'timber') || Math.hypot(n.pos.x - x, n.pos.z - z) > r) continue;
+      if (n.alive) W.depleteNode(n);
+      if (n.stumpHandle) { G.props.remove(n.stumpHandle); n.stumpHandle = null; }
+    }
+    W.vegetationLog.push([x, z, r]);
+  };
   for (const s of S.stones) {
     if (!tpl(s.model, true)) continue;
     const y = height(s.x, s.z);
@@ -339,9 +471,15 @@ async function buildWorld(cfg, S) {
     // a campaign mission: the players, objects, groups and start locations of the mission data (game/campaign/setup.js)
     G.me = G.campaign.build(W, S);
     G.ai = null;                                  // there is no single opponent: W.players, diplomacy per pair
+  } else if (G.sequel) {
+    G.me = G.sequel.build(W, S);                  // a mission of the sequel campaign (game/sequel/runtime.js)
+    W.nightFn = () => G.sequel.nightOn;           // its own nights (the buildings' lights follow them)
+    G.ai = null;
   } else {
   // party colours: chosen in the skirmish menu (or "none" = untinted models); the minimap uses the dark variant
-  const pc = (id, fallback) => { const c = colorById(id); return { color: c ? hex(c.dark) : fallback, partyColor: c ? hex(c.light) : null }; };
+  const pc = (id, fallback) => { const c = colorById(id); return { color: c ? hex(c.dark) : fallback, partyColor: c ? hex(c.light) : null, colorSlot: c ? PLAYER_COLORS.indexOf(c) : -1 }; };
+  if (cfg.slots) homes.push(...skirmishPlayers(cfg, S, pc));          // the skirmish setup (game/skirmish.js): up to 8 players
+  else {
   const me = G.me = new Player(0, cfg.me, { ...pc(cfg.meColor, NEUTRAL_UI.me), name: TRIBE_INFO[cfg.me].name, rules: D });
   const ai = G.ai = new Player(1, cfg.ai, { ai: true, ...pc(cfg.aiColor, NEUTRAL_UI.ai), name: TRIBE_INFO[cfg.ai].name, rules: D });
   W.players = [me, ai];
@@ -363,6 +501,7 @@ async function buildWorld(cfg, S) {
     W.recomputeCaps(p);
   });
   }
+  }
   const wildAt = (a) => {
     if (a.swim && !W.waterNav) return null;
     const u = W.spawnUnit(a.species, null, a.x, a.z, undefined, Math.random() * 6.28, a.swim ? { swim: true } : {});
@@ -371,11 +510,34 @@ async function buildWorld(cfg, S) {
   };
   for (const a of S.animals) wildAt(a);
   // nests of original maps keep respawning their animals
+  // (Nest.OnPostLoad Advance_Population: the animals born before the start stand somewhere in the action area)
   for (const n of S.nests || []) {
     if (n.swim && !W.waterNav) continue;
-    W.addWildNest({ ...n, members: n.start.map(wildAt).filter(Boolean) });
+    const nest = W.addWildNest({ ...n, members: [] });
+    for (const a of n.start) {
+      const p = W.nestPoint(nest, false, true) || [n.x, n.z];
+      const u = wildAt({ ...a, x: p[0], z: p[1], home: [n.x, n.z] });
+      if (!u) continue;
+      W.joinNest(nest, u, a.born);
+      W.flockAdd(nest.flock, u);
+    }
+    nest.alive = nest.members.length;
+    W.updateFlockPos(nest);
   }
   if (G.campaign) G.campaign.wildlifeReady();
+  // healing wells, lakes of healing / damage, the weather program (game/systems/landmarks.js): a campaign's wells and
+  // lakes are objects of its mission (campaign/setup.js); the lakes' regions are the map's
+  W.regionOf = mapRegions(G, S);
+  if (!G.campaign) { for (const w of S.wells || []) W.placeWell(w); for (const l of S.lakes || []) W.addLake(l); }
+  // the level's items (artefacts): placed ones, then what the item spawns make (systems/items.js; a campaign's own:
+  // campaign/setup.js)
+  if (!G.campaign && !G.sequel) {
+    for (const i of S.items || []) W.placeItem(i.cls, i.x, i.z, i.rot);
+    if (S.itemSpawns && S.itemSpawns.length) W.generateItems(S.itemSpawns, S.itemPool.pool, S.itemPool.max);
+  }
+  W.startWeather(S.weather);
+  // the end of the game (GameOverMgr: skirmish maps only): its game type, flags, defender
+  if (!G.campaign && !G.sequel) W.gameOverInit(S, cfg);
   createBrains(cfg);
 
   // ---------------------------------------------------------------- ground grass (engine/grass.js)
@@ -392,7 +554,7 @@ async function buildWorld(cfg, S) {
           let d = 0, t = 0;
           for (let k = 0; k < w.length; k++) { d += w[k] * (dens[k] || 0); t += w[k]; }
           d = t > 0 ? d / t : 0;
-          if (d <= 0.01 || hf.normalY(x, z) < 0.8 || !W.nav.isFree(x, z) || inBuilding(x, z)) return 0;
+          if (d <= 0.01 || hf.normalY(x, z) < 0.8 || !W.nav.isFree(x, z) || inBuilding(x, z) || (S.sequel && onRoad(S, x, z))) return 0;
           return d * (G.settings.grass === 'dense' ? 1 : 0.55);
         },
       });
@@ -407,23 +569,95 @@ async function buildWorld(cfg, S) {
     // (StartLocation.usl:352-361 "start_pos"; the angle's zero direction is a guess, see docs/CAMPAIGN_RUNTIME.md)
     const sl = G.campaign.startLocations[G.me.id], own = G.homeEntity();
     G.rtscam.x = sl ? sl.x : own ? own.pos.x : 0; G.rtscam.z = sl ? sl.z : own ? own.pos.z : 0;
-    G.rtscam.yaw = (G.campaign.map.default_camera || 0.785) + Math.PI / 2;
-  } else { const hq = homes[0]; G.rtscam.x = hq.pos.x + 12; G.rtscam.z = hq.pos.z - 10; G.rtscam.yaw = 0; }
+    G.rtscam.yaw = Math.PI / 2 - (G.campaign.map.default_camera || 0.785);   // the eye's azimuth in map space (y south: game/maps/frame.js)
+  } else if (G.sequel) { const [cx, cz] = G.sequel.camera(); G.rtscam.x = cx; G.rtscam.z = cz; G.rtscam.yaw = 0; }
+  else {
+    // the level's default camera angle (an original map's DefaultCamera; 0.785 = the game's default), as in the campaign
+    const hq = homes[0]; G.rtscam.x = hq.pos.x; G.rtscam.z = hq.pos.z;
+    G.rtscam.yaw = Math.PI / 2 - (S.defaultCamera != null ? S.defaultCamera : 0.785);
+  }
   G.rtscam.update(0.016);
   G.overlay = new Overlay(G);
   G.input = new Input(G);
   G.hud = new HUD(G);
-  G.minimap = new Minimap(G, G.hud.mmCanvas, S.size / 2);
-  G.minimap.buildBackground(splat, height, S.trees.filter((t) => t.inside), await minimapColors(S), S.water);
+  G.chat = new Chat(G);
+  G.hud.buildTopButtons();
+  G.minimap = new Minimap(G, G.hud.mmCanvas, S, await minimapTable(S));
+  G.minimap.buildBackground(height, S.water);
+  minimapButtons(G, G.hud.mmWin, G.minimap, (b, key) => G.hud.showTip(b, G.hud.keyTip(key)));
   G.hud.perfEl.classList.toggle('hidden', !G.settings.perf);
   updateFow(true);
 }
 
+// The players of a skirmish setup (game/skirmish.js): each on its start location with the tribe's start (base, three
+// workers, resources: the predefined set "_pb_locked"; a point-buy army: game/pointbuy.js), its team, colour and
+// handicap (the tech tree's /Filters/Special/Upgrades/handicap/handicap_<hp>: hit points of everything but SEAS),
+// the map's population limit of its start slot, and the map's objects of that slot (the defender's fortress ...).
+// -> the start buildings (homes). G.me = the human, G.ai = the first computer player (older callers).
+function skirmishPlayers(cfg, S, pc) {
+  const W = G.world, D = G.data, homes = [];
+  const PB = G.pointBuy = new PointBuy(D, G.aiData);
+  const list = G.resolved || resolveSetup(cfg, S);
+  G.setup = { ...cfg, resolved: list };
+  W.players = [];
+  const count = (t) => list.filter((o) => o.tribe === t).length;
+  list.forEach((s, id) => {
+    const name = TRIBE_INFO[s.tribe].name + (count(s.tribe) > 1 ? ' ' + (list.filter((o, k) => o.tribe === s.tribe && k <= id).length) : '');
+    const fallback = PLAYER_COLORS[id % PLAYER_COLORS.length] ? hex(PLAYER_COLORS[id % PLAYER_COLORS.length].dark) : NEUTRAL_UI.ai;
+    const p = new Player(id, s.tribe, { ...pc(s.color, fallback), name, rules: D, ai: s.type === 'ai', team: s.team });
+    p.hq = s.hq; p.slot = s;
+    W.players.push(p);
+  });
+  G.me = W.players[list.findIndex((s) => s.type === 'human')] || W.players[0];
+  G.ai = W.players.find((p) => p.ai) || null;
+  G.me.debug = !!cfg.debug;
+  list.forEach((s, id) => {
+    const p = W.players[id];
+    if (cfg.handicap && s.hp && s.hp !== 100 && p.tt) p.tt.enable(`Special/Upgrades/handicap/handicap_${s.hp}`);
+    const ms = S.mp && S.mp.slots[s.hq];
+    if (ms && ms.popMax) p.popMax = ms.popMax;
+    const [bx, bz] = s.pos;
+    const st = D.start(p.tribe);
+    Object.assign(p.res, st.res);
+    W.clearArea(bx, bz, 16);
+    const face = Math.atan2(-bx, -bz);
+    const bought = cfg.points >= 0 && PB.ready;
+    // the main building; the Aje resource collector of a human player with an army budget is a card of the bought
+    // army (StartLocation.usl:386-390)
+    let base = null;
+    if (!(bought && s.type === 'human' && p.tribe === 'Aje')) {
+      if (D.info(st.base).type === 'BLDG') base = W.placeBuilding(st.base, p, bx, bz, Math.round(face / (Math.PI / 4)) * (Math.PI / 4), true);
+      else base = W.spawnUnit(st.base, p, bx, bz, 1, face);
+    }
+    const stand = base ? base.radius : 3;
+    if (!bought) st.units.forEach((u, k) => { const a = face + Math.PI + (k - 1) * 0.5, r = stand + 5; W.spawnUnit(u, p, bx + Math.sin(a) * r, bz + Math.cos(a) * r, 1, face); });
+    else if (s.type === 'human') {
+      // the army of the setup's "My Army" page (ui/pointbuy.js), else the chosen default preset for the budget
+      const total = PB.total(cfg.points, p.tribe);
+      const army = s.army && s.armyTribe === p.tribe && s.armyPoints === cfg.points ? s.army : PB.load(PB.preset(p.tribe, cfg.points, s.preset || 'standard'), p.tribe, total);
+      const made = PB.place(W, p, army, bx, bz, { stand, face, total, check: true });
+      if (!base) base = made.find((u) => u.name === 'aje_resource_collector') || made[0] || null;
+    } else p.pbStart = { credits: cfg.points, x: bx, z: bz, stand, face };        // bought when its brain starts (createBrains)
+    if (base) homes.push(base);
+  });
+  // the map's objects of the start slots (a slot nobody plays: not placed), and those of nobody
+  for (const o of S.owned || []) {
+    const p = o.owner == null ? null : W.players.find((q) => q.hq === o.owner);
+    if (o.owner != null && !p) continue;
+    try {
+      if (o.type === 'BLDG') W.placeBuilding(o.cls, p, o.x, o.z, o.rot, o.attr.building_ready !== '0');
+      else W.spawn(o.cls, p, o.x, o.z, { level: Math.max(o.level, D.minLevel(o.cls, p)), heading: o.rot });
+    } catch (e) { console.warn('map object not placed:', o.cls, e.message); }
+  }
+  for (const p of W.players) W.recomputeCaps(p);
+  return homes;
+}
 // The computer players' brains: G.brains = Map<player id, brain>, each updated once per simulation slice.
 // Skirmish: one TribeAI for the opponent (G.aiBrain; with ?aivai a second one plays the human side, G.meBrain).
 function createBrains(cfg) {
   G.brains = new Map();
   G.aiBrain = null; G.meBrain = null;
+  if (G.sequel) { G.brains = G.sequel.brains(TribeAI); return; }
   if (G.campaign) {
     // every AI slot of a campaign map sleeps ('ai_Mikrobe') until a trigger wakes it (AIBV); its difficulty is the
     // map's AI_Difficulty_Easy|Medium|Hard for the chosen campaign difficulty (CampaignMgr.usl:132-139).
@@ -439,13 +673,39 @@ function createBrains(cfg) {
     }
     return;
   }
+  if (cfg.slots) {
+    // a skirmish setup: one brain per computer slot, its level and personality (ServerApp.usl:454-488)
+    for (const p of G.world.players) {
+      if (!p.ai) continue;
+      const b = new TribeAI(G, p, { difficulty: p.slot.level, behaviour: p.slot.behaviour, multimap: true,
+        mapOptions: { harbour: !!G.world.waterNav, watermap: !!G.world.waterNav, walls: false, markplace_outpost: false, hunt_animals: true, ...((G.mapSource && G.mapSource.aiOptions) || {}), warpgate: !!G.world.rules.warpgate } });
+      G.brains.set(p.id, b);
+      // its army for the budget: the AiPBPreset of its sub-strategy and difficulty (AIC:148-155, game/pointbuy.js)
+      const st = p.pbStart;
+      if (st) {
+        const PB = G.pointBuy, pre = PB.aiPreset(p.tribe, st.credits, b.sub || 'G1', p.slot.level) || PB.preset(p.tribe, st.credits, 'standard');
+        PB.place(G.world, p, PB.load(pre, p.tribe, -1, { buildings: false, mp: false }), st.x, st.z, { stand: st.stand, face: st.face });
+        delete p.pbStart;
+      }
+      if (!G.aiBrain) G.aiBrain = b;
+    }
+    if (params.has('aivai')) { G.meBrain = new TribeAI(G, G.me, { difficulty: 5, behaviour: 'Giraffe', multimap: true, mapOptions: {} }); G.brains.set(G.me.id, G.meBrain); }
+    return;
+  }
   G.aiBrain = new TribeAI(G, G.ai, G.me, cfg.aiLevel);
   G.brains.set(G.ai.id, G.aiBrain);
   // test mode: the computer plays both sides (?aivai)
   if (params.has('aivai')) { G.meBrain = new TribeAI(G, G.me, G.ai, cfg.aiLevel); G.brains.set(G.me.id, G.meBrain); }
 }
+// tests: a computer player's brain for the human player (the scripted campaign playthroughs let it build the base)
+G.playForMe = (opts) => { G.meBrain = new TribeAI(G, G.me, opts); G.brains.set(G.me.id, G.meBrain); return G.meBrain; };
 // does the human player see what player p sees? Own things always; in a campaign also those of players who are
 // friends in both directions (shared vision of allies: a guess, the fog of war is the engine's)
+// the minimap's ping button (MiniMap2.usl: CGameWrap.SendMapPing; the player and the allies see it)
+G.mapPing = (x, z) => {
+  if (G.minimap) G.minimap.marker('Ping', x, z, G.minimap.ownerColor(G.me, 2));
+  G.audio && G.audio.playFirst && G.audio.playFirst(['ui_minimap_ping_delivered']);
+};
 G.sees = (p) => !!p && (p === G.me || (!!G.campaign && G.me.isFriend(p) && p.isFriend(G.me)));
 
 // ---------------------------------------------------------------------------- game API used by the HUD / input
@@ -461,8 +721,11 @@ G.canRally = (e) => !!e && e.alive && e.owner === G.me && (
   G.producerActions(e).some((a) => a.kind === 'Build' && /^(CHTR|ANML|VHCL|SHIP)$/.test(a.type)));
 // buildings the selected workers (or any worker of the player) can construct
 G.buildActions = () => {
-  const w = [...G.sel].find((u) => u.alive && u.owner === G.me && u.canBuild) || G.world.units.find((u) => u.alive && u.owner === G.me && u.isWorker);
+  let w = [...G.sel].find((u) => u.alive && u.owner === G.me && u.canBuild) || G.world.units.find((u) => u.alive && u.owner === G.me && u.isWorker && u.canBuild);
   if (!w) return [];
+  // Taslow builds what the player's workers build (CommandBar.usl GetAvailableActions: "HACK!!! tesla can build stuff
+  // too" - the class tesla_s0 is looked up as <tribe>_worker; the sequel's Taslov is a copy of him: Rules.kind)
+  if (G.data.kind(w.name) === 'tesla_s0') { const o = w.rulesOwner(); w = { name: `${G.data.tree(o).tribe.toLowerCase()}_worker`, kind: 'unit', cls: 'CHTR', def: { type: 'CHTR' }, owner: w.owner, rulesOwner: () => o }; }
   // harbours only on maps with water
   return G.data.actionsOf(w.rulesOwner(), w).filter((a) => a.cat === 'Build/BLDG' && a.visible && !a.disabled && (G.world.waterNav || !G.data.def(a.results[0].obj, G.me)?.coastal));
 };
@@ -533,19 +796,44 @@ G.placeBuilding = (action, x, z, rot, workers) => {
   if (!workers.length) G.hud.message('Select workers and right-click the foundation to build it');
   return true;
 };
-// a wall line (tiles from G.world.wallLine): every new piece is placed and paid on its own, in line order, as far
-// as the resources go (ServerApp.usl:1304). The builders start at the first new piece and then take the nearest
-// unfinished piece within 50 m (construction.js autoWork). Returns the number of pieces placed.
-G.placeWall = (action, tiles, workers) => {
-  let n = 0, why = null, first = null;
+// a wall line (tiles from G.world.wallLine) as the server places it (PlaceWall 0x490920): every tile is checked
+// first, in order, with the earlier ones written (one failing tile: nothing is placed); then the new tiles in list
+// order, existing ones skipped, until one cannot be paid. Every builder gets the first tile (queued with Ctrl) and
+// every later tile queued (Q_Build).
+G.placeWall = (action, tiles, workers, queued = false) => {
+  const W = G.world, WM = W.wallMap, w = tiles && tiles.wall;
+  if (!tiles || !w) return 0;
+  const me = WM.ownerId(G.me);
+  WM.begin();
+  WM.scanObstacles(Math.min(...tiles.map((t) => t.i)) - 3, Math.min(...tiles.map((t) => t.j)) - 3, Math.max(...tiles.map((t) => t.i)) + 3, Math.max(...tiles.map((t) => t.j)) + 3);
+  let bad = false;
   for (const t of tiles) {
-    if (t.state !== 'ok' && t.state !== 'cost') continue;
-    const b = G.world.startConstruction(G.me, action, t.x, t.z, 0, []);
-    if (typeof b === 'string') { why = why || b; if (b === 'cost') break; continue; }
-    if (!first) first = b;
+    if (t.state === 'have') { if (!WM.hasOwn(t.i, t.j, me, w.race, w.type === 3 ? 3 : 0)) { bad = true; break; } continue; }
+    if (!WM.placeable(t.i, t.j, me, w.race, w.cls, w.type)) { bad = true; break; }
+    WM.write(t.i, t.j, me, w.race, w.cls, w.type);
+  }
+  WM.restore();
+  if (bad) { G.hud.message(REASON.place || 'Cannot be placed here', 'bad'); G.feedback.error(); return 0; }
+  let n = 0, why = null;
+  const placed = [];
+  for (const t of tiles) {
+    if (t.state === 'have') continue;
+    const b = W.startConstruction(G.me, action, t.x, t.z, 0, []);
+    if (typeof b === 'string') { why = b; break; }
+    placed.push(b);
     n++;
   }
-  if (first && workers.length) { G.world.order(workers, { type: 'build', target: first }); G.feedback.ordered('build', workers); }
+  if (placed.length && workers.length) {
+    const ws = workers.filter((u) => u.alive);
+    // queued: after the piece the worker is building now (a worker doing anything else starts at once)
+    if (queued) for (const u of ws) {
+      const q = [...(u.buildQueue || []), ...placed];
+      if (u.task.type === 'build') u.buildQueue = q;
+      else { W.order([u], { type: 'build', target: q[0] }); u.buildQueue = q.slice(1); }
+    }
+    else { W.order(ws, { type: 'build', target: placed[0] }); for (const u of ws) u.buildQueue = placed.slice(1); }
+    G.feedback.ordered('build', ws);
+  }
   if (!n && why) { G.hud.message(REASON[why] || why, 'bad'); G.feedback.error(); }
   else if (why === 'cost') G.hud.message(REASON.cost, 'bad');
   else if (n && !workers.length) G.hud.message('Select workers and right-click the foundation to build it');
@@ -561,8 +849,9 @@ G.levelUp = (u) => {
   if (why) G.hud.message(REASON[why] || why, 'bad');
 };
 G.order = (units, o) => G.world.order(units, o);
-G.killSelected = () => {
-  for (const e of [...G.sel]) if (e.alive && e.owner === G.me && e.kind !== 'res') { if (e.kind === 'building') G.world.selfDestruct(e); else G.world.kill(e, null); }
+// Del: the first selected (Kill), Shift+Del: all of them (KillAll)
+G.killSelected = (n = Infinity) => {
+  for (const e of [...G.sel].filter((x) => x.alive && x.owner === G.me && x.kind !== 'res').slice(0, n)) { if (e.kind === 'building') G.world.selfDestruct(e); else G.world.kill(e, null); }
 };
 G.select = (list) => {
   G.sel.clear();
@@ -574,22 +863,35 @@ G.deselect = (e) => { G.sel.delete(e); G.selChanged(); };
 G.toggleSelect = (e) => { if (G.sel.has(e)) G.sel.delete(e); else G.sel.add(e); G.selChanged(); };
 G.selChanged = (silent) => {
   G.hud.hoverT = 0;
+  if (G.input) G.input.selectionChanged();
   if (G.hud.menu && ![...G.sel].some((e) => e.owner === G.me)) G.hud.menu = null;
   if (G.sel.size && !silent) G.feedback.selected([...G.sel]);
 };
 G.centerOn = (e) => { if (e) { G.rtscam.x = e.pos.x; G.rtscam.z = e.pos.z; } };
 G.homeEntity = () => G.world.buildings.find((b) => b.alive && b.owner === G.me) || G.world.units.find((u) => u.alive && u.owner === G.me);
 G.openMenu = () => G.menu.main();
+G.diplomacy = () => diplomacyWindow(G);
 G.closeMenu = () => G.menu.close();
 G.setPaused = (p) => { G.paused = p; document.body.classList.toggle('paused', p && !G.menuOpen); };
 G.togglePause = () => { G.setPaused(!G.paused); G.hud.message(G.paused ? 'Paused' : 'Resumed'); };
 G.togglePerf = () => { G.settings.perf = !G.settings.perf; saveSettings(G.settings); G.hud.perfEl.classList.toggle('hidden', !G.settings.perf); };
-G.selectIdleWorker = () => {
+// how: 'next' (the next one, the camera goes there), 'add' (to the selection), 'all' (every idle worker)
+G.selectIdleWorker = (how = 'next') => {
   const idle = G.world.units.filter((u) => u.alive && u.owner === G.me && u.isWorker && u.task.type === 'idle');
   if (!idle.length) { G.hud.message('No idle workers'); return; }
+  if (how === 'all') { G.select(idle); return; }
   G.idleIdx = ((G.idleIdx || 0) + 1) % idle.length;
   const u = idle[G.idleIdx];
+  if (how === 'add') { G.sel.add(u); G.selChanged(); return; }
   G.select([u]); G.centerOn(u);
+};
+// game speed by key (Keys.srf AccTime / DecTime / ResetTime): the steps of the Options' game speed
+const SPEEDS = [0.5, 1, 1.5, 2];
+G.setSpeed = (key) => {
+  const i = SPEEDS.indexOf(G.settings.speed || 1);
+  const v = key === 'NumpadMultiply' ? 1 : SPEEDS[Math.max(0, Math.min(SPEEDS.length - 1, (i < 0 ? 1 : i) + (key === 'NumpadAdd' ? 1 : -1)))];
+  G.settings.speed = v; saveSettings(G.settings);
+  G.hud.message(`Game speed ${v === 1 ? 'normal' : '×' + v}`);
 };
 
 // ---------------------------------------------------------------------------- per-frame systems
@@ -597,9 +899,13 @@ function updateFow(force) {
   const viewers = [];
   if (G.reveals) G.reveals = G.reveals.filter((r) => r.until > G.world.time);
   const sees = G.sees;
-  for (const u of G.world.units) if (u.alive && !u.parked && sees(u.owner)) viewers.push([u.pos.x, u.pos.z, u.fow]);
-  for (const b of G.world.buildings) if (b.alive && !b.parked && sees(b.owner)) viewers.push([b.pos.x, b.pos.z, b.built ? b.fow : 12]);
+  const k = G.sightScale || 1;                   // night (the sequel campaign: game/sequel/runtime.js)
+  for (const u of G.world.units) if (u.alive && !u.parked && sees(u.owner)) viewers.push([u.pos.x, u.pos.z, u.fow * k]);
+  // a building sees once it is finished (Building.usl UpdateFOW: a site's range is 0 - its workers see it)
+  for (const b of G.world.buildings) if (b.alive && !b.parked && b.built && sees(b.owner)) viewers.push([b.pos.x, b.pos.z, b.fow * k]);
+  if (G.sequel) for (const v of G.sequel.viewers()) viewers.push(v);
   for (const r of G.reveals || []) viewers.push([r.x, r.z, r.r]);        // oracle / fireworks
+  for (const w of G.world.watchers) if (w.host.alive && sees(w.player)) viewers.push([w.host.pos.x, w.host.pos.z, w.host.fow * k]);   // MIRAGE parasites
   if (G.world.reveals.length) for (const r of G.world.revealsFor(sees)) viewers.push(r);     // missions (world.revealArea)
   G.fow.update(viewers);
   // hide what the player can't see
@@ -620,6 +926,46 @@ function cullUnits() {
   for (const u of G.world.units) {
     sph.center.copy(u.pos); sph.center.y += u.height * 0.5; sph.radius = Math.max(u.radius, u.height) + 1;
     u.onScreen = frustum.intersectsSphere(sph);
+  }
+  for (const b of G.world.buildings) {
+    sph.center.copy(b.pos); sph.radius = (b.radius || 5) + 12;
+    b.onScreen = frustum.intersectsSphere(sph);
+  }
+}
+
+// three.js recomputes the world matrix of every object in the scene before each render: 69,000 objects in a big
+// mission (a clay wall piece alone is 826 - all its arms and variants), most of them parts that never move. A building
+// that does not move or animate where the player can see it (or its shadow) keeps its matrices until its position,
+// turn or look changes; a unit out of sight and out of the shadow area is not updated until it comes back. Such an
+// object is skipped by the scene's update (stillUpdate) - three.js itself walks every child even of an object whose
+// matrixWorldAutoUpdate is off.
+const STILL_R = 140;                               // the shadow area around the camera target (renderer.js: 105 / 130)
+const animating = (a) => !!(a && a.cur && !a.cur.paused && a.cur.isRunning());
+function stillUpdate(force) { if (!this.still || force) THREE.Object3D.prototype.updateMatrixWorld.call(this, force); }
+function setStill(o, still) {
+  if (o.updateMatrixWorld !== stillUpdate) o.updateMatrixWorld = stillUpdate;
+  if (still && !o.still) o.updateMatrixWorld(true);         // up to date once more as it stops
+  o.still = still;
+}
+function freezeStill() {
+  const W = G.world, t = G.rtscam.target;
+  // an object whose own matrix is recomputed forces its whole subtree: the scene and the entity containers
+  // (identity, never moved) keep theirs
+  if (G.scene.matrixAutoUpdate) {
+    for (const o of [G.scene, ...G.scene.children]) if (o.isScene || (o.isGroup && o.position.lengthSq() === 0 && o.quaternion.w === 1 && o.scale.x === 1)) { o.updateMatrix(); o.matrixAutoUpdate = false; }
+  }
+  const near = (p, r) => Math.abs(p.x - t.x) < STILL_R + r && Math.abs(p.z - t.z) < STILL_R + r;
+  for (const u of W.units) if (u.obj) setStill(u.obj, u.onScreen === false && !near(u.pos, u.radius));
+  for (const b of W.buildings) {
+    const o = b.obj;
+    if (!o) continue;
+    const seen = b.onScreen || near(b.pos, b.radius);
+    // (o.userData.live: a part that moves by itself - the sequel's windmill rotors, water wheels, searchlight lamps)
+    if (seen && (!b.built || b.turret || b.cranes.length || o.userData.live || animating(b.anim) || (b.parts || []).some((p) => animating(p.anim)))) { setStill(o, false); continue; }
+    const key = `${o.position.x},${o.position.y},${o.position.z},${o.rotation.y},${o.scale.x},${b.visKey}`;
+    if (o.still && key !== o.userData.stillKey) o.updateMatrixWorld(true);
+    o.userData.stillKey = key;
+    setStill(o, true);
   }
 }
 
@@ -647,6 +993,7 @@ function handleEvents() {
   G.feedback.handle(G.world.events);
   G.world.events.length = 0;
   if (G.campaign) G.campaign.evAt = 0;     // its read position in the list (game/campaign/setup.js update): the list starts again
+  if (G.sequel) G.sequel.evAt = 0;
 }
 
 let endT = 0;
@@ -656,19 +1003,14 @@ function checkEnd(dt) {
   endT -= dt;
   // a campaign mission ends only when its triggers say so (G.endMission): no built-in victory or defeat
   // (GameOverMgr.usl:95-103 enables the rule for multiplayer maps only)
-  if (endT > 0 || G.over || G.campaign) return;
+  if (endT > 0 || G.over || G.campaign || G.sequel) return;
   endT = 1;
   const W = G.world;
-  for (const p of W.players) {
-    if (p.defeated) continue;
-    const alive = W.buildings.some((b) => b.alive && b.owner === p) || W.units.some((u) => u.alive && u.owner === p && ((u.isWorker && !u.naval) || u.isDropoff));
-    if (!alive) p.defeated = true;
-  }
-  const lost = G.me.defeated, won = G.me.won || W.players.every((p) => p === G.me || p.defeated || G.me.isFriend(p));
+  // (who is out, who wins: game/systems/gameover.js, run with the world)
+  const lost = G.me.defeated, won = G.me.won;
   if (!lost && !won) return;
   G.over = true;
   const t = Math.floor(W.time);
-  G.audio.playMusic(won && !lost ? 'victory' : 'defeat');
   setTimeout(() => G.menu.end(won && !lost, { time: `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`, kills: G.me.kills, lost: G.me.lost, epoch: EPOCH[G.me.epoch()], enemy: G.ai.name }), 1500);
 }
 
@@ -681,6 +1023,7 @@ function simulate(dt) {
     W.update(s);
     for (const b of G.brains.values()) b.update(s);
     if (G.campaign) G.campaign.update(s);
+    if (G.sequel) G.sequel.update(s);
     if (G.mission) G.mission.tick(s);
     left -= s;
   }
@@ -690,25 +1033,61 @@ function simulate(dt) {
   if (fowT <= 0) { fowT = 0.2; updateFow(); }
 }
 
+// the player's home objects, for the music's Hometown switch (engine/music.js)
+function homes() {
+  const name = HOME_CLASS[G.me.tribe], W = G.world, out = [];
+  if (name) for (const e of [...W.buildings, ...W.units]) if (e.alive && e.owner === G.me && e.name === name) out.push(e.pos);
+  return out;
+}
+// the ambience's state (engine/atmo.js): the ground material in the middle of the view (above 20 m) or under the
+// camera, the camera more than 12 m above the ground, day or night
+function atmoState() {
+  const S = G.mapSource, W = G.world, cam = G.camera.position, t = G.rtscam.target;
+  const above = cam.y - W.height(cam.x, cam.z);
+  const p = above > 20 ? t : cam;
+  return Atmo.state(S.soundMat ? S.soundMat(p.x, p.z) : 2, above > 12, !W.isNight());
+}
 // one frame of presentation. Each step is guarded: an error in one (e.g. the minimap) must not stop the others,
 // and the player sees the error text instead of a frozen black screen (ui/diagnostics.js).
 const DRAW_STEPS = [
   ['input', (dt) => G.input.update(dt)],
   ['camera', (dt) => G.rtscam.update(dt)],
-  ['culling', () => { cullUnits(); updateHoles(); }],
+  ['culling', () => { cullUnits(); updateHoles(); freezeStill(); }],
   ['props', () => { G.props.update(G.camera); G.foliage.update(G.camera.position); if (G.grass && G.grass.mesh.visible) G.grass.update(G.rtscam.target, performance.now() / 1000); }],
   ['sun', () => G.renderer.followSun(G.rtscam.target)],
-  ['effects', (dt) => G.fx.update(dt)],
-  ['audio', () => { G.audio.listener.copy(G.rtscam.target); G.audio.yaw = G.rtscam.yaw; if (!G.over) G.audio.updateMusic(G.world.time, G.me.tribe); }],
+  ['effects', (dt) => { G.fx.update(dt); G.mfx.update(dt); G.weather.update(G.world.weatherNow(), G.rtscam.target, dt); }],
+  ['audio', (dt) => { G.audio.listener.copy(G.rtscam.target); G.audio.yaw = G.rtscam.yaw; G.audio.mus.update(G.world.time, G.audio.listener, homes); G.audio.atmo.update(dt, atmoState(), G.world.time); }],
   ['overlay', (dt) => G.overlay.update(dt)],
   ['hud', (dt) => G.hud.update(dt)],
   ['minimap', (dt) => G.minimap.update(dt)],
-  ['mission', (dt) => { if (G.mission) G.mission.update(dt); }],
+  ['mission', (dt) => { if (G.mission) G.mission.update(dt); if (G.sequelUI) G.sequelUI.update(dt); }],
 ];
 function draw(dt, now) {
   for (const [name, fn] of DRAW_STEPS) { try { fn(dt); } catch (e) { loopError(name, e); } }
   try { G.renderer.render(now); } catch (e) { loopError('render', e); }
+  // the model emitters after the render: their nodes' world matrices are those just drawn (new sprites are shown
+  // from the next frame)
+  try { G.particles.update(dt, G.camera, G.rtscam.target, G.renderer.renderer.getPixelRatio()); } catch (e) { loopError('particles', e); }
 }
+
+// Autosave (IngameScreen.usl UpdateAutosaveTimer, Game.usl OnTick / OnAutosave): every 5 .. 60 minutes of real time
+// (options, 10 by default) the game goes into the slot "Autosave" - not while it is paused or a cutscene runs, then at
+// the next moment it can
+let autosaveAt = 0, autosaveDue = false;
+function autosave(now) {
+  const s = G.settings;
+  if (!G.ready || G.over || G.loading || s.autosave === false) { autosaveAt = 0; return; }
+  const every = Math.min(60, Math.max(5, s.autosaveMin || 10)) * 60000;
+  if (!autosaveAt) autosaveAt = now + every;
+  if (now >= autosaveAt) { autosaveDue = true; autosaveAt = now + every; }
+  if (!autosaveDue || G.paused || G.menuOpen || (G.mission && G.mission.busy())) return;
+  autosaveDue = false;
+  G.saveGame('Autosave', { id: 'autosave', silent: true })
+    .then(() => G.hud.message(G.data.ui('_NT_SavingGame', 'Saving game ...'), 'good'))
+    .catch((e) => console.warn('autosave', e));
+}
+
+G.autosaveDue = () => { autosaveDue = true; autosave(performance.now()); };          // (tests: the frame loop's step)
 
 let last = 0;
 function frame(now) {
@@ -719,6 +1098,7 @@ function frame(now) {
   last = now;
   if (!G.paused) { try { simulate(dt * (G.settings.speed || 1)); } catch (e) { loopError('simulation', e); } }
   draw(dt, now);
+  autosave(now);
   // 8 s after the start: check the game really runs (simulation time, fog of war, camera) - shows what's wrong
   if (!G.selfChecked && (G.frames = (G.frames || 0) + 1) > 30 && now - (G.startedAt || (G.startedAt = now)) > 8000) {
     G.selfChecked = true;
@@ -736,6 +1116,7 @@ function frame(now) {
 
 // test harness (headless screenshots): ?manual
 G.step = (n = 1, dt = 0.05) => { for (let i = 0; i < n; i++) simulate(dt); };
+G.drawNow = (dt = 0.05) => draw(dt, performance.now());          // (tests: one frame drawn in ?manual mode)
 G.renderOnce = () => { draw(0.016, performance.now()); };
 G.updateFow = () => updateFow(true);      // the mission UI refreshes the fog when a cutscene starts (the game stands still then)
 
@@ -743,8 +1124,10 @@ G.updateFow = () => updateFow(true);      // the mission UI refreshes the fog wh
 // ?manual / ?quick start straight into a skirmish (tests); ?tribe=Hu&enemy=Ninigi pick the tribes.
 // "Restart" and "Play again" reload the page with the skirmish stored in sessionStorage.
 function quickConfig() {
-  // ?campaign=<mission 0-16>[&difficulty=0|1|2]: a campaign mission
-  if (params.has('campaign')) return { campaign: +params.get('campaign'), difficulty: params.has('difficulty') ? +params.get('difficulty') : 1, debug: params.has('debug') && params.get('debug') !== '0' };
+  // ?campaign=<mission 0-16>[&difficulty=0|1|2][&tribe=Hu|Aje|Ninigi|SEAS]: a campaign mission (tribe: played with that tribe)
+  // ?sequel=<mission 1-10>[&difficulty=0|1|2]: a mission of the sequel campaign (docs/SEQUEL.md)
+  if (params.has('sequel')) return { sequel: +params.get('sequel'), difficulty: params.has('difficulty') ? +params.get('difficulty') : 1, debug: params.has('debug') && params.get('debug') !== '0' };
+  if (params.has('campaign')) return { campaign: +params.get('campaign'), difficulty: params.has('difficulty') ? +params.get('difficulty') : 1, tribe: params.get('tribe') || '', debug: params.has('debug') && params.get('debug') !== '0' };
   const k = { ...G.settings.skirmish };
   if (params.has('tribe')) k.me = params.get('tribe');
   if (params.has('enemy')) k.ai = params.get('enemy');
@@ -753,19 +1136,50 @@ function quickConfig() {
   if (params.has('map')) k.map = params.get('map');
   if (params.has('aicolor')) k.aiColor = params.get('aicolor');
   if (params.has('debug')) k.debug = params.get('debug') !== '0';
+  // a skirmish of up to 8 (game/skirmish.js): ?players=Hu,Aje,Ninigi,SEAS (the first is yours) [&teams=1,2,1,2]
+  // [&levels=5,5,5] [&aib=Dodo,Schnecke] [&hq=0,2,1,3: chosen start locations] [&mode=domination|defender] [&fog=0] [&points=1000]
+  if (params.has('players')) {
+    const setup = defaultSetup(k), list = params.get('players').split(','), arr = (n) => (params.get(n) || '').split(',').filter((x) => x !== '');
+    setup.slots.forEach((sl, i) => {
+      if (i >= list.length) { sl.type = 'closed'; return; }
+      sl.type = i === 0 ? 'human' : 'ai'; sl.tribe = list[i];
+      if (arr('teams')[i]) sl.team = +arr('teams')[i];
+      if (arr('levels')[i - 1]) sl.level = +arr('levels')[i - 1];
+      // &aib=Dodo,Giraffe: the computer players' personalities (by AI slot)
+      const pers = { Dodo: 'Offensive', Giraffe: 'Balanced', Schnecke: 'Defensive', Mikrobe: 'Passive' }[arr('aib')[i - 1]];
+      if (pers) sl.personality = pers;
+      if (arr('hq')[i]) { sl.hq = +arr('hq')[i]; setup.chooseHQ = true; }
+    });
+    setup.teams = Math.max(...setup.slots.filter((x) => x.type !== 'closed').map((x) => x.team));
+    if (params.has('mode')) setup.mode = params.get('mode');
+    if (params.has('fog')) setup.fog = params.get('fog') !== '0';
+    setup.points = params.has('points') ? +params.get('points') : -1;
+    return setup;
+  }
   return k;
 }
 function applySettings(s) {
   G.audio.muted = !s.sound;
-  Object.assign(G.audio.vol, { master: s.volMaster, sfx: s.volSfx, voice: s.volVoice, music: s.volMusic });
+  Object.assign(G.audio.vol, { master: s.volMaster, sfx: s.volSfx, voice: s.volVoice, music: s.volMusic, atmo: s.volAtmo ?? 0.8 });
   G.audio.applyVolumes();
   if (G.renderer) { G.renderer.setShadows(s.shadows); G.renderer.resize(); }
   if (G.grass) { G.grass.visible = s.grass !== 'off'; G.grass.invalidate(); }
+  if (G.particles) G.particles.level = s.particles || 'on';
+  if (G.weather) G.weather.enabled = s.weather !== false;
   if (G.hud) { G.hud.scale(); G.hud.perfEl.classList.toggle('hidden', !s.perf); }
 }
 // ---------------------------------------------------------------------------- maps
 // cfg.map: '' = random jungle, 'maps/<folder>/<file>.ula' = a map served next to the game (server.ps1 serves the
 // game's Data/Base/Maps folder there), 'file:' = a map file the player picked (kept in sessionStorage for restarts)
+// a region of the map by name (lakes): the campaign's regions, else those of the original map (maps/ula.js regions)
+function mapRegions(G, S) {
+  if (G.campaign) return (n) => G.campaign.regions.find(n);
+  if (!S.regions || !S.regions.length || !S.origin) return () => null;
+  const [ox, oy] = S.origin;
+  const R = new Regions(S.regions.map((r) => ({ guid: r.name, name: r.name, shapes: r.shapes.map((q) => ({ type: q.oval ? 'oval' : 'rect', enabled: q.enabled, x: q.x, y: q.y, w: q.w, h: q.h })) })),
+    (mx, my) => [mx - ox, my - oy], (x, z) => [x + ox, z + oy]);
+  return (n) => R.find(n);
+}
 async function mapSource(cfg) {
   if (!cfg.map) return generatedSource(cfg);
   progress(0.03, 'Reading the map…');
@@ -793,6 +1207,11 @@ function mapModels(S) {
     if (cg) need.add(cg);
   }
   const key = { Jungle: 'jun', Northland: 'nor', Savanna: 'sav', Icewaste: 'ice', Ashvalley: 'ash' }[S.setting] || 'jun';
+  need.add('fx_heal_area');                       // (the temples' healing glow: entities.js READY_FX)
+  need.add('fx_heal_passive');                    // (a unit being healed: ui/feedback.js healGlow)
+  need.add('fx_unique_pickup');                   // (a unit carrying an item: ui/feedback.js itemGlow)
+  for (const n of Object.keys(Assets.manifest.models)) if (GAME_FX_MODEL.test(n)) need.add(n);   // (the game's effects: ui/gamefx.js)
+  for (const n of MIRAGE_FX_MODELS) need.add(n);  // (MIRAGE's moves: game/systems/moves_mirage.js)
   for (const n of ['product_wood_jun', 'product_stone_jun', `product_wood_${key}`, `product_stone_${key}`, 'jungle_tree_01_stump', 'jungle_tree_01_timber', 'jungle_tree_02_timber', 'jungle_fruit_bush']) need.add(n);
   return need;
 }
@@ -801,8 +1220,33 @@ async function startGame(cfg) {
     G.config = cfg;
     loadEl.classList.remove('done');
     loadEl.style.display = '';
+    // a saved game (cfg.load = its slot): the game it was started as, then the saved state on top (game/save.js)
+    let saved = null;
+    if (cfg.load) {
+      progress(0.02, 'Reading the saved game…');
+      saved = (await getSave(cfg.load)).snap;
+      G.loading = true;
+      if (saved.mapfile) try { sessionStorage.setItem('pwr.mapfile', saved.mapfile); } catch (e) { /* ignore */ }
+      cfg = G.config = { ...cfg };
+      delete cfg.load;
+    }
     let S;
-    if (cfg.campaign != null) {
+    if (cfg.sequel != null) {
+      // the sequel campaign (docs/SEQUEL.md): its own classes in the tech tree, its own maps and mission scripts, on
+      // the MIRAGE mod's data (ui/menu.js switches to it)
+      if (Menu.dataMod(G) !== SEQUEL_MOD) throw new Error(`ParaWorld: Containment is played with the ${SEQUEL_MOD} mod's game data (this page has ${Menu.dataMod(G) || 'the official game'}'s): start it from the menu`);
+      progress(0.03, 'Preparing the mission…');
+      const locked = lockedBefore(cfg.sequel);              // what later missions bring in
+      const d = sequelData(G.raw.tt, G.raw.json, locked);
+      G.data = new Rules(d.tt, d.extra);
+      G.campaign = null;
+      G.sequel = new Sequel(G, cfg);
+      G.sequel.locked = locked;
+      S = G.sequel.source();
+      const need = mapModels(S);
+      for (const m of G.sequel.models()) need.add(m);
+      await loadModels(G.sequel.tribes(), need);
+    } else if (cfg.campaign != null) {
       // a campaign mission (game/campaign/setup.js): its map's landscape + the world of the mission data
       progress(0.03, 'Reading the mission…');
       const C = G.campaign = new Campaign(G, await loadCampaign(cfg.campaign), cfg).plan(G.data, Assets.manifest.models);
@@ -813,17 +1257,44 @@ async function startGame(cfg) {
     } else {
       G.campaign = null;
       S = await mapSource(cfg);
-      await loadModels([cfg.me, cfg.ai], mapModels(S));
+      // a skirmish setup: random tribes and start locations are drawn now (their models load)
+      G.resolved = cfg.slots ? resolveSetup(cfg, S) : null;
+      await loadModels(G.resolved ? [...new Set(G.resolved.map((s) => s.tribe))] : [cfg.me, cfg.ai], mapModels(S));
     }
     await buildWorld(cfg, S);
     if (G.campaign) G.mission = new MissionUI(G);
+    if (G.sequel) {
+      G.sequelUI = new SequelUI(G, G.sequel);
+      G.world.hooks.damage = (d, A, V) => G.sequel.damageHook(d, A, V);
+      G.world.hooks.lethal = (V, A) => G.sequel.lethalHook(V, A);       // tranquilized creatures sleep instead of dying
+      G.world.hooks.power = (u, b, sec) => G.sequel.grid.credit(u, b, sec);       // electricity (game/sequel/power.js)
+    }
+    if (saved) {
+      progress(0.98, 'Loading the saved game…');
+      const oldFlags = G.world.go ? G.world.go.flags : [];
+      const r = restore(G, saved);
+      // the domination flags' models (not saved: systems/gameover.js)
+      for (const f of oldFlags) if (f.look && f.look.obj) f.look.obj.removeFromParent();
+      if (G.world.go) for (const f of G.world.go.flags) G.world.flagLook(f);
+      console.log('loaded a saved game:', r);
+      for (const u of G.world.units) if (u.alive && u.item) G.feedback.itemGlow(u, true);   // (the carriers' glow)
+      G.rtscam.update(0.016);
+      updateFow(true);
+      G.selChanged();
+      G.loading = false;
+    }
     progress(1, 'Ready');
     loadEl.classList.add('done');
     setTimeout(() => { loadEl.style.display = 'none'; }, 600);
     G.menu.inGame = true;
-    if (G.campaign) { if (!G.mission || G.mission.manual) G.hud.message(G.campaign.map.title || G.campaign.map.name, 'good'); }     // else: the title card (ui/mission.js)
+    if (G.sequelUI && !saved) G.sequelUI.briefing();
+    if (saved) G.hud.message('Game loaded', 'good');
+    else if (G.sequel) G.hud.message(G.sequel.def.title, 'good');
+    else if (G.campaign) { if (!G.mission || G.mission.manual) G.hud.message(G.campaign.map.title || G.campaign.map.name, 'good'); }     // else: the title card (ui/mission.js)
     else G.hud.message(`Build up your settlement and defeat the ${G.ai.name}.`, 'good');
-    G.audio.playMusic('background', G.me.tribe || cfg.me);
+    // the level's playlist; a generated map goes by its setting's atmosphere file ("jungle.txt")
+    G.audio.mus.startGame({ levelName: S.levelName || '', atmos: S.atmos || `${String(S.setting || '').toLowerCase()}.txt`, tribe: G.me.tribe || cfg.me });
+    G.audio.atmo.start(S.kind === 'original' ? S.atmos : `${String(S.setting || 'jungle').toLowerCase()}.txt`);   // ("No Atmos": none)
     if (!MANUAL) requestAnimationFrame(frame);
     G.ready = true;
   } catch (e) {
@@ -839,15 +1310,57 @@ G.endMission = (won, info = {}) => {
   if (G.over) return;
   G.over = true;
   const W = G.world, t = Math.floor(W.time), C = G.campaign;
-  G.audio.playMusic(won ? 'victory' : 'defeat');
   const show = () => G.menu.end(!!won, {
     time: `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`, kills: G.me.kills, lost: G.me.lost, epoch: EPOCH[G.me.epoch()],
-    mission: C ? { title: C.map.title || C.map.name, text: info.text || '', next: won && C.next() ? C.next() : null, difficulty: C.difficulty, points: info.points } : null,
+    mission: C ? { title: C.map.title || C.map.name, text: info.text || '', next: won && C.next() ? C.next() : null, difficulty: C.difficulty, points: info.points }
+      : G.sequel ? { sequel: true, title: G.sequel.def.title, text: info.text || '', next: won && G.sequel.id < 10 ? { id: G.sequel.id + 1 } : null, difficulty: G.sequel.difficulty } : null,
     text: info.text || '',
   });
   G.endInfo = { won: !!won, text: info.text || '', points: info.points };
+  // the next mission's army budget: the bonus points earned here, never less than before (CampaignMgr.usl:145-183)
+  const next = won && C && C.next();
+  if (next) {
+    const k = G.settings.campaign, cr = k.credits || (k.credits = {});
+    cr[next.id] = Math.max(cr[next.id] || 0, C.boni || 0);
+    saveSettings(G.settings);
+  }
   if (MANUAL || info.delay === 0) show(); else setTimeout(show, (info.delay == null ? 1.5 : info.delay) * 1000);
 };
+// ---------------------------------------------------------------- saved games (game/save.js, ui/saves.js)
+G.saveSettings = saveSettings;
+G.saveTitle = () => {
+  if (G.sequel) return `Containment ${G.sequel.id}: ${G.sequel.def.title}`;
+  const C = G.campaign;
+  if (C) return C.map.title || C.map.name || 'Mission ' + C.id;
+  return `${G.me.name} against ${G.ai ? G.ai.name : 'the computer'}`;
+};
+// save the running game in a slot (opts.id: replace that save; opts.quick: the quick save slot)
+G.saveGame = async (name, opts = {}) => {
+  if (!G.world || !G.ready) throw new Error('no game is running');
+  if (G.over) throw new Error('the game is over');
+  updateFow(true);                             // the explored map as of now (a loaded game draws it at once)
+  const snap = snapshot(G);
+  if (snap.problems.length) console.warn('saved game: left out', snap.problems.slice(0, 30));
+  if (String(G.config.map || '').startsWith('file:')) try { snap.mapfile = sessionStorage.getItem('pwr.mapfile'); } catch (e) { /* ignore */ }
+  const meta = await putSave({ id: opts.id || undefined, quick: !!opts.quick, name, title: G.saveTitle(), gameTime: G.world.time, mod: CONFIG_MOD, cfg: G.config }, snap);
+  if (!opts.silent) G.hud.message(opts.quick ? 'Quick saved' : `Saved "${name}"`, 'good');
+  return meta;
+};
+// load a saved game: the page starts again with the game it was (in its game data configuration) and restores it
+G.loadSaved = async (meta) => {
+  const cfg = { ...meta.cfg, load: meta.id };
+  if ((meta.mod || '') !== CONFIG_MOD) return G.menu.openConfig(meta.mod || '', cfg);
+  try { sessionStorage.setItem('pwr.autostart', JSON.stringify(cfg)); } catch (e) { /* ignore */ }
+  location.reload();
+};
+G.saveState = () => { updateFow(true); return snapshot(G); };             // (tests)
+G.quickSave = () => { if (!G.over) G.saveGame('Quick save', { quick: true }).catch((e) => G.hud.message('Not saved: ' + e.message, 'bad')); };
+G.quickLoad = async () => {
+  const q = (await listSaves()).find((m) => m.id === quickId);
+  if (!q) { G.hud.message('There is no quick save yet', 'bad'); return; }
+  G.loadSaved(q);
+};
+
 // "Exit game": silence everything, stop the local server (server.ps1 /__quit) and close the window.
 // Browsers only let a page close a window it opened itself / an app window; otherwise a closing screen stays.
 function exitGame() {
@@ -869,14 +1382,18 @@ async function boot() {
       quit: () => { try { sessionStorage.removeItem('pwr.autostart'); } catch (e) { /* ignore */ } location.reload(); },
       exit: exitGame,
       applySettings, sound: (n) => G.feedback ? G.feedback.ui(n) : G.audio.play(n),
+      saves: listSaves, save: (name, id) => G.saveGame(name, { id }), load: (meta) => G.loadSaved(meta), saveName: () => G.saveTitle(),
+      deleteSave, exportSave, importSave,
     });
     applySettings(G.settings);
     // the browser only allows audio after a user gesture
-    const unlock = () => { G.audio.init(); G.audio.applyVolumes(); if (!G.ready) G.audio.playMusic('menu'); window.removeEventListener('pointerdown', unlock); };
+    const unlock = () => { G.audio.init(); G.audio.applyVolumes(); G.audio.mus.update(0); G.audio.mus.resume(); window.removeEventListener('pointerdown', unlock); };
     window.addEventListener('pointerdown', unlock);
     let auto = null;
     try { auto = JSON.parse(sessionStorage.getItem('pwr.autostart') || 'null'); sessionStorage.removeItem('pwr.autostart'); } catch (e) { auto = null; }
     if (MANUAL || params.has('quick')) auto = quickConfig();
+    // ?load=<slot>: a saved game (tests)
+    if (params.has('load')) { const doc = await getSave(params.get('load')); auto = { ...doc.meta.cfg, load: params.get('load') }; }
     if (auto) { await startGame(auto); return; }
     progress(1, '');
     loadEl.style.display = 'none';

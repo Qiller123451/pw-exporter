@@ -6,7 +6,7 @@ ignore the mask produce black squares around the cursor. 32-bit images (alpha ch
 
 Output: <OUT>/assets/ui/cur/<name>.png + hotspots.json
 """
-import os, struct, json, glob, sys
+import os, struct, json, sys
 from PIL import Image
 try:
     from . import paths
@@ -54,12 +54,14 @@ def read_cur(path):
 
 
 def main(log=print, progress=None):
-    SRC = paths.data('Base/Cursors')
     OUT = os.path.join(paths.OUT, 'assets', 'ui', 'cur')
     os.makedirs(OUT, exist_ok=True)
     hot = {}
-    for f in sorted(set(glob.glob(os.path.join(SRC, '*.cur')) + glob.glob(os.path.join(SRC, '*.CUR')))):
-        name = os.path.splitext(os.path.basename(f))[0].lower()
+    # the cursors of every folder of the configuration (a mod ships only the ones it changes: MIRAGE 5 of them)
+    for rel, f in paths.game().tree('Cursors').items():
+        if '/' in rel or not rel.endswith('.cur'):
+            continue
+        name = rel[:-4]
         img, hs = read_cur(f)
         img.save(os.path.join(OUT, name + '.png'))
         hot[name] = [hs[0], hs[1], img.width, img.height]   # hotspot x, y, width, height

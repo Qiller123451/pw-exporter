@@ -96,6 +96,21 @@ class Install:
                 found = p
         return found
 
+    def tree(self, rel, mods=None):
+        """every file below Data/<mod>/<rel> of the configuration's folders, a later folder's file replacing the same
+        relative path of an earlier one - the game reads its files that way: a mod ships only what it changes or
+        adds (MIRAGE: 5 of the cursors, some of the HUD cards). {relative path (lower case, '/'): path}, sorted"""
+        out = {}
+        for m in mods or self.mods:
+            base = _ci_join(os.path.join(self.data, m), rel)
+            if not base or not os.path.isdir(base):
+                continue
+            for dp, _, fs in os.walk(base):
+                for f in fs:
+                    p = os.path.join(dp, f)
+                    out[os.path.relpath(p, base).replace(os.sep, '/').lower()] = p
+        return dict(sorted(out.items()))
+
     def maps(self):
         """every map (.ula) of the game and its mods: [{'pack', 'rel', 'path', 'size'}], pack = the Data/<pack>
         folder, rel = the path below its Maps folder (forward slashes)"""
@@ -161,6 +176,45 @@ class Install:
     # ---------------------------------------------------------------- texts
     def locale_dir(self, lang):
         return _ci_join(self.data, 'locale/%s/Texts' % lang)
+
+    def locale_dirs(self, lang):
+        """the text folders of a language, lowest priority first, as the language pack's Data/Info/Locale_<LANG>.info
+        lists them ("tryfilereplace */data/base/* data/base/ data/BoosterPack3/locale/uk/", a later line wins):
+        Data/locale/<lang>/Texts, the official add-ons' (BoosterPack*) always, a mod's only when it is loaded.
+        Without the .info file: the base folder, then every loaded mod folder's. A file of a later folder replaces
+        the same file name of an earlier one (the help files and string tables are not merged per key)."""
+        out = [d for d in [self.locale_dir(lang)] if d]
+        packs = []
+        info = _ci_join(self.data, 'Info/Locale_%s.info' % lang)
+        if info:
+            with open(info, encoding='latin-1', errors='replace') as f:
+                for line in f:
+                    p = line.split()
+                    if len(p) == 4 and p[0].lower() == 'tryfilereplace':
+                        t = p[3].replace('\\', '/').strip('/').split('/')
+                        if len(t) >= 2 and t[0].lower() == 'data' and t[1].lower() != 'locale':
+                            packs.append(t[1])
+        loaded = {m.lower() for m in self.mods}
+        packs = [m for m in packs if m.lower() in loaded or m.lower().startswith('boosterpack')]
+        packs += [m for m in self.mods[1:] if m.lower() not in {x.lower() for x in packs}]
+        for m in packs:
+            d = _ci_join(os.path.join(self.data, m), 'locale/%s/Texts' % lang)
+            if d and d not in out:
+                out.append(d)
+        return out
+
+    def locale_files(self, lang, sub=''):
+        """{file name (lower case): path} of a language's text files (sub = 'Help' for the encyclopedia), each from
+        the last folder of locale_dirs() that has it"""
+        out = {}
+        for d in self.locale_dirs(lang):
+            dd = _ci_join(d, sub) if sub else d
+            if not dd or not os.path.isdir(dd):
+                continue
+            for f in os.listdir(dd):
+                if os.path.isfile(os.path.join(dd, f)):
+                    out[f.lower()] = os.path.join(dd, f)
+        return dict(sorted(out.items()))
 
     def locales(self):
         d = _ci_join(self.data, 'locale')

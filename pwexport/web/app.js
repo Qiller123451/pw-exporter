@@ -343,6 +343,9 @@ async function refresh(keepCamera = true) {
   }
   if (my !== refreshing) return;
   parts.forEach((p, i) => { p.info = infos[i]; p.url = infos[i].url; });
+  // the HD version of every part that has one (pwexport/hd: "HD" / "HD remodelled") - the main model and its add-ons
+  // (the turret of a tower)
+  if (cur.hd) for (const p of parts) if (p.info.hd && p.info.hd[cur.hd]) p.url = p.info.hd[cur.hd];
   // script-derived parts that only show where the model has their link (the level flag of mounts): drop the others
   for (let i = parts.length - 1; i > 0; i--) {
     const p = parts[i], host = parts[p.parent || 0];
@@ -452,6 +455,18 @@ function renderModelSect() {
   }
   const row = modRow();
   if (row) s.append(row);
+  const hd = hdRow();
+  if (hd) s.append(hd);
+}
+// "Version": the original or an HD version of the model, when pwexport/hd made some (python -m pwexport.hd) for the
+// model or one of the add-ons shown
+function hdRow() {
+  const vs = [...new Set((cur.parts || []).flatMap((p) => Object.keys((p.info && p.info.hd) || {})))];
+  if (!vs.length) return null;
+  const sel = el('select', { id: 'hd-sel', title: S.hdTip, onchange: (ev) => { cur.hd = ev.target.value || null; refresh(); } });
+  sel.append(el('option', { value: '', selected: !cur.hd }, S.hdOriginal));
+  for (const v of ['hd', 'remodel']) if (vs.includes(v)) sel.append(el('option', { value: v, selected: cur.hd === v }, S['hd_' + v]));
+  return el('div', { class: 'row' }, el('label', { text: S.hdVersion }), sel);
 }
 function modelLabel(m, i) {
   const lv = /level (\d)/.exec(m.label || '');

@@ -37,7 +37,10 @@ and checked by rendering the results.
 - Vertex (8 bytes): bits 0–38 = 3×13-bit position (value/8191 inside bbox), bits 39–47 = index into a 511-entry
   unit-normal table, byte 6 = u×256, byte 7 = v×256. **v runs bottom-up** (OpenGL style): for glTF/top-down
   images use v = 1 − byte7/256. (Checked against atlas features: nuts, valve wheels and skin charts line up exactly.) 16-byte vertices add 4 bone indices (255 = none) and 4 u8 weights.
-- Triangles: u16 triplets, counter-clockwise when viewed from the side the normals point to (right-handed).
+- Triangles: u16 triplets, clockwise when viewed from the side the normals point to in the model's own left-handed
+  space (x, y, z with z up, like the maps: docs/MAP_FORMAT.md) - the Direct3D way. Read as right-handed they are
+  counter-clockwise but the model comes out mirrored: the exporter mirrors x (glTF (-x, z, -y)), which keeps them
+  counter-clockwise as glTF wants them.
 - Submesh material index → model's used-material list → global material.
 
 ## Skeleton chunk (type 5) — **new** parts
@@ -64,7 +67,9 @@ and checked by rendering the results.
 ## Object animation chunk (0x40000003) — **new**
 - Animates a mesh chunk (buildings, vehicles). `+64` key table (n × [pos3, quat4], absolute; quat conjugated as
   above), `+72` u16 per-frame key index, `+76` frame count. Alternative layout: `+52` 4x4 matrix per frame.
-- 0x40000002 = particle emitter animation (not converted).
+- 0x40000002 = particle emitter animation: `+8` is the guid of the emitter it drives (3212 emitters of Base: the
+  blood of finishing moves, a sinking ship's smoke). Its keys are not converted; the converter lists the names of the
+  animations that drive an emitter (`extras.emitter.anims`) and the remake lets it spray only while one of them plays.
 
 ## Links (0xB, 0x8000000B)
 - pos[3], quat[4], 4-char name (`HndR`, `HndL`, `Shld`, `Back`, `Ride`, …). The skinned version adds a skeleton index and 4 bone

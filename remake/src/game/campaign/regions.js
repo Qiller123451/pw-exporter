@@ -1,5 +1,5 @@
 // Regions of a campaign map (map chunk Rgns, docs/CAMPAIGN_FORMAT.md §4 and §10.4): named unions of rectangles and
-// ovals in MAP coordinates (x east, y north; a shape = minimum corner + size, an oval = the ellipse inscribed in the
+// ovals in MAP coordinates (x east, y south; a shape = minimum corner + size, an oval = the ellipse inscribed in the
 // box). Triggers test "is this object in the region" (REGN, every object query) and switch regions or single shapes
 // on and off (ARGN) or move them (MRGN).
 //

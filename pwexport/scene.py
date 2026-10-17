@@ -122,7 +122,8 @@ class Scene:
                     break
             if host is None:            # no such link: hang it on the parent's root (still exported)
                 host = self.part_roots[parent]
-            o['nodes'][root].pop('rotation', None)        # link frames are the GSF Z-up frame already
+            o['nodes'][root].pop('rotation', None)        # link frames are the GSF Z-up frame already (mirror included)
+            o['nodes'][root].pop('scale', None)
             if offset and len(offset) == 3 and any(offset):
                 o['nodes'][root]['translation'] = [float(v) for v in offset]    # MIRAGE's AddObjCustomized: metres in the link's frame
             o['nodes'][host].setdefault('children', []).append(root)
@@ -295,6 +296,8 @@ class Scene:
                 nrm = nrm / np.maximum(np.linalg.norm(nrm, axis=1, keepdims=True), 1e-9)
                 tri = self.accessor(p['indices'])[:, 0].astype(np.int64).reshape(-1, 3) if 'indices' in p else \
                     np.arange(len(P)).reshape(-1, 3)
+                if np.linalg.det(W[ni][:3, :3]) < 0:        # the models' root is mirrored (GSF space is left-handed)
+                    tri = tri[:, ::-1]
                 out.append(dict(name=n.get('name', 'mesh'), material=p.get('material'), pos=pos, nrm=nrm, uv=UV, tri=tri))
         return out
 

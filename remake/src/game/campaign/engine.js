@@ -8,7 +8,7 @@
 //   * how conditions hear about the world: channels they subscribe to while their trigger listens (`sub`), a tick
 //     list (TIME, RTME), a poll list (things without an event: positions, attributes) and one "objects changed"
 //     version that every spawn / removal / owner / group change bumps;
-//   * level variables, level timers, quests, the sequence and dialogue queues, waypoint patrols, items, delayed jobs;
+//   * level variables, level timers, quests, the sequence and dialogue queues, waypoint patrols, delayed jobs;
 //   * the debug helpers (G.campaign.debug) and the firing log.
 //
 // The engine never throws into the game loop: every action and every condition callback is guarded; what went
@@ -16,6 +16,9 @@
 import { valueString, toInt, compare, compileExpression, filePart } from './trigutil.js';
 import { CONDITIONS, CONDITION_STATUS } from './conditions.js';
 import { ACTIONS, ACTION_STATUS, prescanActions } from './actions.js';
+
+import { JOBS } from '../delayed.js';
+import { AnimCtl } from '../anim.js';
 
 export { valueString, toInt, compare, compileExpression, filePart };
 
@@ -62,12 +65,13 @@ export class TriggerEngine {
     this.ticking = new Set();           // conditions with tick(dt)
     this.polled = new Set();            // conditions with poll(): { nextPoll }
     this.objVersion = 0; this.objSeen = 0;      // "the set of objects changed" (spawn, removal, owner, group, appearance)
-    this.jobs = [];                     // delayed work on game time: [time, fn, trigger name]
+    this.jobs = [];                     // delayed work on game time: [time, kind (JOBS), args, trigger]
+    this.effects = [];                  // effects the triggers play (EFCT): {gfx, x, z, until}; their models in fxObjs (drawn)
+    this.fxObjs = new Map();
     this.patrols = new Map();           // unit -> patrol (WYPT)
-    this.items = [];                    // items lying on the map (ItemSpawn objects)
-    this.wells = [];                    // healing wells (FNTN objects)
     this.seqQueue = []; this.seqRunning = null; this.lastSequence = '';
     this.dialogsEnded = new Set();
+    this.dialogsOn = [];                // dialogues handed to the mission UI and not over yet: [{path, t}]
     this.reveals = [];
     this.infoBar = null;                // { key, args } of the last INBA
     this.markers = new Map();           // id -> count (what MPNG added)
@@ -145,20 +149,21 @@ export class TriggerEngine {
   start() {
     if (this.started) return;
     this.started = true;
+    this.attach();
+    this.fixRegions();
+    // ---- §6.7 no. 7: every trigger with the flag `enabled` in an active folder is enabled, in stored order
+    for (const t of this.triggers) if (t.startEnabled) this.enable(t);
+  }
+  // world -> conditions (also for a loaded game, whose engine had started: game/save.js)
+  attach() {
     const C = this.C;
     this.W = C.world; this.G = C.G;
-    // world -> conditions
     C.on('spawned', () => this.touch());
     C.on('removed', (rec) => { this.touch(); this.push('removed', 'onRemoved', rec); });
     C.on('owner', () => this.touch());
     C.on('group', (g, rec, added) => { this.touch(); this.push('group', 'onGroup', g, rec, added); });
     C.on('diplomacy', (e) => this.push('diplomacy', 'onDiplomacy', e));
     C.on('event', (e) => this.worldEvent(e));
-    this.initItems();
-    this.initWells();
-    this.fixRegions();
-    // ---- §6.7 no. 7: every trigger with the flag `enabled` in an active folder is enabled, in stored order
-    for (const t of this.triggers) if (t.startEnabled) this.enable(t);
   }
   // A region that a trigger query names must be able to contain something. The data marks some shapes "not enabled"
   // (docs/CAMPAIGN_FORMAT.md §4: a flag bit decoded by correlation with the nests' extra areas that ARGN opens);
@@ -184,6 +189,8 @@ export class TriggerEngine {
       case 'built': this.touch(); break;
       case 'boarded': this.push('boarded', 'onBoarded', e.unit, e.transport); break;
       case 'died': case 'destroyed': this.push('lost', 'onLost', e.entity); break;
+      // an item taken (systems/items.js): the ITEM conditions of the taker's record
+      case 'itemTaken': if (e.unit.rec) this.push('item', 'onItem', e.item.item.cls, e.unit.rec); break;
       default: break;
     }
   }
@@ -281,7 +288,39 @@ export class TriggerEngine {
     try { fn(this, a.p, t, a); } catch (e) { this.error(t, a.type, e); }
   }
   // delayed work on game time (spawn queues, the 4 s before the defeat screen)
-  after(seconds, fn, t = null) { this.jobs.push([this.time + Math.max(0, seconds), fn, t]); }
+  after(seconds, kind, args = {}, t = null) {
+    if (!JOBS[kind]) throw new Error('unknown job ' + kind);
+    this.jobs.push([this.time + Math.max(0, seconds), kind, args, t]);
+  }
+
+  // an effect of the particle database (EFCT; CActionEffectObj: its model plays `loops` times its length, then goes;
+  // loops 0 = until the mission ends)
+  playEffect(path, x, z, loops) {
+    const D = this.C.D || this.W.data;                 // (the rules the mission was planned with: setup.js plan)
+    const fx = ((D && D.extra && D.extra.particles) || {})[String(path || '').replace(/^\/+|\/+$/g, '').toLowerCase()];
+    if (!fx) { this.C.warn(`effect ${path} is not in the particle database`); return; }
+    this.effects.push({ gfx: fx[0], x, z, until: loops > 0 ? this.time + fx[1] * loops : Infinity });
+  }
+  // the effect's model plays its clip "anim" (SetSLEAnim): the emitters it drives spray while it runs
+  effectTick(dt) {
+    const W = this.W;
+    for (const e of this.effects) {
+      if (this.fxObjs.has(e) || e.until <= this.time) continue;
+      const tpl = W.template(e.gfx, true);
+      if (!tpl) { this.C.warn(`effect model ${e.gfx} is missing`); e.until = 0; continue; }
+      const obj = W.cloneModel(tpl);
+      obj.position.set(e.x, W.height(e.x, e.z), e.z);
+      W.scene.add(obj);
+      const anim = tpl.clips && tpl.clips.length ? new AnimCtl(obj, tpl.clips) : null;
+      if (anim) { const a = anim.pick('anim') || tpl.clips[0].name; anim.play(a); }
+      this.fxObjs.set(e, { obj, anim });
+    }
+    for (const [e, f] of this.fxObjs) {
+      if (e.until > this.time) { if (f.anim) f.anim.update(dt); continue; }
+      f.obj.removeFromParent(); if (f.anim) f.anim.dispose(); this.fxObjs.delete(e);
+    }
+    this.effects = this.effects.filter((e) => e.until > this.time);
+  }
 
   // ------------------------------------------------------------------------------------------- per simulation slice
   update(dt) {
@@ -293,7 +332,7 @@ export class TriggerEngine {
     if (this.jobs.length) {
       const due = [];
       this.jobs = this.jobs.filter((j) => (j[0] <= this.time ? (due.push(j), false) : true));
-      for (const j of due) this.guard(j[2], 'job', j[1]);
+      for (const [, kind, args, t] of due) this.guard(t, 'job', () => JOBS[kind](this, args, t));
     }
     if (this.overT >= 0) { this.overT -= dt; if (this.overT <= 0) { this.overT = -1; this.endNow(); } return; }
     // level timers (§6.3)
@@ -315,8 +354,7 @@ export class TriggerEngine {
       this.guard(c.t, c.type, () => c.poll());
     }
     if (this.patrols.size) this.patrolTick(dt);
-    if (this.items.length) this.itemTick(dt);
-    if (this.wells.length) this.wellTick(dt);
+    if (this.effects.length || this.fxObjs.size) this.effectTick(dt);
     this.sequenceTick();
     this.flush();
   }
@@ -448,10 +486,25 @@ export class TriggerEngine {
   playDialog(path, t) {
     const C = this.C, M = this.G && this.G.mission;
     const scene = (C.data.dialogs || {})[path] || this.findByFile(C.data.dialogs, path);
-    let done = false;
-    const end = () => { if (done) return; done = true; const f = filePart(path); this.dialogsEnded.add(f); this.push('dialog', 'onDialog', f); };
-    if (!M || !M.playDialog) { this.after(0, end, t); return; }
-    this.guard(t, 'DGSC', () => M.playDialog(scene || { id: filePart(path).replace(/\.dlg$/, ''), path, actors: {}, frames: [], mentor: /\/mentor\//i.test(path) }, () => this.guard(t, 'DGSC', end)));
+    const on = { path, t };
+    this.dialogsOn.push(on);
+    if (!M || !M.playDialog) { this.after(0, 'dialogEnd', { on }, t); return; }
+    this.guard(t, 'DGSC', () => M.playDialog(scene || { id: filePart(path).replace(/\.dlg$/, ''), path, actors: {}, frames: [], mentor: /\/mentor\//i.test(path) }, () => this.guard(t, 'DGSC', () => this.dialogEnd(on))));
+  }
+  dialogEnd(on) {
+    const i = this.dialogsOn.indexOf(on);
+    if (i < 0) return;
+    this.dialogsOn.splice(i, 1);
+    const f = filePart(on.path);
+    this.dialogsEnded.add(f);
+    this.push('dialog', 'onDialog', f);
+  }
+  // a loaded game (game/save.js): the sequence and the dialogues that were on show again from their start
+  resumeShows() {
+    if (this.seqRunning) { this.seqQueue.unshift(this.seqRunning); this.seqRunning = null; }
+    const on = this.dialogsOn;
+    this.dialogsOn = [];
+    for (const d of on) this.playDialog(d.path, d.t);
   }
 
   // ------------------------------------------------------------------------------------------- the end of a mission
@@ -521,88 +574,6 @@ export class TriggerEngine {
   }
   stopPatrol(u) { this.patrols.delete(u); }
 
-  // ------------------------------------------------------------------------------------------- items (ITEM, GiveItem)
-  // The world has no inventory. What the missions need: an ItemSpawn object holds an item (attribute spawn_items);
-  // a character of the human player that walks up to it takes it (Rec.items), which is what ITEM conditions wait for;
-  // the item counts as used at once (its tech tree filter Filters/Items/<class>_filter, which TECH conditions test).
-  initItems() {
-    const C = this.C;
-    for (const rec of C.objects.all) {
-      const a = rec.data && rec.data.attr;
-      if (rec.type !== 'ITSP' || !a || !a.spawn_items) continue;
-      const cls = String(a.spawn_items).split('|').map((s) => s.trim()).filter(Boolean);
-      if (cls.length) this.items.push({ rec, classes: cls, pos: C.objects.posOf(rec) });
-    }
-  }
-  itemTick(dt) {
-    this.itemT = (this.itemT || 0) - dt;
-    if (this.itemT > 0) return;
-    this.itemT = 0.5;
-    const C = this.C, W = this.W, me = C.human;
-    if (!me || !W.units) return;
-    for (const it of this.items.slice()) {
-      if (!it.rec.alive || it.rec.visible === false) continue;
-      const [x, z] = it.pos;
-      let taker = null;
-      for (const u of W.units) {
-        if (!u.alive || u.owner !== me || u.cls !== 'CHTR' || u.parked || u.inside) continue;
-        if (Math.hypot(u.pos.x - x, u.pos.z - z) <= 3 + (u.radius || 0)) { taker = u; break; }
-      }
-      if (!taker || !taker.rec) continue;
-      this.items.splice(this.items.indexOf(it), 1);
-      for (const cls of it.classes) this.giveItem(taker.rec, cls, true);
-      C.remove(it.rec);
-    }
-  }
-  // ------------------------------------------------------------------------------------------- healing wells (FNTN)
-  // CFountain (MiscObj.usl:2115-2260): a well holds `maxhitpoints` of healing and refills completely in `refill_dur`
-  // seconds. In the original a unit is sent to it (right click, task FountainHeal) and gets what it lacks, or what
-  // is left, when it arrives. The remake has no such order: a hurt unit of the human player that stands idle next
-  // to a well drinks.
-  initWells() {
-    const C = this.C;
-    for (const rec of C.objects.all) {
-      if (rec.type !== 'FNTN' || !rec.data) continue;
-      const a = rec.data.attr || {};
-      const max = +a.maxhitpoints || 1200;
-      this.wells.push({ rec, max, fill: a.hitpoints != null ? Math.min(max, +a.hitpoints || 0) : max, refill: Math.max(1, +a.refill_dur || 180), pos: C.objects.posOf(rec) });
-    }
-  }
-  wellTick(dt) {
-    this.wellT = (this.wellT || 0) - dt;
-    if (this.wellT > 0) return;
-    const step = 0.5 - this.wellT; this.wellT = 0.5;
-    const W = this.W, me = this.C.human;
-    for (const w of this.wells) {
-      if (!w.rec.alive) continue;
-      if (w.fill < w.max) w.fill = Math.min(w.max, w.fill + step / w.refill * w.max);       // Refill(): linear
-      if (w.fill < 1 || !W.units || w.rec.visible === false) continue;
-      const [x, z] = w.pos;
-      for (const u of W.units) {
-        if (!u.alive || u.owner !== me || u.parked || u.inside || u.hp >= u.maxHp - 0.5) continue;
-        if (u.task && u.task.type !== 'idle' && u.task.type !== 'hold') continue;
-        if (Math.hypot(u.pos.x - x, u.pos.z - z) > 6 + (u.radius || 0)) continue;
-        const need = u.maxHp - u.hp, give = Math.min(need, w.fill);                          // ObjArrived()
-        W.setHp(u, u.hp + give);
-        w.fill -= give;
-        this.wellsUsed = (this.wellsUsed || 0) + 1;
-        if (w.fill < 1) break;
-      }
-    }
-  }
-
-  giveItem(rec, cls, picked) {
-    rec.items = rec.items || [];
-    rec.items.push(cls);
-    const p = rec.owner, W = this.W;
-    if (picked && p && W.setFilter) W.setFilter(p, 'Filters/Items/' + cls + '_filter', true);
-    if (picked) {
-      const G = this.G;
-      if (G && G.hud && G.hud.message && p === this.C.human) this.guard(null, 'ITEM', () => G.hud.message(`${rec.cls.replace(/_s\d+$/, '')} found ${cls.replace(/^item_/, '').replace(/_/g, ' ')}`, 'good'));
-      this.push('item', 'onItem', cls, rec);
-    }
-  }
-
   // ------------------------------------------------------------------------------------------- debug (G.campaign.debug)
   makeDebug() {
     const E = this;
@@ -658,3 +629,5 @@ export class TriggerEngine {
 // What a mission's triggers will need that must be known before the models load (setup.js plan()): the classes of
 // AIFT army tables, whole tribes for AI players that are woken with a building behaviour.
 export function prescan(C, aiData) { return prescanActions(C, aiData); }
+
+JOBS.dialogEnd = (E, { on }) => E.dialogEnd(on);

@@ -469,6 +469,42 @@ on every map. The city gate that is blown open (`Zones.setOpen`) switches to the
 `Game.music('fight' | 'boss' | 'ride')` picks the list from `CFG.tracks[CFG.music]`; `Mission.next` asks with every
 objective.
 
+## The Dragon Clan (mission_dragon.js): what its weapons needed
+
+Mission 4 is built like Iron Winter (generated map, own faction `ninigi`, own types in the mission file). New in
+`enemies.js` for it, all usable by any type:
+
+* `mine: {trigger, fuse, radius, damage, knock}` on a structure (`mineStep`, `mineBlast`): the player or one of his
+  men within `trigger` lights the fuse; `die()` of such a structure is the blast - on the player's side and, three
+  times as hard, on every enemy in the radius (the next mine field included: chains). 28 health: one bullet.
+* `ranged.burst` / `burstGap`: the rest of a burst is released from `step()` (`release(true)`).
+* `ranged.indirect`: no line of sight asked (structures: rocket ramps, fire cannons, water turrets; the mortar man).
+* `turns` (rad/s) on a structure: it is trained on its target. Structures now fire their `addon` too.
+* `breath: {range, arc, dps, forward}` (`breathe`): flames and damage in a cone in front while a target is there -
+  no state of its own, so the trike keeps driving.
+* `ranged.sound` (a file or a list).
+* `smoke: {radius, height, rate, size}` on a structure (`smokeStep`): puffs of `fx.screen()` (its own particle
+  layer `fx.bank`; colour alpha 2.4, because the sprite is soft and a bank of smoke is not) inside the radius while
+  the camera is within 320 u. `Enemies.smokeScreen()` marks what stands in it `smoked` twice a second:
+  `Ally.findTarget` skips those beyond 14 u, the objective's marker takes the nearest target that is not smoked.
+  Kacper: "Smoke towers in-game produced smoke that hid units and buildings, add that."
+* `addon.aims` (rad/s): the build-up turns on its link to the target (`addAddon().aim`) - about the link's z (up
+  there); where its barrel looks is taken from its muzzle link, and which way a turn goes is measured, not assumed.
+  The fire cannon's top, the rocket ramp's top, the water turret's gun, and the launcher of the **rocket tower**
+  (`d_rtower`: `ninigi_small_tower` + `ninigi_small_tower_upgrade` on `we`, muzzle `Do_1`; the map calls those
+  objects `ninigi_rocket_tower`, `mission.gfx` gives the model, the garrison tells them apart by `cls`). Kacper:
+  "The other towers besides arrow have mounted rocket launchers, use them." Before, every tower wore the launcher
+  and shot arrows.
+* `weather.ash` = the snow of `weather.js` with a colour.
+
+Map facts: Ninigi buildings are small (12..18 m footprints); `ninigi_palisade` / `ninigi_defense_skewer` are
+proper `Wall` models; boats need `bow: Math.PI`; `ash_dragontree_03` carries an 8-vertex hull that shows as a red
+box 12 m high (left out). What the game mounts on the Clan's beasts: `gamedata.json` composites
+(`ninigi_seismosaurus`: launcher on `con`, gatlings on `con2` / `con3`).
+
+The test bot (`tests/playthrough.js`) goes for the objective's own targets when nobody is at its throat - without
+that it never sank the fleet (boats and turrets are never "the nearest enemy").
+
 ## Weather (weather.js)
 
 `CFG.weather.snow = {from, full}`: one cloud of points in a box around the camera, wrapped at the box's edges; how

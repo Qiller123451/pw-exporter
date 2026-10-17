@@ -3,6 +3,8 @@
 // Reference: HealUnits.usl, Building.usl DoBuildingFunction, FightingObj.usl:3744 (docs/spec/moves.md 4).
 //   heal per second = amount * Healing(rel) + Healing(abs) + target max hp * mod / 100
 // There is no passive regeneration in ParaWorld.
+// A unit with blood infection (MIRAGE contamination: st.t.noHeal) can't be healed (FO:11553 HealMe etc.).
+import { active } from './effects.js';
 
 export const Healing = {
   healPerSecond(src, h, target) {
@@ -15,7 +17,7 @@ export const Healing = {
     if (!h || !u.owner) return null;
     let best = null, bh = 1;
     this.uHash.query(u.pos.x, u.pos.z, h.radius * 1.5 + 6, (o) => {
-      if (o === u || !o.alive || o.inside || !o.owner || !u.owner.isFriend(o.owner) || o.hp >= o.maxHp) return;
+      if (o === u || !o.alive || o.inside || !o.owner || !u.owner.isFriend(o.owner) || o.hp >= o.maxHp || active(o, 'noHeal', this.time)) return;
       if (u.distTo(o) > h.radius * 1.5) return;
       if (o.stats.heal && o.task.type === 'heal') return;     // don't heal busy healers
       const r = o.hp / o.maxHp;
@@ -27,7 +29,7 @@ export const Healing = {
     const h = u.stats.heal, t = u.task;
     let tgt = t.target;
     if (!h) { u.task = { type: 'idle' }; return; }
-    if (!tgt || !tgt.alive || tgt.hp >= tgt.maxHp) {
+    if (!tgt || !tgt.alive || tgt.hp >= tgt.maxHp || active(tgt, 'noHeal', this.time)) {
       tgt = t.target = this.healScan(u);
       if (!tgt) { this.stopHealing(u); u.task = { type: t.hold ? 'hold' : 'idle' }; return; }
     }
@@ -50,6 +52,7 @@ export const Healing = {
       if (a) u.anim.play(a, { fade: 0.2 });
     }
     tgt.hp = Math.min(tgt.maxHp, tgt.hp + this.healPerSecond(u, h, tgt) * dt);
+    tgt.healedT = this.time;
     t.fxT = (t.fxT || 0) - dt;
     if (t.fxT <= 0) { t.fxT = 0.5; this.emit('healfx', { from: u, to: tgt }); }
   },
@@ -62,11 +65,12 @@ export const Healing = {
   buildingHeal(dt) {
     const heal = (src, h, filter) => {
       this.uHash.query(src.pos.x, src.pos.z, h.radius + 6, (o) => {
-        if (!o.alive || o.inside || !o.owner || !src.owner.isFriend(o.owner) || o === src || o.hp >= o.maxHp) return;
+        if (!o.alive || o.inside || !o.owner || !src.owner.isFriend(o.owner) || o === src || o.hp >= o.maxHp || active(o, 'noHeal', this.time)) return;
         if (filter && !filter(o)) return;
         if (Math.hypot(o.pos.x - src.pos.x, o.pos.z - src.pos.z) > h.radius + o.radius) return;
         o.hp = Math.min(o.maxHp, o.hp + this.healPerSecond(src, h, o) * dt);
-        if (Math.random() < 0.2) this.emit('healfx', { from: src, to: o });
+        o.healedT = this.time;
+        if (Math.random() < 0.2) this.emit('healfx', { from: src, to: o });       // (the glow lasts 2.5 s: feedback.js healGlow)
       });
     };
     for (const b of this.buildings) {

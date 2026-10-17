@@ -10,7 +10,7 @@ const shown = (e) => !!e && !e.classList.contains('hidden') && getComputedStyle(
 const frame = (dt = 0.016) => M.update(dt);
 try {
 // ---------------------------------------------------------------- start
-check('mission UI built: quest button, columns, timers map', !!$('#hud .corner.tr .qbtn') && !!$('#hud .mleft .dlg') && !!$('#hud .mtop .ibar') && !!$('div.cine') && C.timers instanceof Map && M.manual === true);
+check('mission UI built: quest button, columns, timers map', !!$('#hud .corner.tl .qbtn') && !!$('#hud .mdlg .dlg') && !!$('#hud .rcol .mnews') && !!$('#hud .mtop .ibar') && !!$('div.cine') && C.timers instanceof Map && M.manual === true);
 check('contract methods', ['questChanged', 'infoBar', 'marker', 'removeMarker', 'playDialog', 'playSequence', 'busy', 'tick', 'update', 'skipAll'].every((k) => typeof M[k] === 'function') && Array.isArray(M.log) && Array.isArray(M.markers));
 check('?manual: no title card by itself', !shown($('.mtitle')));
 M.showTitle(); frame();
@@ -43,12 +43,12 @@ qc.unaccomplishable = true; M.questChanged(qc, 'failed');
 frame();
 nts = $$('.nticker .nt');
 check('news ticker: accomplished + unaccomplishable', nts.length === 5 && nts[3].classList.contains('good') && nts[3].textContent.includes('Quest accomplished') && nts[4].classList.contains('bad') && nts[4].textContent.includes(qc.headline), nts.slice(3).map((e) => e.textContent));
-check('L opens the log', M.key({ code: 'KeyL' }) === true && M.logOpen);
+check('J opens the log', M.key({ code: 'KeyJ' }) === true && M.logOpen);
 rows = $$('.qlist .q');
 check('log: accomplished ticked, failed crossed out, open one no longer new', rows[0].classList.contains('done') && rows[1].classList.contains('open') && !rows[1].classList.contains('new') && rows[2].classList.contains('failed') && getComputedStyle(rows[2].querySelector('span')).textDecorationLine === 'line-through',
   rows.map((r) => r.className));
 check('log: points of the accomplished quest', $('.qtotal').textContent.startsWith(`Points: ${qa.bonus.medium} /`) && $$('.qlist .qg em')[0].textContent === `${qa.bonus.medium}/${qa.bonus.medium}`, $('.qtotal').textContent);
-check('L closes the log', M.key({ code: 'KeyL' }) === true && !M.logOpen && !G.menuOpen);
+check('J closes the log', M.key({ code: 'KeyJ' }) === true && !M.logOpen && !G.menuOpen);
 nts[0].click();
 check('a click on a quest line opens the log at that quest', M.logOpen && $('.qtext b').textContent === qa.headline && $$('.nticker .nt').length === 4);
 G.closeMenu();
@@ -110,15 +110,19 @@ check('all markers removed, rings hidden', M.markers.length === 0 && M.rings.eve
 
 // ---------------------------------------------------------------- question marks
 const qm = C.questionMarks[0];
-check('question marks start invisible', C.questionMarks.length > 0 && M.marks.size === 0, C.questionMarks.length);
+// (by now the mission's triggers have shown some: a mark exists only for a visible state)
+check('question marks: only the visible ones have a mark', C.questionMarks.length > 0 && [...M.marks.keys()].every((q) => /^(QM|EC)_STATE_/.test(q.state)) && C.questionMarks.filter((q) => q.state === 'STATE_INVISIBLE').every((q) => !M.marks.has(q)), C.questionMarks.length);
 C.setQuestionMark(qm.name, 'QM_STATE_YELLOW', '_TTQ_G_10');
 let sp = M.marks.get(qm);
-check('yellow question mark floats over its place', !!sp && sp.parent === G.scene && Math.abs(sp.position.x - qm.x) < 0.01 && Math.abs(sp.position.z - qm.z) < 0.01 && sp.position.y > G.world.height(qm.x, qm.z) + 3);
-const tex = sp.material.map;
-C.setQuestionMark(qm.guid, 2); const tex2 = sp.material.map;
-C.setQuestionMark(qm, 'EC_STATE_YELLOW'); const tex3 = sp.material.map;
+check('yellow question mark floats over its place', !!sp && sp.parent === G.scene && Math.abs(sp.position.x - qm.x) < 0.01 && Math.abs(sp.position.z - qm.z) < 0.01 && sp.position.y >= G.world.height(qm.x, qm.z) + 3);
+// the game's models (QuestionMark.usl SetGFX), one per state
+const gfxOf = () => { const x = M.marks.get(qm); return x && x.userData.fx ? x.userData.fx.obj.name || x.userData.fx.gfx || 'model' : x && x.material && x.material.map; };
+const g1 = gfxOf();
+C.setQuestionMark(qm.guid, 2); const g2 = gfxOf();
+C.setQuestionMark(qm, 'EC_STATE_YELLOW'); const g3 = gfxOf();
 C.setQuestionMark(qm, 'QM_STATE_RED');
-check('states: one sprite, a picture per state', M.marks.size === 1 && M.marks.get(qm) === sp && new Set([tex, tex2, tex3, sp.material.map]).size === 4 && qm.tooltip === '_TTQ_G_10');
+sp = M.marks.get(qm);
+check('the game\'s question mark models, one at a time', M.marks.has(qm) && !!sp.userData.fx && sp.userData.fx.obj.parent === G.scene && G.mfx.list.filter((e) => e.until > G.world.time + 1e6).length === M.marks.size && qm.tooltip === '_TTQ_G_10', [g1, g2, g3]);
 cam.x = qm.x; cam.z = qm.z; G.renderOnce(); G.renderOnce();
 const scr = G.overlay.toScreen(sp.position);
 G.input.mouse.x = scr.x; G.input.mouse.y = scr.y; G.input.mouse.inside = true;
@@ -133,7 +137,7 @@ const hiddenInFog = !sp.visible;
 G.fow.explored_ = ex; G.fow.revealAll = wasAll; frame();
 check('question mark respects the fog of war', hiddenInFog && sp.visible);
 C.setQuestionMark(qm, 'STATE_INVISIBLE');
-check('invisible state removes the mark', M.marks.size === 0 && sp.parent === null);
+check('invisible state removes the mark', !M.marks.has(qm) && sp.parent === null && (!sp.userData.fx || sp.userData.fx.until <= G.world.time));
 
 // ---------------------------------------------------------------- dialogue scenes
 const dA = D.dialogs['Cpn_single_001/single_01/ds_1020.dlg'], dB = D.dialogs['Cpn_single_001/single_01/ds_1030.dlg'];
@@ -232,7 +236,7 @@ check('log of requests', ['quest', 'news', 'infobar', 'marker', 'unmarker', 'que
 // ---------------------------------------------------------------- end of the mission
 G.endMission(false, { text: D.texts._GAOV_L0802 || 'A hero is dead!', delay: 0, points: 300 });
 const end = $('.pwwin').textContent;
-check('end screen: result, mission, reason of the defeat, bonus points, quests', G.over && end.includes('Mission has failed.') && end.includes(C.map.title) && end.includes('A hero is dead!') && end.includes('Bonus points: 300') && end.includes(qa.headline) && end.includes('Try again') && !end.includes('Next mission'), end.slice(0, 160));
+check('end screen: result, mission, reason of the defeat, bonus points, quests', G.over && end.includes('Mission has failed.') && end.includes(C.map.title) && end.includes('A hero is dead!') && end.includes('Bonus points: 300') && end.includes(qa.headline) && end.includes('Retry') && !end.includes('Continue'), end.slice(0, 160));
 } catch (e) { check('exception', false, String(e && e.stack || e)); }
 function cap(s) { return s ? s[0].toUpperCase() + s.slice(1) : ''; }
 return out.join('\n');

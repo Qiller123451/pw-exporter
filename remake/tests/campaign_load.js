@@ -194,6 +194,6 @@ check('30 s of simulation', !err && !G.error && W.time > 29, err || Math.round(W
 check('no skirmish end rule: the mission goes on', !G.over && W.players.every((p) => !p.won), null);
 check('mission UI stub and campaign hooks', !!G.mission && typeof G.mission.tick === 'function' && C.timers instanceof Map && typeof C.needClass === 'function' && C.needClass(cls), null);
 G.endMission(true, { text: 'done', delay: 0 });
-check('G.endMission ends the mission', G.over && G.endInfo.won && G.menuOpen && (C.id === 16 ? !C.next() : C.next().id === C.id + 1) && /Victory/.test(document.querySelector('.pwwin').textContent) && (C.id === 16 || /Next mission/.test(document.querySelector('.pwwin').textContent)), C.next() && C.next().id);
+check('G.endMission ends the mission', G.over && G.endInfo.won && G.menuOpen && (C.id === 16 ? !C.next() : C.next().id === C.id + 1) && /Campaign/.test(document.querySelector('.pwwin h2').textContent) && (C.id === 16 || /Continue/.test(document.querySelector('.pwwin').textContent)), C.next() && C.next().id);
 } catch (e) { check('the test ran without an exception', false, String((e && e.stack) || e).slice(0, 500)); }
 return out.join('\n') + '\nwarnings: ' + JSON.stringify(C.warnings) + '\ncounts: ' + JSON.stringify(C.counts);

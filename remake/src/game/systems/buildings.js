@@ -8,7 +8,10 @@
 //   built(b, W)       when construction is finished
 //   update(b, W, dt)  every simulation step while the building is finished and alive
 //   destroyed(b, W)   when it dies
+//   hit(b, A, W)      when an attacker's weapon hits it (TakeDmg)
 // Buildings without an entry are plain buildings (production, storage, housing and towers are handled elsewhere).
+
+import { DELAYED } from '../delayed.js';
 
 // ------------------------------------------------------------------------------------------------ gates
 export const GATE = { OPEN: 0, CLOSED: 1, AUTO: 2 };
@@ -20,7 +23,7 @@ const gate = {
     // AUTO: a gate opens for its owner's (and allies') units and closes again after 8 s
     if (b.gateState === GATE.AUTO) {
       let pass = false;
-      W.uHash.query(b.pos.x, b.pos.z, b.radius + 6, (u) => { if (!pass && u.alive && u.owner && b.owner.isFriend(u.owner) && b.surfDist(u.pos.x, u.pos.z) < 3) pass = true; });
+      W.uHash.query(b.pos.x, b.pos.z, b.radius + 6, (u) => { if (!pass && u.alive && u.owner && (!b.owner || b.owner.isFriend(u.owner)) && b.surfDist(u.pos.x, u.pos.z) < 3) pass = true; });
       if (pass) { b.autoT = AUTO_CLOSE; if (!b.gateOpen) setGateAnim(b, true); }
       else if (b.gateOpen && (b.autoT -= dt) <= 0) setGateAnim(b, false);
     }
@@ -119,17 +122,33 @@ const nest = (spawn) => ({
 
 // ------------------------------------------------------------------------------------------------ warp gate
 // When finished a countdown starts (MPSettings WarpGateTimer, default 10 minutes); if the gate survives its
-// owner wins. Only on maps / games that allow it (DimGateAvailable) - a skirmish option here.
+// owner wins. Only on maps / games that allow it (DimGateAvailable - a skirmish option here): elsewhere the gate
+// deletes itself as soon as it is placed, its cost lost (CWarpGate.OnInit: CWarpMgr.Register fails -> Delete). A
+// placed gate is shown to every player: a 20 m sight object of each player at the gate (ShowFOW_Obj, SetFOWRange 20).
 const warpgate = {
-  init(b, W) { if (!W.rules.warpgate) { b.disabled = true; } else W.emit('warpgate', { building: b, state: 'started' }); },
-  built(b, W) { if (b.disabled) return; b.warpT = (W.rules.warpgateMinutes || 10) * 60; W.emit('warpgate', { building: b, state: 'finished' }); },
+  init(b, W) {
+    // a campaign map's own gate (mission 4: the portal the SEAS come out of, with its vortex) stands, without a
+    // countdown (the user saw it in the game); elsewhere without the option it deletes itself
+    if (!W.rules.warpgate && !W.rules.multiplayer) { b.warpInert = true; return; }
+    if (!W.rules.warpgate) { W.later(0.05, 'deleteBuilding', { b }); return; }
+    b.warpSight = W.players.map((p) => W.revealArea(p, b.pos.x, b.pos.z, 20));
+    W.emit('warpgate', { building: b, state: 'started' });
+  },
+  built(b, W) { if (!b.alive || b.warpInert) return; b.warpT = (W.rules.warpgateMinutes || 10) * 60; W.emit('warpgate', { building: b, state: 'finished' }); },
   update(b, W, dt) {
     if (b.warpT == null) return;
     b.warpT -= dt;
     if (b.warpT <= 0 && !b.warpDone) { b.warpDone = true; W.emit('warpgate', { building: b, state: 'won' }); W.victory(b.owner); }
   },
-  destroyed(b, W) { if (b.warpT != null && !b.warpDone) W.emit('warpgate', { building: b, state: 'destroyed' }); },
+  destroyed(b, W) {
+    for (const h of b.warpSight || []) W.hideArea(h);
+    if (b.warpT != null && !b.warpDone) W.emit('warpgate', { building: b, state: 'destroyed' });
+  },
 };
+Object.assign(DELAYED, {
+  // a building that deletes itself (Delete(): no ruin, no refund)
+  deleteBuilding(W, { b }) { if (b.alive) { b.silentDeath = true; W.kill(b, null); } },
+});
 
 // ------------------------------------------------------------------------------------------------ fields
 // CGrowingField / CCornfield: the grow animation follows the workers' progress (GetCorn.usl)
@@ -137,7 +156,128 @@ const field = {
   built(b) { b.growStep = 0; if (b.anim && b.anim.has('grow')) { b.anim.play('grow', { loop: false }); if (b.anim.cur) b.anim.cur.paused = true; } },
 };
 
+// ------------------------------------------------------------------------------------------------ walls (CWall)
+// "falling stones" (Norse palisade upgrade; Building.usl CWall.TakeDmg): a finished wall that is hit drops stones -
+// its weapon hu_falling_stones (500 in 20 m) around itself, again after the weapon's duration (10 s)
+const wall = {
+  hit(b, A, W) {
+    if (!b.built || !b.owner || (b.stonesT || 0) > W.time || !W.data.invented(b.owner, 'hu_falling_stones', b.def.tribe)) return;
+    const w = b.weapons && b.weapons.long, cs = w && b.cs(w);
+    if (!cs || !(cs.splash > 0)) return;
+    b.stonesT = W.time + W.attackDuration(b, cs);
+    W.areaDamage(b, b.pos, cs.splash, cs.dmg, cs.endDmg ?? cs.dmg, { weapon: w });
+    W.emit('fxAt', { pos: b.pos.clone(), gfx: 'hu_wallstones', until: W.time + 0.8, yaw: Math.atan2(A.pos.x - b.pos.x, A.pos.z - b.pos.z) });
+  },
+};
+
+// ------------------------------------------------------------------------------------------------ the Scorpion
+// Mission 16's end boss (Building.usl CScorpionBoss, CScorpionPanel). It stands still and harmless until the mission
+// wakes it (ACDO "JumpOffWall", after the scorpion sequence): then one of its three control panels opens for 25 s -
+// only an open panel can be hit, the Scorpion itself never -, 10 s after it closes another opens. With an enemy within
+// 150 m it attacks in rounds: prepare, wait, prepare again, strike - legs, flamethrower or scissors, chosen at random
+// among the first <state> of them - and its blow hurts everything in the map's region of that attack (melee damage
+// that armour does not stop: TakeDirectMeleeDmg). Every destroyed panel costs it a state (3 -> 2 -> 1 -> dead) with
+// its destruction animation.
+const SCORP = [
+  { region: 'scorpion_legs', prepare: 'prepare_3', anim: 'attack_3', start: 2.8, end: 3.2, dmg: 250 },
+  { region: 'scorpion_flamethrower', prepare: 'prepare_2', anim: 'attack_2', start: 5.2, end: 11.0, dmg: 50 },
+  { region: 'scorpion_scissors', prepare: 'prepare_1', anim: 'attack_1', start: 1.0, end: 1.4, dmg: 250 },
+];
+const SCORP_RANGE = 150;
+function scorpPlay(b, name, loop = false) {
+  if (!b.anim || !b.anim.has(name)) return 2;
+  b.anim.play(name, { loop, restart: true });
+  return b.anim.duration(name) || 2;
+}
+function scorpPanels(b, W) { return W.buildings.filter((p) => p.alive && p.def.script === 'CScorpionPanel' && p.owner === b.owner); }
+function scorpOpenPanel(b, W) {
+  const S = b.scorp, list = scorpPanels(b, W);
+  S.openT = null;
+  if (!list.length) return;
+  const p = list[Math.floor(Math.random() * list.length)];
+  p.untargetable = false; p.panelOpen = true;
+  scorpPlay(p, 'open');
+  S.closeT = 25;
+}
+function scorpClosePanels(b, W) {
+  const S = b.scorp;
+  for (const p of scorpPanels(b, W)) if (p.panelOpen) { p.panelOpen = false; p.untargetable = true; if (p.anim && p.anim.has('close')) scorpPlay(p, 'close'); }
+  S.closeT = null; S.openT = 10;
+}
+function scorpDamage(b, W, at) {
+  const R = W.regions && W.regions.find(at.region);
+  if (!R) return;
+  const hit = [];
+  for (const e of [...W.units, ...W.buildings]) {
+    if (!e.alive || e === b || e.inside || e.def.script === 'CScorpionPanel' || !R.contains(e.pos.x, e.pos.z)) continue;
+    hit.push(e);
+  }
+  for (const e of hit) W.takeDirectDmg(e, at.dmg, 0, b.owner, false, b);
+}
+const scorpion = {
+  noTower: true,                                   // its weapon is not fired like a tower's (systems/combat.js)
+  init(b) { b.scorp = { active: false, state: 3, hit: 0, prep: 0, attack: -1, change: false, busyT: 0, dmgT: null, endT: null, openT: null, closeT: null }; b.untargetable = true; },
+  // ACDO JumpOffWall
+  activate(b, W) {
+    const S = b.scorp;
+    if (!S.active) { scorpOpenPanel(b, W); S.state = 4; S.busyT = 0; }
+    S.change = false; S.active = true;
+  },
+  // a panel destroyed (CScorpionBoss.UpdateState)
+  panelLost(b, W) {
+    const S = b.scorp;
+    S.state--; S.change = true;
+    if (S.state <= 0) { W.kill(b, null); return; }
+    S.openT = null; S.closeT = null;
+    scorpClosePanels(b, W);
+  },
+  update(b, W, dt) {
+    const S = b.scorp;
+    if (!S || !S.active) return;
+    if (S.openT != null && (S.openT -= dt) <= 0) scorpOpenPanel(b, W);
+    if (S.closeT != null && (S.closeT -= dt) <= 0) scorpClosePanels(b, W);
+    // the blow of the attack under way: at its start, then every second until its end
+    const at = SCORP[S.attack];
+    if (S.dmgT != null && (S.dmgT -= dt) <= 0) { if (at) scorpDamage(b, W, at); S.dmgT = S.endT != null && S.endT > 1 ? 1 : null; }
+    if (S.endT != null && (S.endT -= dt) <= 0) { S.endT = null; S.dmgT = null; }
+    if ((S.busyT -= dt) > 0) return;
+    S.busyT = this.step(b, W);
+  },
+  // AttackEnemy, called again whenever the animation it started is over: returns its length
+  step(b, W) {
+    const S = b.scorp;
+    if (S.change) {
+      S.change = false; S.attack = 4; S.hit = 0;
+      b.dmgStage = S.state === 2 ? 1 : S.state === 1 ? 2 : b.dmgStage;
+      return scorpPlay(b, S.state === 3 ? 'standanim' : S.state === 2 ? 'destroy_1' : S.state === 1 ? 'destroy_2' : 'dying');
+    }
+    if (S.state === 4) { S.state = 3; return scorpPlay(b, 'standanim'); }
+    let enemy = false;
+    W.uHash.query(b.pos.x, b.pos.z, SCORP_RANGE, (u) => { if (!enemy && u.alive && u.owner && b.owner && b.owner.isEnemy(u.owner) && !u.inside && Math.hypot(u.pos.x - b.pos.x, u.pos.z - b.pos.z) < SCORP_RANGE) enemy = true; });
+    if (!enemy) return 1;
+    const prepare = () => { S.prep--; S.hit++; return scorpPlay(b, (SCORP[S.attack] || {}).prepare); };
+    if (S.prep > 0) return prepare();
+    if (S.hit === 0) { S.attack = Math.floor(Math.random() * Math.max(S.state, 1)); S.prep = 1; return prepare(); }
+    if (S.hit === 1) { S.hit = 2; return scorpPlay(b, 'standanim'); }
+    if (S.hit === 2) { S.prep = 1; return prepare(); }
+    S.hit = 0;
+    const at = SCORP[S.attack];
+    if (!at) return 1;
+    S.dmgT = at.start; S.endT = at.end;
+    return Math.max(scorpPlay(b, at.anim), at.end);
+  },
+};
+const scorpionPanel = {
+  noTower: true,
+  init(b) { b.untargetable = true; b.panelOpen = false; },
+  destroyed(b, W) {
+    const boss = W.buildings.find((x) => x.alive && x.def.script === 'CScorpionBoss' && x.owner === b.owner);
+    if (boss && boss.behaviour && boss.behaviour.panelLost) boss.behaviour.panelLost(boss, W);
+  },
+};
+
 export const BEHAVIOURS = {
+  CWall: wall,
   CGate: gate, CGateFOWVIsible: gate, CNinigi_Defense_Skewer_Gate: gate,
   CPitfall: trapBehaviour(TRAPS.CPitfall), CMinefield: trapBehaviour(TRAPS.CMinefield),
   CSnareTrap: trapBehaviour(TRAPS.CSnareTrap), CPoisonDung: trapBehaviour(TRAPS.CPoisonDung),
@@ -145,6 +285,7 @@ export const BEHAVIOURS = {
   CKennel: nest('hu_kennel_eusmilus'), CNinigi_Dilophosaurus_Nest: nest('ninigi_dilophosaurus'),
   CWarpGate: warpgate,
   CGrowingField: field, CCornfield: field,
+  CScorpionBoss: scorpion, CScorpionPanel: scorpionPanel,
 };
 
 // ------------------------------------------------------------------------------------------------ world mixin

@@ -5,11 +5,13 @@
 // (DELO, REPL) and blocks the ground like the landscape objects do. It has no hit points.
 import * as THREE from 'three';
 import { AnimCtl } from '../anim.js';
+import { mapQuat } from '../maps/frame.js';
 
 export class Prop {
   // o: { model, x, z, y (null = on the ground), rot, q (stored map quaternion or null), block (bool), party (colour | null) }
   constructor(world, o) {
     this.world = world;
+    this.spec = o;                               // (a saved game makes it again from these: game/save.js)
     this.kind = 'prop';
     this.model = o.model;
     this.pos = new THREE.Vector3(o.x, o.y != null ? o.y : world.height(o.x, o.z), o.z);
@@ -23,7 +25,7 @@ export class Prop {
     m.traverse((n) => { if (n.isMesh) world.applyFow(n.material); });
     this.obj.position.copy(this.pos);
     // tilted pieces keep their whole stored orientation, like the landscape objects (engine/props.js add)
-    if (o.q && (Math.abs(o.q[0]) > 1e-4 || Math.abs(o.q[1]) > 1e-4)) this.obj.quaternion.set(-o.q[0], -o.q[2], o.q[1], o.q[3]).normalize();
+    if (o.q && (Math.abs(o.q[0]) > 1e-4 || Math.abs(o.q[1]) > 1e-4)) this.obj.quaternion.set(...mapQuat(o.q));
     else this.obj.rotation.y = this.rot;
     world.scene.add(this.obj);
     this.anim = tpl.clips && tpl.clips.length ? new AnimCtl(m, tpl.clips) : null;
@@ -35,7 +37,7 @@ export class Prop {
       const pf = (tpl.info && tpl.info.pf) || (tpl.extras && tpl.extras.pf);
       const set = new Set();
       if (pf) for (const r of pf) if (r[0] === 1 && r[4] > 0.5 && r[5] > 0.5) {
-        const bx = r[1] + r[4] / 2, bz = -(r[2] + r[5] / 2), c = Math.cos(this.rot), s = Math.sin(this.rot);
+        const bx = -(r[1] + r[4] / 2), bz = -(r[2] + r[5] / 2), c = Math.cos(this.rot), s = Math.sin(this.rot);
         for (const k of world.nav.rectCells(o.x + bx * c + bz * s, o.z - bx * s + bz * c, r[4] / 2, r[5] / 2, this.rot)) set.add(k);
       }
       if (!set.size && o.blockRadius > 0) for (const k of world.nav.markCircle(o.x, o.z, o.blockRadius, 0)) set.add(k);
@@ -60,6 +62,7 @@ export class Prop {
     if (!this.anim || !this.anim.has(name)) return false;
     this.anim.play(name, { loop: loops > 1, restart: true, fade: 0 });
     this.animT = 0;
+    this.lastAnim = name; this.lastLoops = loops;
     return true;
   }
   update(dt) { if (this.anim && this.visible) this.anim.update(dt); }

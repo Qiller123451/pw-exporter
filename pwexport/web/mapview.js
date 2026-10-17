@@ -1,7 +1,8 @@
 // The map viewer: a ParaWorld map (.ula) as the game shows it - terrain textured with the setting's 8 ground
 // materials, the sea, every placed object with its model (instanced: one draw per model part) and the trees of the
 // forest blocks.
-// Coordinates: X east, Y up, -Z north, metres, origin at the map centre (the same as the map exports).
+// Coordinates: X east, Y up, -Z north, metres, origin at the map centre (the same as the map exports). The map itself is
+// left-handed (x east, y SOUTH): map (x, y, z) is (x - w/2, z, y - h/2) here.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as P from './parts.js';
@@ -31,7 +32,7 @@ export class MapView {
     this.group.traverse((o) => { if (o.isMesh && o.userData.own) { o.geometry.dispose(); } });
     this.group.removeFromParent();
   }
-  toWorld(x, y, z) { return new THREE.Vector3(x - this.info.w / 2, z, -(y - this.info.h / 2)); }
+  toWorld(x, y, z) { return new THREE.Vector3(x - this.info.w / 2, z, y - this.info.h / 2); }
 
   // ground drawn with the game's tiles (true) or the blended material textures (false)
   setTiles(on) {
@@ -56,8 +57,8 @@ export class MapView {
     const cell = (cx, cy) => M[Math.min(my - 1, Math.max(0, cy)) * mx + Math.min(mx - 1, Math.max(0, cx))];
     for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
       const k = j * nx + i, x = i * 2 * step, y = j * 2 * step;
-      pos[k * 3] = x - info.w / 2; pos[k * 3 + 1] = H[k]; pos[k * 3 + 2] = -(y - info.h / 2);
-      uvs[k * 2] = x / info.w; uvs[k * 2 + 1] = y / info.h;          // the baked ground: north at the image top
+      pos[k * 3] = x - info.w / 2; pos[k * 3 + 1] = H[k]; pos[k * 3 + 2] = y - info.h / 2;
+      uvs[k * 2] = x / info.w; uvs[k * 2 + 1] = 1 - y / info.h;      // the baked ground: row 0 = map y 0 (north)
       // material weights: bilinear over the 4 m cell centres
       const fx = x / 4 - 0.5, fy = y / 4 - 0.5, cx = Math.floor(fx), cy = Math.floor(fy), u = fx - cx, v = fy - cy;
       const add = (m, wt) => { if (m < 4) w0[k * 4 + m] += wt; else w1[k * 4 + m - 4] += wt; };
@@ -67,7 +68,7 @@ export class MapView {
     let t = 0;
     for (let j = 0; j < ny - 1; j++) for (let i = 0; i < nx - 1; i++) {
       const a = j * nx + i, b = a + 1, c = a + nx, d = c + 1;
-      idx[t++] = a; idx[t++] = b; idx[t++] = d; idx[t++] = a; idx[t++] = d; idx[t++] = c;
+      idx[t++] = a; idx[t++] = d; idx[t++] = b; idx[t++] = a; idx[t++] = c; idx[t++] = d;   // counter-clockwise from above
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -184,7 +185,7 @@ export class MapView {
         sh.fragmentShader.replace('#include <map_fragment>', `
         vec4 sampledDiffuseColor = texture2D( map, vMapUv );
         if (uOn > 0.5) {
-          vec2 mp = vec2(vW.x + uMap.x * 0.5, uMap.y * 0.5 - vW.z);      // map metres: x east, y north
+          vec2 mp = vec2(vW.x + uMap.x * 0.5, vW.z + uMap.y * 0.5);      // map metres: x east, y south
           vec2 tc = mp / 4.0 + 0.5;                                       // tile i covers x = 4 i - 2 .. 4 i + 2
           vec2 gr = mp / 4.0 * uTile.y;                                   // atlas uv without the jumps at tile edges
           vec2 dx = dFdx(gr), dy = dFdy(gr);
@@ -200,7 +201,7 @@ export class MapView {
             int tid = int(e.r * 255.0 + 0.5) + int(e.g * 255.0 + 0.5) * 256;
             int pg = tid / (uPer * uPer), cell = tid - pg * uPer * uPer;
             vec2 org = vec2(float(cell - (cell / uPer) * uPer), float(cell / uPer)) * uTile.x + uTile.z;
-            vec2 uv = vec2(org.x + fr.x * uTile.y, 1.0 - (org.y + (1.0 - fr.y) * uTile.y));   // tile picture: top = north
+            vec2 uv = vec2(org.x + fr.x * uTile.y, 1.0 - (org.y + fr.y * uTile.y));   // tile picture: top row towards map y 0 (north)
             float k = min(1.0, exp2(uLod.y - lod));
             dx *= k; dy *= k;
             vec3 det;
@@ -319,12 +320,16 @@ export class MapView {
 }
 
 // an object's orientation: the engine applies the stored quaternion (x, y, z, w; z up) as its conjugate (Direct3D
-// row vectors, pwexport/ula.py); its axes are mapped like positions (x, y, z) -> (x, z, -y). Landscape pieces
-// (plateaus, cliffs) are tilted to the slope, so the heading alone is not enough. o.rot = the heading (CCW, map).
+// row vectors, pwexport/ula.py); map and model space are both mirrored against this one, which makes it
+// (qx, qz, qy, qw) * Ry(pi) (pwexport/mapexport.py world_quat, remake/src/game/maps/frame.js mapQuat). Landscape pieces
+// (plateaus, cliffs) are tilted to the slope, so the heading alone is not enough. o.rot = the turn about the map's z.
 const UP = new THREE.Vector3(0, 1, 0);
 function setQuat(q, o) {
-  if (o.q) q.set(-o.q[0], -o.q[2], o.q[1], o.q[3]).normalize();
-  else q.setFromAxisAngle(UP, o.rot);
+  if (o.q) {
+    const n = Math.hypot(o.q[0], o.q[1], o.q[2], o.q[3]) || 1;
+    const ax = o.q[0] / n, ay = o.q[2] / n, az = o.q[1] / n, aw = o.q[3] / n;
+    q.set(-az, aw, ax, -ay);
+  } else q.setFromAxisAngle(UP, Math.PI - o.rot);
   return q;
 }
 

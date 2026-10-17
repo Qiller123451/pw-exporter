@@ -11,6 +11,8 @@ const GOALS = {
   suicide: ['suicide', 'SuicideAttack_'], violence: ['pureviolence', 'PureViolenceAttack_'], blitz: ['blitz', 'BlitzAttack_'], stealth: ['stealth', 'StealthAttack_'],
   rider: ['rider', 'RiderAttack_'], siege: ['siege', 'SiegeAttack_'], towersiege: ['siege', 'SiegeAttack_'], siege_warpgate: ['siege', 'SiegeAttack_'],
   guerilla: ['guerilla', 'SuicideAttack_'], traps: ['suicide', 'SuicideAttack_'], quick: ['quick', 'Quick'], pyramid: ['pyramid', null],
+  // Domination (DA:866-941, FM:287-383: SetKotH; ai/gametypes.js)
+  'KotH Pyramid': ['pyramid', null], 'KotH Violence': ['pureviolence', 'PureViolenceAttack_'], 'KotH Suicide': ['suicide', 'SuicideAttack_'], 'KotH Siege': ['siege', 'SiegeAttack_'],
 };
 const MAX_ATTACKS = 3;                 // FM:42
 const SHARE = [0, 0.08, 0.17, 0.25, 0.33, 0.42, 0.55, 0.7, 0.85, 1];       // of an army row's min-max span, by difficulty
@@ -25,6 +27,7 @@ function targetRank(e) {
     return e.cls === 'SHIP' ? 13 : 5;
   }
   const n = e.name, s = e.def.script || '';
+  if (n === 'defender_object') return 0;                           // a Defender game's crystal first (AO:1314)
   if (s === 'CWarpGate') return 1;
   if (e.def.wallKind === 'wall' || e.def.wallKind === 'gate' || e.def.wallKind === 'trap') return 11;
   if (e.def.wallKind === 'tower' || (e.weapons && e.weapons.long && e.weapons.long.projectile)) return 10;
@@ -47,6 +50,7 @@ export class Attack {
     this.targets = o.targets ? o.targets.slice() : null;      // explicit targets (pest patrol, scripted waves)
     this.pos = o.pos || null;                   // way point / attack position
     this.scripted = !!o.scripted;
+    this.koth = !!o.koth;                       // a Domination attack on a flag (pos): its units hold the flag afterwards
     this.hunt = !!o.hunt;                       // pest patrol, hunting for food / skulls: not one of the plan's three attacks
     this.onTheWay = o.onTheWay !== undefined ? !!o.onTheWay : true;
     this.targetOnly = !!o.targetOnly;
@@ -75,7 +79,10 @@ export class Attack {
     for (const u of us) if (u.stance !== 3) u.stance = 2;               // fighters aggressive again (GA:417)
     // back to the pool = back to the village guard (GuardVillage orders its pool to the guard position): without
     // this the survivors would walk on to wherever the attack was going. Scripted waves stay where they are.
-    if (!this.scripted && result !== 'brainwash') ai.sendHome(us);
+    // a Domination attack (and any PureViolence attack on a map with flags, PV:36): who stands within 30 m of the
+    // flag stays there (GA:414-461)
+    const hold = (this.koth || (this.goal === 'pureviolence' && ai.gameType === 'KingOfTheHill')) && this.pos;
+    if (!this.scripted && result !== 'brainwash') ai.sendHome(hold ? us.filter((u) => d2({ x: u.pos.x, z: u.pos.z }, this.pos) >= 30) : us);
     if (this.ship) for (const s of this.ship) if (s.alive) { s.silentDeath = true; ai.W.kill(s, null); }
     const i = ai.attacks.indexOf(this);
     if (i >= 0) ai.attacks.splice(i, 1);
@@ -91,6 +98,9 @@ export const Fight = {
   // ------------------------------------------------------------------ the strategist (DA:551-589, 816-1630)
   strategyThink(S) {
     if (this.prm.noFight) return;
+    this.checkGetItem(S);                                              // an item to fetch (DA:574, ai/items.js)
+    // Domination: the flags and nothing else (DA:866-941, ai/gametypes.js)
+    if (this.gameType === 'KingOfTheHill') { this.kothThink(S); return; }
     const age = S.age;
     this.stratN = (this.stratN || 0) + 1;
     if (this.attackStrategy === undefined || this.stratN % 20 === 0) this.attackStrategy = rnd(6);       // DA:581
@@ -107,6 +117,7 @@ export const Fight = {
       return;
     }
     if (this.pest) this.pestPatrol(S);
+    if (this.shipAttackCheck(S)) return;                              // a ship attack before the plan's entry (DA:1534)
     if (entry === 'none') return;
     if (rnd(100) <= 10) entry = 'pyramid';                              // 11 %: everything it has (DA:1550)
     // difficulty 0 and 1 in the first epoch of a skirmish: only every sixth think, and then a small raid (DA:1552)
@@ -138,7 +149,8 @@ export const Fight = {
     return humans.length ? humans[humans.length - 1] : weakest(list);
   },
   // the fight module's gate (FM:205-241) and the goal for a plan entry
-  requestAttack(S, type, enemy, targets = null, pos = null) {
+  // force: past the gate (the timer attack of the last 5 minutes, FM:1126-1180)
+  requestAttack(S, type, enemy, targets = null, pos = null, force = false) {
     // melee or ranged army? By the range of what is to be attacked (CheckTargetTypeOfEnemy, DA:1857)
     if ((type === 'suicide' || type === 'violence') && enemy) {
       let long = 0, short = 0;
@@ -148,11 +160,15 @@ export const Fight = {
       type = long > short ? 'violence' : 'suicide';
     }
     const plan = this.attacks.filter((a) => !a.scripted && !a.hunt);
-    if (this.defending && type !== 'pyramid' && type !== 'quick') return null;          // no attack while the village is under attack
-    if (type !== 'pyramid' && plan.some((a) => a.type === type)) return null;            // "repeating attack request ignored"
-    if (plan.length >= MAX_ATTACKS) return null;                                         // "maximum attack count reached"
+    if (!force) {
+      if (this.defending && type !== 'pyramid' && type !== 'quick') return null;          // no attack while the village is under attack
+      if (type !== 'pyramid' && plan.some((a) => a.type === type)) return null;            // "repeating attack request ignored"
+      if (plan.length >= MAX_ATTACKS) return null;                                         // "maximum attack count reached"
+    }
     const g = GOALS[type] || GOALS.suicide;
-    const a = new Attack(this, { type, goal: g[0], armyName: g[1] ? g[1] + (g[1].endsWith('_') ? Math.min(5, S.age) : '') : null, enemy, targets, pos });
+    // the siege army: always SiegeAttack_4 (SI:152 "Max(Min(age, 3), 4)" [bug])
+    const armyName = !g[1] ? null : g[0] === 'siege' ? g[1] + '4' : g[1] + (g[1].endsWith('_') ? Math.min(5, S.age) : '');
+    const a = new Attack(this, { type, goal: g[0], armyName, enemy, targets, pos, koth: /^KotH /.test(type) });
     return this.launch(S, a);
   },
   launch(S, a) {
@@ -167,7 +183,7 @@ export const Fight = {
     const S = this.S || this.census();
     if (!S.home || !units.length) return;
     const g = this.guardPoint(S);
-    const far = units.filter((u) => u.alive && !u.inside && u.task.type !== 'attack' && Math.hypot(u.pos.x - g.x, u.pos.z - g.z) > 30);
+    const far = units.filter((u) => u.alive && !u.inside && !u.naval && u.task.type !== 'attack' && Math.hypot(u.pos.x - g.x, u.pos.z - g.z) > 30);
     for (const u of far) u.aiWait = false;
     if (far.length) this.W.order(far, { type: 'attackmove', x: g.x, z: g.z, auto: true });
   },
@@ -223,6 +239,7 @@ export const Fight = {
     const W = this.W, now = W.time;
     if (a.state === 'over') return;
     if (now - a.t0 > TIME_LIMIT) return a.end('timeout');
+    if (a.goal === 'ship') return this.shipAttackThink(S, a);                         // (ai/naval.js)
     const us = a.alive();
     switch (a.state) {
       case 'new': return this.attackNew(S, a);
@@ -236,6 +253,7 @@ export const Fight = {
         return;
       }
       case 'sail': return this.attackSail(S, a, us);
+      case 'ferry': return this.ferryThink(S, a, us);
       case 'walk': return this.attackWalk(S, a, us);
       case 'fight': return this.attackFight(S, a, us);
     }
@@ -275,7 +293,7 @@ export const Fight = {
         for (const u of S.pool) { if (n <= 0) break; if (u.name === alt.cls && !taken.has(u) && !this.claims.has(u)) { taken.add(u); n--; } }
       }
       const alt = e.alternatives.find((x) => this.resolve('CHTR/' + x.cls, '')) || e.alternatives[0];
-      for (; n > 0; n--) a.orders.push({ cls: this.fieldable(alt.cls), level: alt.level !== undefined ? alt.level + 1 : 0, flag: alt.objFlag || null, job: null });
+      for (; n > 0; n--) a.orders.push({ cls: alt.cls, level: alt.level !== undefined ? alt.level + 1 : 0, flag: alt.objFlag || null, job: null });
     }
     a.add([...taken]);
     this.sendHome([...taken]);                    // the squad forms at the guard point
@@ -343,6 +361,8 @@ export const Fight = {
     const aim = this.attackAim(a);
     if (!aim) return a.end('no target');
     a.aim = aim;
+    // across the water: in transports first (ai/naval.js)
+    if (S.home && this.needsCrossing(S, a, aim) && this.startCrossing(S, a, us, aim)) return;
     a.set('walk');
     // skirmish squads attack-move; campaign waves walk unless told to fight on the way (AO:880-896)
     // (hunters walk: an attack-move would take on every animal they pass)
@@ -369,9 +389,10 @@ export const Fight = {
     const arrive = a.scripted && a.pos ? 40 : 55;
     if (lead < arrive || (fighting >= Math.max(1, us.length * 0.3) && lead < 110)) { a.set('fight'); return this.attackFight(S, a, us); }
     const spread = tail - lead;
+    this.squadPickup(us);                                              // items on the way (AO:1056, ai/items.js)
     for (const u of us) {
       const t = u.task.type;
-      if (t === 'attack') continue;
+      if (t === 'attack' || t === 'pickup') continue;
       const d = dist(u);
       if (spread > 35 && d < tail - 35 && now(W) - a.stateT > 4) { if (t !== 'hold') W.order([u], { type: 'hold' }); u.aiWait = true; continue; }
       if (t === 'idle' || t === 'hold' || u.aiWait) { u.aiWait = false; if (u.stance !== 3) u.stance = 2; W.order([u], { type: a.amove ? 'attackmove' : 'move', x: aim.x, z: aim.z, auto: true }); }
@@ -393,7 +414,12 @@ export const Fight = {
       for (const e of a.targets) test(e);
       if (best || a.targetOnly || a.hunt) return best;
     }
-    if (a.enemy) {
+    if (a.koth) {
+      // at a flag: the enemies around it only (CheckForMissingTargets is off in KotH, AO:1449)
+      const at = a.pos;
+      const q = (e) => { if (this.isEnemyEntity(e) && Math.hypot(e.pos.x - at.x, e.pos.z - at.z) < 60) test(e); };
+      W.uHash.query(at.x, at.z, 60, q); W.bHash.query(at.x, at.z, 70, q);
+    } else if (a.enemy) {
       for (const u of W.units) if (u.owner === a.enemy) test(u);
       for (const b of W.buildings) if (b.owner === a.enemy) test(b);
     } else if (a.scripted) {
@@ -422,11 +448,20 @@ export const Fight = {
     }
     const c = a.centre(us);
     const tgt = this.attackTargets(a, c);
+    if (!tgt && a.koth) {
+      // an area attack on the flag (AO:884-925): to the flag, then three looks within 100 m without an enemy -> done
+      if (d2(c, a.pos) < 100) { a.empty = (a.empty || 0) + 1; if (a.empty >= 3) return a.end('done'); } else a.empty = 0;
+      const idle = us.filter((u) => u.task.type !== 'attack' && d2({ x: u.pos.x, z: u.pos.z }, a.pos) > 10);
+      if (idle.length) W.order(idle, { type: 'attackmove', x: a.pos.x, z: a.pos.z, auto: true });
+      return;
+    }
     if (!tgt) return a.end('done');
     const building = tgt.kind === 'building';
+    this.squadPickup(us);
     for (const u of us) {
       const t = u.task.type;
       if (t === 'attack' && u.task.target && u.task.target.alive) continue;
+      if (t === 'pickup') continue;
       if (u.aiTgt === tgt && (t === 'attackmove' || t === 'move') && W.time - (u.aiTgtT || 0) < 12) continue;
       u.aiTgt = tgt; u.aiTgtT = W.time; u.aiWait = false;
       const d = Math.hypot(u.pos.x - tgt.pos.x, u.pos.z - tgt.pos.z);
@@ -476,9 +511,10 @@ export const Fight = {
   // custom_attack = 1. Bypasses the three-attack limit and the defending check. -> the attack's id | null
   startAttack({ type, targets, position = null, attackOnTheWay = false, spawn = false, spawnPosition = null, ignoreLocations = false, targetOnly = false, ship = false, shipLand = false, behaviour = null } = {}) {
     void behaviour;                                      // attack_behavior: the editor's hint, never read by the game
+    // an outpost at the position (FM:918-921, ai/outposts.js) -> its id
+    if (type === 'RessourceOutpost' || type === 'AttackOutpost') return position ? this.startOutpost(position, type) : null;
     targets = (targets || []).filter((e) => e && e.alive);
     if (!targets.length) return null;
-    if (type === 'RessourceOutpost' || type === 'AttackOutpost') return null;         // outposts are not ported
     const S = this.census(true);
     if (!S.base) return null;                            // nothing left of this player
     if (type === 'PyramidAttack') {
@@ -508,7 +544,7 @@ export const Fight = {
       let n = this.squadCount(e);
       for (const alt of e.alternatives) for (const u of S.pool) { if (n <= 0) break; if (u.name === alt.cls && !taken.has(u) && !this.claims.has(u)) { taken.add(u); n--; } }
       const alt = e.alternatives[0];
-      for (; n > 0; n--) a.orders.push({ cls: this.fieldable(alt.cls), level: alt.level !== undefined ? alt.level + 1 : 0, flag: alt.objFlag || null, job: null });
+      for (; n > 0; n--) a.orders.push({ cls: alt.cls, level: alt.level !== undefined ? alt.level + 1 : 0, flag: alt.objFlag || null, job: null });
     }
     a.add([...taken]);
     this.sendHome([...taken]);

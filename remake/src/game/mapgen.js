@@ -6,6 +6,11 @@ export const MAP = {
   world: 640,         // rendered terrain (border forest beyond the playable area)
   bases: [[-150, 150], [150, -150]],
 };
+// the bases for a number of players: two in opposite corners, up to four in the four corners (the first two stay
+// where they are, so a two-player map is the same as before)
+const BASES2 = MAP.bases.slice(), BASES4 = [...BASES2, [150, 150], [-150, -150]];
+export const MAX_PLAYERS = 4;
+export function setPlayers(n) { MAP.bases = n > 2 ? BASES4.slice(0, Math.min(4, n)) : BASES2.slice(); }
 
 export function heightFn(x, z) {
   let h = 3.2 * Math.sin(x * 0.013 + 0.7) * Math.cos(z * 0.017 - 0.4) + 1.6 * Math.sin(x * 0.037 + z * 0.029 + 2.1);

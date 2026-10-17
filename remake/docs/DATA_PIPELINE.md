@@ -3,8 +3,9 @@
 Everything the remake shows or plays comes from the player's own game folder (`Data/Base`, `Data/BoosterPack1`).
 **No game file is part of the toolkit or its repository.** The first time the remake is started from the launcher,
 `remake/pipeline` converts what the game needs (about 5 minutes on a desktop PC); the result lives in the toolkit's
-data folder (`%APPDATA%\ParaWorldToolkit\remake\<installation id>\`, Linux/macOS
-`~/.config/paraworld-toolkit/remake/...`).
+data folder (`<toolkit data>\remake\<installation id>\`; by default `%APPDATA%\ParaWorldToolkit`, Linux/macOS
+`~/.config/paraworld-toolkit`; the launcher's **Toolkit data → Change** moves it, `pwexport/config.py` `data_home`).
+A first build refuses to start with less than 4 GB free on that drive (`toolkit/remake.py` `NEED_GB`).
 
 **Builds are incremental.** `build.json` keeps a fingerprint per step (`pipeline/stamps.py`): the step's code (its
 module and every toolkit module it imports, plus the data files they name) and the names, sizes and times of the game
@@ -24,7 +25,8 @@ with the next build, and the other way round.
 Scripts/Server/settings/techtree/_TechTree.ttree ┐
 Scripts/Server/classes/**/*.txt                  ├► rules    build_data.py      ──► techtree.json, gamedata.json
 Scripts/Server/settings/Resources.txt, NPCList   │
-Scripts/Game/misc/IdleAnims.txt, DefPresets.txt  ┘
+Scripts/Game/misc/IdleAnims.txt, DefPresets.txt, │
+Scripts/Server/classes/character/Hero.usl        ┘
 Data/*/GSF/*.gsf                                 ──► models   convert_models.py  ──► _conv/<archive>/*.glb (scratch)
                                                  ──► assets   build_assets.py    ──► assets/models, assets/tex, manifest.json
 UI/hud/**, UI/All_def.txt                        ──► ui       build_ui.py        ──► assets/ui/*.png, atlas.json
@@ -34,6 +36,7 @@ Texture/Scape/<Setting>/**                       ──► terrain  build_terrai
 Scripts/Server/init/*.txt                        ──► sounds   build_sounds.py    ──► assets/sounds.json
 Scripts/Ai/**, _AI_ObjectData.txt, 4 Server .usl ──► ai       build_ai.py        ──► ai.json
 vegetation/Forest_<Setting>.txt, bin/PWServer.exe ─► forest   build_forest.py    ──► forest.json
+remake/art/sequel/built (in the repository)      ──► sequel   sequel_assets.py   ──► assets/models/sq_*, tex, ui/sq_cards*.jpg, atlas.json, objbrush.json
 Audio/Sound/**/*.wav, Audio/Music/*.mp3, Maps/** ──► read straight from the game folder by the server
 ```
 
@@ -42,14 +45,33 @@ Run it by hand (all steps, or some):
 ```
 python -m remake.pipeline "C:\Games\ParaWorld" "C:\temp\remake-data"            # everything
 python -m remake.pipeline "C:\Games\ParaWorld" "C:\temp\remake-data" rules assets # exactly these steps (--force: all)
-python remake/devserver.py --game "C:\Games\ParaWorld" --data "C:\temp\remake-data"   # play it on :8411
+python -m remake.pipeline "C:\Games\ParaWorld" "C:\temp\remake-mirage" --mod=MIRAGE   # a mod configuration
+python remake/devserver.py --game "C:\Games\ParaWorld" --data "C:\temp\remake-data"   # play it on :8411 (--mod MIRAGE)
 ```
+
+### Configurations
+
+A build is for one configuration (`pipeline.build(..., mod=)`, recorded in `build.json`): the official game
+(`mod=''`: Base + BoosterPack1) or a mod with the folders it requires (`pwexport/mods.py`: MIRAGE = Base +
+BoosterPack3 + MIRAGE). Every step reads the game through `paths.game()` (`paths.install(data, mod)`): files and
+folders from the last folder of the configuration that has them (`Install.file` / `dir`) - except the folders a
+mod only adds to or patches file by file: the HUD textures, the menu art and the cursors (`Install.tree`: every
+folder's files, a later folder's file replacing the same path; MIRAGE ships 5 cursors and its own heroes' cards), and
+the atlas entries of every folder's `UI/All_def.txt` (a later definition replacing the same name) -, the model
+archives of those folders **only** (other folders' copies of `all_characters.gsf` must not leak in), the texture
+folders of the configuration first (`convert_models.texture_roots`), the help texts of every folder
+(`Install.locale_dirs`), and the attached parts of objects the composites table does not know from the mod's own
+scripts (`paths.composites()`, `pwexport/modparts.py`).
+The toolkit keeps each configuration in its own folder (`remake/<installation id>` for the official game,
+`remake/<installation id>@<mod>` for a mod) and builds a mod's data the first time the campaign menu starts a mission
+with it; the official game's data is never touched by that.
 
 Every step module also runs alone (`python remake/pipeline/build_ui.py <Data folder> <output folder>`).
 
 ## How the server delivers the game
 
-`toolkit/remake.py` maps the URLs below `/remake/` (the game only uses relative URLs):
+`toolkit/remake.py` maps the URLs below `/remake/` - and below `/remake/mod/<id>/` the same for a mod
+configuration - (the game only uses relative URLs):
 
 | URL | file |
 |---|---|
@@ -117,7 +139,8 @@ source, walk speeds, walk set (`walk`), footprint, sound events, seamless walk l
 * `gamedata.json` – script class and class gfx of every object (`classes/**/*.txt`), resource values
   (`settings/Resources.txt`), the hero list, help texts (`locale/<uk or the first language>/Texts/Help`), idle
   animation sets (`IdleAnims.txt`), the multiplayer start presets (`DefPresets.txt`), the composites table, pyramid
-  sizes and level costs.
+  sizes and level costs, the constants of `classes/character/Hero.usl` (`hero_consts`) and the mod configuration
+  the data is built for (`mod`: the sequel campaign needs MIRAGE's).
 
 ## 4. Sounds, interface, terrain
 
@@ -138,6 +161,11 @@ source, walk speeds, walk set (`walk`), footprint, sound events, seamless walk l
   setting from `Scripts/Server/classes/vegetation/Forest_<Setting>.txt` → `forest.json`. Like `ai.json` it is made
   on first request for older data folders; without it (or without the program file) maps keep only their placed
   trees. Alone: `python -m remake.pipeline.build_forest <Data folder> <output folder>`.
+* `sequel_assets.py` (step `sequel`, after `assets`, `ui` and `terrain`) puts the sequel campaign's own models, textures and
+  cards (docs/SEQUEL.md "Models"), made in Blender and kept built in the repository, into the data: it extends the
+  model manifest, the card atlas and the ground brushes (objbrush.json: brushes for the sequel's buildings), and
+  draws the cards of the units that keep an original's card with a mark.
+  Alone: `python -m remake.pipeline.sequel_assets <output folder>`.
 * `build_ui.py` converts the HUD textures and the icon atlas; `build_menu.py` the menu art; `build_cursors.py` the
   cursors (ICO containers with an AND mask).
 * `build_terrain.py`: the 8 ground materials of every setting from `Texture/Scape/<Setting>/ScapeTexture<Q>.dat` +

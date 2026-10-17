@@ -14,7 +14,8 @@ doc: |
   Top-level chunks:
     LInf  level info: key/values, player slots, a 200 x 200 BGRA preview picture, the map editor's description
     Terr  terrain: size, setting, water level, heights (2 m grid), ground materials (4 m grid)
-    PaFi  pathfinding grid (not described)
+    PaFi  pathfinding grids: u4 w/2, u4 h/2, u4, u4, then the walkable-terrain grid (u4 w/2, u4 h/2, u4 words,
+          words x u4: one bit per 2 m cell, row-major, lowest bit first); more grids follow (docs/MAP_FORMAT.md)
     Rgns  named regions, e.g. the areas of the animal nests (not described)
     Frst  forest blocks: u4 width, u4 height (squares of 32 m), then { u4 square index, 32 item bytes } per forest
           square, then u4 0xffffffff (docs/MAP_FORMAT.md; not described here)
@@ -23,7 +24,7 @@ doc: |
     IOMG  landscape decoration instances: grass, ferns, flowers (drawn as ground sprites)
     Trgr, Ques, DlgS, AI   triggers, quests, dialogues, scripted AI of campaign maps (nested trees, not described)
 
-  Map coordinates: x east 0..width, y north 0..height, z up, in metres. Rotations are quaternions (x, y, z, w).
+  Map coordinates: x east 0..width, y south 0..height, z up, in metres (left-handed). Rotations are quaternions (x, y, z, w).
   The engine applies the conjugate (D3D row vectors): heading (counter-clockwise from east) = -2 * atan2(z, w), and
   tilted objects (plateaus, rocks on slopes) need the full conjugate quaternion (-x, -y, -z, w).
 

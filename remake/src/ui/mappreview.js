@@ -2,8 +2,9 @@
 //   listMaps()            -> [{path, size, folder, file}] from maps/index.json (server.ps1 lists the game's map folders:
 //                            maps/<pack>/<sub folders>/<file>.ula; folder = "<pack> / <sub folders>")
 //   loadMapInfo(src)      -> parsed map (maps/ula.js) for a path or an ArrayBuffer, cached
-//   drawPreview(canvas, md, colors) -> top view: ground colours, water, start locations
+//   drawPreview(canvas, md)  -> the map's own preview picture (the original map list's)
 import { parseUla } from '../game/maps/ula.js';
+import { reliefCells, paintCells, snapDiamond } from './minimap.js';
 
 const cache = new Map();
 
@@ -35,38 +36,39 @@ export async function loadMapInfo(path, buf) {
   return p;
 }
 
-const settingColors = new Map();
-export async function colorsOf(setting) {
-  if (!settingColors.has(setting)) {
-    settingColors.set(setting, fetch(`assets/terrain/${setting}/setting.json`).then((r) => r.json()).then((j) => j.minimap).catch(() => null));
+const tables = new Map();
+function tableOf(setting) {
+  if (!tables.has(setting)) {
+    tables.set(setting, fetch(`assets/terrain/${setting}/setting.json`).then((r) => r.json()).then((j) => (Array.isArray(j.minimap) && j.minimap.length === 6 ? j.minimap : null)).catch(() => null));
   }
-  return settingColors.get(setting);
+  return tables.get(setting);
 }
 
-// top view of the map (north up), start locations as numbered dots
+// the map list's picture: the preview the map stores (LInf; drawn by the engine's minimap renderer when the map was
+// saved: a diamond in the setting's minimap colours with the start locations), else one drawn the same way here
 export async function drawPreview(canvas, md) {
-  const cols = (await colorsOf(md.setting)) || [[110, 140, 60], [190, 170, 120], [80, 130, 50], [150, 100, 60], [120, 120, 110], [200, 180, 130], [170, 150, 110], [140, 120, 90]];
   const S = canvas.width, ctx = canvas.getContext('2d');
-  const img = ctx.createImageData(S, S);
-  const W2 = md.hx * 2, H2 = md.hy * 2, ext = Math.max(W2, H2);
-  for (let j = 0; j < S; j++) for (let i = 0; i < S; i++) {
-    const mx = (i + 0.5) / S * ext - (ext - W2) / 2, my = H2 - ((j + 0.5) / S * ext - (ext - H2) / 2);
-    const k = (j * S + i) * 4;
-    if (mx < 0 || my < 0 || mx >= W2 || my >= H2) { img.data[k + 3] = 0; continue; }
-    const hgt = md.heights[Math.floor(my / 2) * md.hx + Math.floor(mx / 2)];
-    const m = md.mats[Math.floor(my / 4) * md.mx + Math.floor(mx / 4)] & 7;
-    let [r, g, b] = cols[m] || [128, 128, 128];
-    const l = 0.75 + Math.min(0.5, hgt / 120);
-    r *= l; g *= l; b *= l;
-    if (hgt < md.water - 0.3) { const d = Math.min(1, (md.water - hgt) / 10); r = 40 - 25 * d; g = 105 - 50 * d; b = 140 - 40 * d; }
-    img.data[k] = r; img.data[k + 1] = g; img.data[k + 2] = b; img.data[k + 3] = 255;
+  ctx.clearRect(0, 0, S, S);
+  if (md.preview) {
+    const c = document.createElement('canvas'); c.width = md.preview.w; c.height = md.preview.h;
+    c.getContext('2d').putImageData(new ImageData(md.preview.rgba, md.preview.w, md.preview.h), 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(c, 0, 0, S, S);
+    return;
   }
-  ctx.putImageData(img, 0, 0);
-  ctx.font = 'bold 11px Trebuchet MS'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  md.objects.filter((o) => o.type === 'SLOC').forEach((o, n) => {
-    const x = (o.x + (ext - W2) / 2) / ext * S, y = (H2 - o.y + (ext - H2) / 2) / ext * S;
-    ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(x, y, 7, 0, 6.29); ctx.fill();
-    ctx.fillStyle = '#ffd860'; ctx.beginPath(); ctx.arc(x, y, 5.5, 0, 6.29); ctx.fill();
-    ctx.fillStyle = '#000'; ctx.fillText(String(n + 1), x, y + 0.5);
-  });
+  const table = await tableOf(md.setting);
+  if (!table) return;
+  // the playable area (the map minus 128 m on every side) in 4 m cells
+  const W2 = md.hx * 2, H2 = md.hy * 2, gw = Math.max(1, Math.round((W2 - 256) / 4)), gh = Math.max(1, Math.round((H2 - 256) / 4));
+  const hAt = (i, j) => md.heights[Math.min(md.hy - 1, Math.floor((128 + j * 4 + 2) / 2)) * md.hx + Math.min(md.hx - 1, Math.floor((128 + i * 4 + 2) / 2))];
+  const col = reliefCells(gw, gh, hAt, md.water);
+  const cells = document.createElement('canvas'); cells.width = gw; cells.height = gh;
+  const img = cells.getContext('2d').createImageData(gw, gh);
+  paintCells(img.data, col, null, table, () => 2);
+  cells.getContext('2d').putImageData(img, 0, 0);
+  const k = S / Math.hypot(gw, gh);
+  ctx.save();
+  ctx.translate(S / 2, S / 2); ctx.rotate(snapDiamond(Math.PI / 2 - md.defaultCamera)); ctx.scale(k, k);
+  ctx.drawImage(cells, -gw / 2, -gh / 2);
+  ctx.restore();
 }

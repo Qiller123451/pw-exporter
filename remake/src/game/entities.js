@@ -1,10 +1,9 @@
 import * as THREE from 'three';
 import { AnimCtl } from './anim.js';
-import { cloneModel } from '../engine/assets.js';
+import { cloneModel, toLinkFrame } from '../engine/assets.js';
 import { applyFow } from '../engine/terrain.js';
 import { applyState } from '../engine/parts.js';
 import { SPEED_FALLBACK } from './rules.js';
-import { wallBoxes, DIRS } from './wallmap.js';
 import { Composite, attach, activeParts, partGfx } from './compose.js';
 import { newStatus } from './systems/effects.js';
 import { LocalTree } from './techtree.js';
@@ -13,6 +12,9 @@ const TAU = Math.PI * 2;
 export function wrap(a) { a = (a + Math.PI) % TAU; if (a < 0) a += TAU; return a - Math.PI; }
 export function headingTo(dx, dz) { return Math.atan2(-dx, -dz); }
 let NEXT_ID = 1;
+// (saved games: game/save.js)
+export const nextEntityId = () => NEXT_ID;
+export const setNextEntityId = (n) => { NEXT_ID = n; };
 
 // units that move on land and water (naval.md §3)
 export const AMPHIBIOUS = /^(aje_transport_turtle|seas_hovercraft|seas_helicopter|ninigi_baryonyx|baryonyx|macrolemys)$/i;
@@ -85,11 +87,11 @@ export class Unit extends Entity {
     this.amphib = AMPHIBIOUS.test(name);                // land and water (transport turtle, hovercraft, baryonyx, macrolemys)
     if (this.amphib) this.naval = false;
     this.stationary = !!opts.stationary || /mineship_mine|water_turret/.test(name);   // mines, water turrets
-    this.countsInPop = !(opts.illusion || opts.autonomous) && !/mineship_mine|water_turret|torpedo_turtle/.test(name);   // naval.md §2.3
+    this.countsInPop = !(opts.illusion || opts.autonomous || opts.temp) && !/mineship_mine|water_turret|torpedo_turtle/.test(name);   // naval.md §2.3
     this.applyLevel(level, true);
   }
   get isWorker() { return !!this.def.can_harvest; }
-  get canBuild() { return !!(this.def.can_build || this.def.can_harvest) && this.cls === 'CHTR'; }
+  get canBuild() { return !!this.def.can_build && this.cls === 'CHTR'; }   // FightingObj.CanBuild (heroes like Tesla too)
   get isDropoff() { return this.def.delivery && this.def.delivery.length > 0; }
   get canWalk() { return (this.stats.maxspeed || this.stats.speed || 1) > 0 && !this.st.camo.has('entr'); }
   get cannotFight() { return !this.weapons.long || /resource_collector|_cart$|trade_dino|smokebomb|drums$|siegetower|hovercraft|transport_ship|transport_boat|fishing_boat|minelayer|corsair|mineship_mine|torpedo_turtle/.test(this.name); }
@@ -106,7 +108,7 @@ export class Unit extends Entity {
     const D = this.world.data, O = this.rulesOwner();
     this.def = D.def(this.name, O);
     this.stats = D.statsAt(this.name, this.level, O);
-    this.maxHp = this.stats.hp;
+    this.maxHp = this.stats.hp * (this.grow ?? 1) * (this.rideCup ? 1.5 : 1);   // (a young wild animal: animals.js growthUpdate; the ride cup: items.js)
     this.weapons = D.weaponSet(this.name, this.level, O);
     if (!this.weapon || !this.weapons.all.includes(this.weapon)) this.weapon = this.weapons.long;
     this.fow = this.stats.fow || 30;
@@ -172,6 +174,7 @@ export class Unit extends Entity {
     const wn = (i) => ws[String(i)] || 'walk_' + i;
     this.walkAnim = this.anim.pick(wn(idx), 'walk_' + idx, wn(2), 'walk_2', 'walk_1') || null;
     this.runAnim = this.anim.pick(wn(idxMax), 'walk_' + idxMax, wn(idx), 'walk_2') || this.walkAnim;
+    this.gaits = speedsTpl;
     this.speed = speedsTpl['walk_' + idx] || SPEED_FALLBACK[idx] || 3;
     this.runSpeed = speedsTpl['walk_' + idxMax] || SPEED_FALLBACK[idxMax] || this.speed;
     this.animSpeed = speedsTpl[wn(idx)] || this.speed; this.runAnimSpeed = speedsTpl[wn(idxMax)] || this.runSpeed;
@@ -199,8 +202,7 @@ export class Unit extends Entity {
       const tpl = this.world.template(gfx, true);
       if (!tpl) continue;
       const o = cloneModel(tpl, this.party);
-      const inner = o.children[0];
-      if (inner) inner.rotation.set(0, 0, 0);    // link frame is already the model's Z-up frame
+      toLinkFrame(o);
       link.add(o);
       this.weaponObjs.push(o);
     }
@@ -215,7 +217,7 @@ export class Unit extends Entity {
     if (!link || !tpl) return;
     if (this.weaponObjs) for (const o of this.weaponObjs) o.visible = false;
     const o = cloneModel(tpl, this.party);
-    if (o.children[0]) o.children[0].rotation.set(0, 0, 0);
+    toLinkFrame(o);
     link.add(o);
     this.toolObj = o;
   }
@@ -232,7 +234,7 @@ export class Unit extends Entity {
     const tpl = this.world.template(gfx, true);
     if (!l || !tpl) return;
     const o = cloneModel(tpl, this.party);
-    if (o.children[0]) o.children[0].rotation.set(0, 0, 0);
+    toLinkFrame(o);
     l.add(o);
     this.carryObj = o;
     if (this.weaponObjs) for (const w of this.weaponObjs) w.visible = false;
@@ -283,11 +285,42 @@ export class Unit extends Entity {
   }
   // -------------------------------------------------------- movement
   setPath(x, z) {
-    const p = this.world.navFor(this).find(this.pos.x, this.pos.z, x, z, this.radius, 30000, this.owner);
+    const nav = this.world.navFor(this), W = this.world;
+    // in the air (MIRAGE jetpack flight): straight there, over walls and water (Hu.usl:277)
+    if (this.flying) { this.path = [[x, z]]; this.goal = [x, z]; this.breach = null; this.noWay = null; this.stuckT = 0; this.stuckFrom = this.pos.clone(); return true; }
+    // a goal it found no way to a moment ago: keep going the way it has (the searches that fail are the costly ones)
+    const nf = this.noWay;
+    if (nf && W.time - nf.t < 3 && Math.abs(nf.x - x) < 1 && Math.abs(nf.z - z) < 1) { this.goal = [x, z]; this.stuckT = 0; this.stuckFrom.copy(this.pos); return this.path.length > 0; }
+    let p = nav.find(this.pos.x, this.pos.z, x, z, this.radius, 30000, this.owner);
+    // big units (spider walkers, dinosaurs) squeeze through the narrow passes of the original maps' walk grid
+    // rather than not going at all
+    if (!nav.found && this.radius > 1) { const q = nav.find(this.pos.x, this.pos.z, x, z, 0.7, 30000, this.owner); if (nav.found) p = q; }
+    // the way is shut by an enemy gate: attackers (attack-move, any move of a computer player) break through it
+    this.breach = null;
+    const t = this.task;
+    if (!nav.found && nav.gateAt.size && (t.type === 'attackmove' || (t.type === 'move' && this.owner && !this.owner.human))) {
+      const q = nav.find(this.pos.x, this.pos.z, x, z, Math.min(this.radius, 0.7), 30000, this.owner, true);
+      if (q && q.gate) { p = q; this.breach = q.gate; }
+    }
+    this.noWay = nav.found || this.breach ? null : { x, z, t: W.time };
     this.path = p || [];
     this.goal = [x, z];
     this.stuckT = 0; this.stuckFrom = this.pos.clone();
     return this.path.length > 0;
+  }
+  // is a unit next to this one, nearer the point (tx, tz) than this one's distance d, standing or on its way to the
+  // same point?
+  queuedBehind(tx, tz, d) {
+    let found = false;
+    const g = this.goal;
+    this.world.uHash.query(this.pos.x, this.pos.z, this.radius + 4, (o) => {
+      if (found || o === this || !o.alive || o.inside || o.parked) return;
+      if (o.path.length && !(g && o.goal && Math.abs(o.goal[0] - g[0]) < 0.5 && Math.abs(o.goal[1] - g[1]) < 0.5)) return;
+      // one standing at its own place of a formation, not at this one's: walk round it
+      if (!o.path.length && o.goal && g && Math.hypot(o.goal[0] - g[0], o.goal[1] - g[1]) > 0.5 && Math.hypot(o.pos.x - tx, o.pos.z - tz) > this.radius + o.radius + 1) return;
+      if (Math.hypot(o.pos.x - this.pos.x, o.pos.z - this.pos.z) < this.radius + o.radius + 1 && Math.hypot(o.pos.x - tx, o.pos.z - tz) < d) found = true;
+    });
+    return found;
   }
   steer(dt, speed, arrive = 0.8) {
     if (!this.path.length) { this.vel.set(0, 0, 0); return 0; }
@@ -308,7 +341,8 @@ export class Unit extends Entity {
     // local avoidance: if the step would enter a blocked cell, slide along the obstacle
     const nav = this.world.navFor(this);
     let hx = -Math.sin(this.heading), hz = -Math.cos(this.heading);
-    const look = Math.max(0.8, this.radius);
+    if (this.flying) { this.vel.set(hx * sp, 0, hz * sp); this.pos.x += this.vel.x * dt; this.pos.z += this.vel.z * dt; return sp; }
+    const look = Math.max(0.8, Math.min(2.5, this.radius));     // big units too: a look as far as their radius found no way through the narrow passes
     if (!nav.isFree(this.pos.x + hx * look, this.pos.z + hz * look)) {
       for (const da of [0.5, -0.5, 1.0, -1.0, 1.5, -1.5]) {
         const a = this.heading + da, ax = -Math.sin(a), az = -Math.cos(a);
@@ -325,6 +359,8 @@ export class Unit extends Entity {
     else this.vel.set(0, 0, 0);
     this.stuckT += dt;
     if (this.stuckT > 1.5) {
+      // the last stretch is blocked by units standing nearer the goal (a group sent to one point): this one is there
+      if (last && this.pos.distanceTo(this.stuckFrom) < 0.6 && this.queuedBehind(tx, tz, d)) { this.path.length = 0; this.vel.set(0, 0, 0); this.stuckT = 0; return 0; }
       if (this.pos.distanceTo(this.stuckFrom) < 0.6 && this.goal) {
         this.stuckN = (this.stuckN || 0) + 1;
         // repeatedly stuck: step to the nearest free cell first, then path again
@@ -343,6 +379,8 @@ export class Unit extends Entity {
     if (nav.block[k]) return false;
     return !(nav.gateAt.size && nav.gateBlocks(k, this.owner));
   }
+  // the speed of a gait (1 .. 4: the model's walk_<n>)
+  gaitSpeed(i) { return (this.gaits && this.gaits['walk_' + i]) || SPEED_FALLBACK[i] || this.speed; }
   face(x, z, dt, rate = 6) {
     const want = headingTo(x - this.pos.x, z - this.pos.z);
     const diff = wrap(want - this.heading);
@@ -362,12 +400,13 @@ export class Unit extends Entity {
 
 // ======================================================================= buildings
 // Footprint boxes from the GSF pathfinder table (type 1 = box: min corner + size in the model's Z-up space).
-// Returns boxes as [cx, cz, hx, hz] in the building's local (three.js, Y-up) frame.
+// Returns boxes as [cx, cz, hx, hz] in the building's local (three.js, Y-up) frame: GSF (x, y) -> (-x, -y), the
+// models' root mirrors x (game/maps/frame.js).
 export function footBoxes(tpl) {
   if (tpl._boxes) return tpl._boxes;
   const pf = (tpl.info && tpl.info.pf) || (tpl.extras && tpl.extras.pf);
   let boxes = [];
-  if (pf) for (const r of pf) if (r[0] === 1 && r[4] > 0.5 && r[5] > 0.5) boxes.push([r[1] + r[4] / 2, -(r[2] + r[5] / 2), r[4] / 2, r[5] / 2]);
+  if (pf) for (const r of pf) if (r[0] === 1 && r[4] > 0.5 && r[5] > 0.5) boxes.push([-(r[1] + r[4] / 2), -(r[2] + r[5] / 2), r[4] / 2, r[5] / 2]);
   if (!boxes.length) {
     const foot = tpl.info && tpl.info.foot;
     if (foot) boxes = [[foot[0], foot[1], foot[2] * 0.9, foot[3] * 0.9]];
@@ -382,7 +421,32 @@ export function footBoxes(tpl) {
 // world-space footprint of a building template placed at (x, z) with rotation rot
 // Wall pieces are hubs with arms in 8 directions (the engine's WallMap shows the arms towards connected
 // neighbours). A straight segment uses the hub plus the east and west arms: 8 m long, on the 8 m wall grid.
-export const WALL_BOXES = wallBoxes(0);      // a lone wall post (the arms come from the WallMap, see setArms)
+export const WALL_BOXES = [[0, 0, 1.9, 1.9]];      // a lone wall post: the hub box (the arms come from the WallMap)
+// The pathfinder boxes of a wall piece for its PFMask (wallmap.js pfMask: the model's pf boxes whose direction / hub
+// bit - attr bits 5..15 - is in the mask; GSF space, mirrored like footBoxes). The model parts face the other way in
+// the remake's world (its model root turns GSF space by 180 degrees): the WallMap's engine directions are flipped
+// to model directions (flipPf / flipParts below).
+export function wallPfBoxes(tpl, mask) {
+  const pf = (tpl.info && tpl.info.pf) || (tpl.extras && tpl.extras.pf);
+  const out = [];
+  if (pf) for (const r of pf) if (r[0] === 1 && r[4] > 0.5 && r[5] > 0.5 && ((r[7] >>> 0) & 0xffe0 & mask)) out.push([-(r[1] + r[4] / 2), -(r[2] + r[5] / 2), r[4] / 2, r[5] / 2]);
+  return out.length ? out : WALL_BOXES;
+}
+// engine direction d -> the model part pointing there in the remake's world
+export const PART_FLIP = 4;
+const flipD = (d) => (d + PART_FLIP) & 7;
+export function flipParts(list) {
+  return list.map((c) => {
+    if (/^x\d\d$/.test(c)) { const a = flipD(+c[1]), b = flipD(+c[2]); return 'x' + Math.min(a, b) + Math.max(a, b); }
+    if (/^\d[a-h]$/.test(c)) return flipD(+c[0]) + c[1];
+    return c;
+  });
+}
+export function flipPf(mask) {
+  let m = mask & ~(0xff << 5);
+  for (let k = 0; k < 8; k++) if (mask & (1 << (5 + k))) m |= 1 << (5 + ((k + PART_FLIP) & 7));
+  return m;
+}
 export function placeFootprint(tpl, x, z, rot, margin = 0, boxesOverride = null) {
   const c = Math.cos(rot), s = Math.sin(rot);
   const src = boxesOverride || footBoxes(tpl);
@@ -394,6 +458,11 @@ export function placeFootprint(tpl, x, z, rot, margin = 0, boxesOverride = null)
 }
 
 const CRANE_LINKS = ['Cr_1', 'Cr_2', 'Cr_3', 'Cr_4'];
+// the effect a building of a script class shows once finished (Building.usl SetReady -> AddFX)
+// (MIRAGE: its SEAS fortress too, Mirage.usl CSeasFortress.SetReady; the light of the healing aura, fx_heal_area: the
+// rays and dots of its emitters and the additive ring, engine/assets.js gsfAdditive)
+export const READY_FX = { CTemple: 'fx_heal_area', CSeasFortress: 'fx_heal_area' };
+
 export class Building extends Entity {
   constructor(world, name, owner, x, z, rot = 0, built = true) {
     super(world, 'building', owner, x, z);
@@ -402,10 +471,11 @@ export class Building extends Entity {
     this.def = D.def(name, owner);
     this.cls = 'BLDG';
     this.level = 1;
+    this.countsInPop = D.isA(name, 'CSwimmingHarbour');
     this.stats = D.stats(name, 1, owner);
     this.maxHp = this.stats.hp;
     this.behaviour = world.behaviourOf ? world.behaviourOf(this) : null;
-    this.rot = rot;
+    this.rot = this.def.wallKind === 'wall' ? 0 : rot;      // wall pieces never turn (their arms follow the wall grid)
     this.progress = built ? 1 : 0;
     this.built = built;
     this.hp = built ? this.maxHp : 1;
@@ -422,7 +492,8 @@ export class Building extends Entity {
     const tpl = this.tpl = world.template(this.stats.gfx, true);
     // wall pieces: hub + the arms towards connected neighbours (wallmap.js); they start as a lone post
     this.armMask = 0;
-    const F = placeFootprint(tpl, x, z, rot, 0, this.def.wallKind === 'wall' ? wallBoxes(0, world.nav.cell) : null);
+    this.wallParts = null; this.pfMask = 0;
+    const F = placeFootprint(tpl, x, z, rot, 0, this.def.wallKind === 'wall' ? WALL_BOXES : null);
     this.boxes = F.boxes;
     this.hx = Math.max(2, F.hx); this.hz = Math.max(2, F.hz);
     const bb = new THREE.Box3().setFromObject(tpl.scene);
@@ -431,6 +502,10 @@ export class Building extends Entity {
     this.radius = Math.max(this.hx, this.hz) * 0.85;
     // harbours: the land part stands at sea level + 1.5 (ServerApp.usl:1158)
     this.baseY = (gx, gz) => (this.def.coastal && world.waterLevel != null ? Math.max(world.height(gx, gz), world.waterLevel + 1.5) : world.height(gx, gz));
+    // the wall-map objects (wall pieces, gates, towers) stand at the tile's height quantised to 2 m (wallmap.js zOf);
+    // traps on the ground
+    const wk = this.def.wallKind;
+    if (world.wallMap && (wk === 'wall' || wk === 'gate' || wk === 'tower')) { const WM = world.wallMap; this.baseY = (gx, gz) => WM.zOf(...WM.tileOf(gx, gz)); }
     this.pos.y = this.baseY(x, z);
     const m = cloneModel(tpl, this.party);
     this.model = m;
@@ -533,6 +608,10 @@ export class Building extends Entity {
   get isDropoff() { return this.built && this.def.delivery && this.def.delivery.length > 0; }
   setBlocking(on) {
     if (on && this.def.gate) return;               // gates never block; the pathfinder asks them (nav.gateBlocks)
+    // traps, fields and the Aje slaughterhouses are walked over (their SetPFBlocking is empty: Building.usl CTrap,
+    // CGrowingField, CAjeUnlimitedBuilding)
+    if (on && this.walkOver === undefined) { const D = this.world.data; this.walkOver = ['CTrap', 'CGrowingField', 'CAjeUnlimitedBuilding'].some((c) => D.isA(this.name, c)); }
+    if (on && this.walkOver) return;
     if (on === this.blocking) return;
     this.blocking = on;
     this.world.nav.mark(this.cells, on ? 1 : -1);
@@ -589,7 +668,7 @@ export class Building extends Entity {
       const tpl = this.world.template(`${tribe}_crane_0${i < 2 ? 1 : 2}`, true);
       if (!tpl) return;
       const o = cloneModel(tpl, this.party);
-      if (o.children[0]) o.children[0].rotation.set(0, 0, 0);    // link frame is the model's Z-up frame
+      toLinkFrame(o);    // link frame is the model's Z-up frame
       l.add(o);
       o.traverse((q) => { if (q.isMesh) applyFow(q.material); });
       this.cranes.push({ obj: o, anim: tpl.clips && tpl.clips.length ? new AnimCtl(o, tpl.clips) : null });
@@ -604,21 +683,28 @@ export class Building extends Entity {
     if (this.owner) this.age = this.owner.epoch();
     if (this.def.wallKind === 'wall') {
       this.model.userData.armMask = this.armMask || 0;
-      // stable geometry variants: the hub by tile, every arm by the edge to its neighbour (both halves match)
-      const [ti, tj] = this.tile || [Math.round(this.pos.x / 8), Math.round(this.pos.z / 8)];
-      const hsh = (a, b) => (((a * 73856093) ^ (b * 19349663)) >>> 0) % 9973;
-      const pick = [hsh(ti, tj)];
-      for (const [di, dj] of DIRS) pick.push(hsh(2 * ti + di, 2 * tj + dj));    // edge midpoint, same from both sides
-      this.model.userData.variant = pick;
+      // the model parts the WallMap named (BuildName): hub and one piece per direction; their variants A..P are the
+      // construction and damage states, picked by applyState
+      this.model.userData.parts = this.wallParts ? new Set(flipParts(this.wallParts)) : new Set(['x2', '0f', '1f', '2f', '3f', '4f', '5f', '6f', '7f']);
     }
-    const key = L + '|' + dmg + '|' + this.age + '|' + (this.armMask || 0) + '|' + (this.model.userData.variant ? this.model.userData.variant[0] : 0);
+    const night = !!this.night;          // its lights (World.nightCheck; parts.js applyNight)
+    const key = L + '|' + dmg + '|' + this.age + '|' + (this.armMask || 0) + '|' + (this.wallParts ? this.wallParts.join('.') : '') + '|' + (this.gateEnds ? 1 : 0) + '|' + night;
     if (key === this.visKey) return;
     this.visKey = key;
     this.dmgStage = dmg;
+    this.model.userData.night = night;
     applyState(this.model, L, dmg, this.age);
-    for (const p of this.parts || []) if (p.tpl.fourcc !== 'Char' && p.tpl.fourcc !== 'Anim') applyState(p.obj, L, dmg, 1);
+    for (const p of this.parts || []) if (p.tpl.fourcc !== 'Char' && p.tpl.fourcc !== 'Anim') { p.obj.userData.night = night; applyState(p.obj, L, dmg, 1); }
     if (this.built && this.cranes.length) this.removeCranes();
-    if (this.built) this.updateTurret();          // "when ready" parts
+    if (this.built) { this.updateTurret(); this.readyFx(); }          // "when ready" parts and effects
+  }
+  // the effect a finished building shows for good (Building.usl SetReady): the temples' healing glow, the area they
+  // heal (CTemple: AddFX("fx_heal_area"))
+  readyFx() {
+    if (this.fxShown) return;
+    this.fxShown = true;
+    const name = READY_FX[this.def.script], tpl = name && this.world.template(name, true);
+    if (tpl) this.obj.add(cloneModel(tpl));
   }
   // animation: work loop while producing (Building.OnWork, 6 s timeout), work_finished afterwards
   idleAnim() {
@@ -626,6 +712,7 @@ export class Building extends Entity {
     if (!a) return;
     if (a.has('standanim')) a.play('standanim');
     else if (a.has('idle')) a.play('idle');
+    else if (a.curName === 'deliver' && a.has('deliver#e')) a.start('deliver#e', false, 1, 0.12, 'e');      // its end part
     else if (a.cur) { a.cur.paused = true; }
   }
   onWork(t) {
@@ -636,9 +723,25 @@ export class Building extends Entity {
     if (w && a.curName !== w) a.play(w, { fade: 0.3 });
     else if (w && a.cur) a.cur.paused = false;
   }
+  // the BuildDown item at the front of the queue (Aje): the building is being taken down (no fighting, no sailing)
+  get dismantling() { const q = this.queue[0]; return q && q.buildDown ? q : null; }
+  set dismantling(v) { /* (saved games of before: the state is the queue's) */ }
+  // a worker delivered here (FightingObj.AcceptDeliveries / task CAcceptDeliveries): a storehouse with a "deliver"
+  // animation plays it - the lumberjack's cottage, the warehouse, the bazaar ... -, every delivery while it runs adds
+  // a loop (at most 5 more)
+  onDelivery() {
+    const a = this.anim;
+    if (!a || !this.built || !a.has('deliver')) return;
+    const lp = a.loops.deliver, loop = lp ? lp[1] - lp[0] : a.duration('deliver');
+    if (a.curName === 'deliver' && this.deliverT > 0) { if (this.deliverN < 5) { this.deliverN++; this.deliverT += loop; } return; }
+    this.deliverN = 0;
+    this.deliverT = (lp ? lp[0] : 0) + loop;
+    a.play('deliver', { restart: true });
+  }
   updateAnim(dt, t) {
     const a = this.anim;
     if (a) {
+      if (this.deliverT > 0 && (this.deliverT -= dt) <= 0 && a.curName === 'deliver') this.idleAnim();
       if (this.workT > 0 && t - this.workT > 6 && (a.curName === 'work' || a.curName === 'work_1')) {
         this.workT = -99;
         if (a.has('work_finished')) a.play('work_finished', { loop: false, onDone: () => this.idleAnim() });
@@ -656,9 +759,10 @@ export class Building extends Entity {
   aimTurret(x, z, dt) {
     const t = this.turret;
     if (!t) return 0;
+    // a turn by a about the link's z turns the turret by -a in the world (the model's root mirrors: game/maps/frame.js)
     const want = Math.atan2(-(x - this.pos.x), -(z - this.pos.z)) - this.rot;
-    let diff = want - t.obj.rotation.z; diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-    t.obj.rotation.z += Math.sign(diff) * Math.min(Math.abs(diff), 2.5 * dt);
+    let diff = want + t.obj.rotation.z; diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+    t.obj.rotation.z -= Math.sign(diff) * Math.min(Math.abs(diff), 2.5 * dt);
     return Math.abs(diff);
   }
   // moving harbours: move the model origin by (dx, dz) and turn it to rot; pos (footprint centre) follows
@@ -674,7 +778,7 @@ export class Building extends Entity {
   // footprint boxes and nav cells for the current position (after sailing)
   relocate() {
     const W = this.world;
-    const F = placeFootprint(this.tpl, this.origin.x, this.origin.z, this.rot, 0, this.def.wallKind === 'wall' ? wallBoxes(this.armMask || 0, W.nav.cell) : null);
+    const F = placeFootprint(this.tpl, this.origin.x, this.origin.z, this.rot, 0, this.def.wallKind === 'wall' ? wallPfBoxes(this.tpl, flipPf(this.pfMask || 0)) : null);
     this.boxes = F.boxes;
     const was = this.blocking;
     if (was) this.setBlocking(false);
@@ -685,12 +789,27 @@ export class Building extends Entity {
     W.reserve(this.cells, 1);
     if (was) this.setBlocking(true);
   }
-  // wall pieces: show the arms of mask (bit d = direction d, wallmap.js) and block only along them
-  setArms(mask) {
-    if (this.def.wallKind !== 'wall' || mask === this.armMask) return;
-    this.armMask = mask;
-    this.model.userData.armMask = mask;
-    this.relocate();
+  // wall pieces (the WallMap's tile update): the model parts to show, the pathfinder mask, the arm bits
+  setParts(parts, pfMask, armMask) {
+    if (this.def.wallKind !== 'wall') return;
+    const k = parts.join('.') + '|' + pfMask;
+    if (k === this.partsKey) return;
+    this.partsKey = k;
+    this.wallParts = parts; this.armMask = armMask;
+    this.model.userData.armMask = armMask;
+    if (pfMask !== this.pfMask) {
+      this.pfMask = pfMask; this.relocate();
+      // longer arms: units standing in them step out (as when a piece starts to block)
+      if (this.blocking && this.world.clearFootprint) this.world.clearFootprint(this, []);
+    }
+    this.updateVisual(true);
+  }
+  setArms(mask) { this.armMask = mask; }
+  // gates: the end pieces (render flags 7 and 11) only on a diagonal gate (Building.usl CGate, client 0x4f93a0)
+  setGateEnds(on) {
+    if (this.gateEnds === on) return;
+    this.gateEnds = on;
+    this.model.userData.gateEnds = on;
     this.updateVisual(true);
   }
   spawnAnim() { if (this.anim && this.anim.has('spawn')) this.anim.play('spawn', { loop: false, restart: true, onDone: () => this.idleAnim() }); }

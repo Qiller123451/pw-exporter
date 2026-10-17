@@ -20,7 +20,7 @@ import math
 import numpy as np
 
 TILE = 8.0
-# directions in map space (x east, y north): d x 45 degrees counter-clockwise from east, the arm bins of the models
+# directions in map space (x east, y south; left-handed like the models' GSF axes): d x 45 degrees from +x towards +y, the arm bins of the models
 DIRS = [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)]
 
 

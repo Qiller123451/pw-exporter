@@ -1,6 +1,7 @@
-"""python -m remake.pipeline <ParaWorld folder or its Data folder> <output folder> [step ...] [--force]
+"""python -m remake.pipeline <ParaWorld folder or its Data folder> <output folder> [step ...] [--force] [--mod=MIRAGE]
 
-Without steps: builds what is out of date (--force: everything). With steps: runs exactly those."""
+Without steps: builds what is out of date (--force: everything). With steps: runs exactly those. --mod: build the
+data of that mod configuration (pwexport/mods.py) instead of the official game."""
 import os
 import sys
 
@@ -22,7 +23,8 @@ if __name__ == '__main__':
         if p != last[0]:
             last[0] = p
             print('[%3d%%] %s' % (p, stage), flush=True)
-    rec = pipeline.build(game.data, args[1], progress=prog, log=print, steps=args[2:] or None, force='--force' in sys.argv)
+    mod = next((a.split('=', 1)[1] for a in sys.argv[1:] if a.startswith('--mod=')), '')
+    rec = pipeline.build(game.data, args[1], progress=prog, log=print, steps=args[2:] or None, force='--force' in sys.argv, mod=mod)
     print('ok' if rec['ok'] else 'FAILED: %s' % rec.get('error'), rec.get('steps'), rec.get('seconds'), 's',
           'up to date: %s' % ', '.join(rec['skipped']) if rec.get('skipped') else '',
           'still out of date: %s' % ', '.join(rec['todo']) if rec.get('todo') else '')

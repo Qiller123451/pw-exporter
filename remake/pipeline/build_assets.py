@@ -10,11 +10,14 @@ try:
     from . import paths
 except ImportError:
     import paths
-from pwexport import gsf as pg, composites       # noqa: E402
+from pwexport import gsf as pg       # noqa: E402
 from pwexport.glb import repack                  # noqa: E402
-from pwexport.install import Install             # noqa: E402
+from pwexport import ula                         # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# the effects the game shows for world events and MIRAGE's moves (see build: these models are always exported)
+GAME_FX = re.compile(r'^(hit_|fx_impact_|spawnping_|readyping_|placeping_|deathping_animal_|levelup_char_fx$|leave_blast$|vehicle_explosion$'
+                     r'|explo_logcannon_building$|fx_poison|fx_ice_freeze$|fx_dust_twister$|rolling_stone$|fire_molotov$|hu_steam_jet_pack_off$|hu_wallstones$)')
 
 
 def load_glb(path):
@@ -46,7 +49,10 @@ KEEP_ANIMS = ['walk_0', 'walk_1', 'walk_2', 'walk_3', 'standanim', 'idle_0', 'id
               'pawing', 'sm_shake_off', 'titan_rage', 'termites', 'tornado', 'shotgun', 'throwdownshot', 'digandhide', 'hideandstand',
               'babbage_minigun', 'lovelace_musket', 'warden_spec', 'aje_velo_strike_0', 'sm_scrunch', 'stomp_harvest', 'sm_attack_back',
               'trex_fm_2', 'harvest', 'sm_01', 'rest', 'nat_throw', 'hit_back', 'getting_up', 'sm_jump_01', 'jump', 'first_strike_0',
-              'victory_0', 'victory_1', 'victory_2', 'jans_anim_0', 'jans_anim_1', 'jans_anim_2', 'tavern_spawn', 'feeding', 'praying_wall']
+              'victory_0', 'victory_1', 'victory_2', 'jans_anim_0', 'jans_anim_1', 'jans_anim_2', 'tavern_spawn', 'feeding', 'praying_wall',
+              # on and off walls, ladders, the siege brachiosaurus, the fall (src/game/systems/wallwalk.js, siege.js)
+              'jump_wall', 'jump_of_wall', 'climb_up_ladder', 'climb_down_ladder', 'hu_high_ladder_climb_up', 'trip',
+              'climb_up_brachio', 'climb_down_brachio', 'hit_front', 'hit_rotate_s']
 
 
 def techtree_models():
@@ -99,6 +105,31 @@ def techtree_models():
     return {g for g in gfx if g and g != '0'}
 
 
+def map_object_models(game, index, classgfx):
+    """the models the objects of every map of the installation name: their own gfx, else the class file's gfx (the
+    fishing nets, effect objects, story characters ... the campaign places)"""
+    out = set()
+    for e in game.maps():
+        try:
+            with open(e['path'], 'rb') as f:
+                root = ula.read_tree(ula.unpack(f.read()), 0)
+        except (OSError, ValueError, ula.FormatError):
+            continue
+        stack, objs = [root], None
+        while stack and objs is None:
+            c = stack.pop()
+            for ch in c.children:
+                if ch.tag == 'Objs' and ch.data is not None:
+                    objs = ch.data
+                stack.append(ch)
+        for o in ula.objects(objs or b''):
+            g = (o['gfx'] or '').lower()
+            g = g if g in index else classgfx.get(o['cls'].lower())
+            if g in index:
+                out.add(g)
+    return out
+
+
 def main(log=print, progress=None):
     CONV, DATA, OUT = paths.CONV, paths.DATA, paths.OUT
     roster = json.load(open(os.path.join(HERE, 'roster.json')))
@@ -131,7 +162,10 @@ def main(log=print, progress=None):
             for a in (w_.get('Animations') or {}).values():
                 n = a.get('_value') if isinstance(a, dict) else a
                 if isinstance(n, str): used_anims.add(n)
-    for parts in composites.normalized().values():          # animations attached parts play (riders, gunners, turrets)
+    for moves in (data.get('finishing') or {}).values():   # finishing moves: the fighters' and the victims' animations
+        for mv in moves:
+            for a_ in mv['a']: used_anims.update(x for x in a_ if x)
+    for parts in paths.composites().values():          # animations attached parts play (riders, gunners, turrets)
         for p_ in parts:
             for a_ in (p_.get('anim'), p_.get('attack_anim')):
                 if a_: used_anims.add(a_)
@@ -148,12 +182,32 @@ def main(log=print, progress=None):
     want |= {'aje_resource_collector_drawbar', 'seas_turret'} | {'aje_resource_collector_' + c for c in 'abcde'}
     # attached parts the scripts put on units and buildings (riders, turrets, build-ups, drawbars, level flags,
     # harbour cranes ... ModelExporter/pwexport/data/composites.json) and the rally point flags
-    for oname, parts in composites.normalized().items():
+    for oname, parts in paths.composites().items():
         if oname in {o.lower() for O_ in TT.values() for typ in ('CHTR', 'ANML', 'VHCL', 'SHIP', 'BLDG') for o in (O_.get(typ) or {})}:
             for p_ in parts:
                 if p_['cond'] not in ('special',): want |= {g for g in [p_['gfx']] + p_['variants'] if g in index}
     want |= {t + '_rally_point' + h for t in ('hu', 'aje', 'ninigi', 'seas') for h in ('', '_harbour')}
-    want |= {k for k in index if k.endswith('_dest') and k[:-5] in want}
+    # the effects the game shows for world events (ui/gamefx.js GAME_FX_MODEL, docs/GAME_EFFECTS.md) and those of
+    # MIRAGE's moves (game/systems/moves_mirage.js MIRAGE_FX_MODELS)
+    want |= {k for k in index if GAME_FX.match(k)}
+    # campaign-only objects: the other objects of the tech tree (story characters of the Special tribe, the undead,
+    # statues, the scorpion ...) and what the maps' objects name. Loaded only when a map or mission uses them ("map").
+    lazy = set()
+    for O_ in TT.values():
+        for typ in ('CHTR', 'ANML', 'VHCL', 'SHIP', 'BLDG'):
+            for n, o in (O_.get(typ) or {}).items():
+                g = o.get('gfx') if isinstance(o, dict) else None
+                g = str((g.get('_value') if isinstance(g, dict) else g) or '').lower()
+                g = g if g in index else cg.get(n.lower())
+                if g in index and g not in want:
+                    lazy.add(g)
+    lazy |= {g for g in map_object_models(paths.game(), index, cg) if g not in want}
+    # the effects the campaign triggers play (EFCT: Scripts/Game/sequencer/particles.txt)
+    lazy |= {g for g, _ in (data.get('particles') or {}).values() if g in index and g not in want}
+    want |= lazy
+    dest = {k for k in index if k.endswith('_dest') and k[:-5] in want}
+    lazy |= {k for k in dest if k[:-5] in lazy and k not in want}
+    want |= dest
     missing = sorted(w for w in want if w not in index)
     want = sorted(w for w in want if w in index)
     # animation sources
@@ -174,6 +228,7 @@ def main(log=print, progress=None):
             progress('Collecting models (%d / %d)' % (wi, len(want)), wi / max(1, len(want)))
         arch, path = index[w]
         j, rest = load_glb(path)
+        renamed = {}
         for im in j.get('images', []):
             uri = im.get('uri')
             if not uri: continue
@@ -188,6 +243,12 @@ def main(log=print, progress=None):
                 open(OUT + '/assets/tex/' + name, 'wb').write(data_)
                 tex_seen[name] = h
             im['uri'] = '../tex/' + name
+            renamed[uri] = im['uri']
+        # the sprite textures of the particle emitters (node extras, pwexport.gsf) move with the images
+        for nd in j.get('nodes', []):
+            for T in ((nd.get('extras') or {}).get('emitter') or {}).get('tiles', []):
+                if T.get('tex') in renamed:
+                    T['tex'] = renamed[T['tex']]
         ex0 = j['nodes'][0].get('extras') or {}
         ws = ex0.get('walksets') or {}
         walkset = ws.get('defn') or ws.get('def') or {}       # FightingObj: "defn" if the model has it, else "def"
@@ -204,7 +265,7 @@ def main(log=print, progress=None):
         ex = j['nodes'][0].get('extras') or {}
         manifest['models'][w] = {'arch': arch, 'anims': anim_src.get(w), 'foliage': 'foliage' in ex,
                                  'nanims': len(j.get('animations', []))}
-        if w not in core and arch in roster.get('archives', []):
+        if w in lazy or (w not in core and arch in roster.get('archives', [])):
             manifest['models'][w]['map'] = True      # map object: loaded only when the map uses it (main.js loadModels)
         if ex.get('pf'): manifest['models'][w]['pf'] = ex['pf']
         if walkset:      # slots 0..2 = walk speeds 1..3 (pwexport.gsf parse_header1)
@@ -218,7 +279,7 @@ def main(log=print, progress=None):
     by_arch = {}
     for w, m in manifest['models'].items():
         if m['nanims']: by_arch.setdefault(m['arch'], []).append(w)
-    archives = Install(DATA).archives()
+    archives = paths.game().archives()
     for arch, names in by_arch.items():
         p = archives.get(arch.lower())
         if not p or not os.path.exists(p): continue

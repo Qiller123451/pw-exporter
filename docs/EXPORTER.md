@@ -258,7 +258,9 @@ Click one to load it:
   ![Forest blocks](screenshots/17_forest_blocks.png)
 * **Light effects** (light cones, glowing windows, lava and fire glow, weapon trails; GSF material flag `0x4`) are
   added to the picture as light, in the model view and on maps. Exported files keep them as ordinary surfaces with
-  the flag in the material extras (`gsf_flags`): glTF has no additive material.
+  the flag in the material extras (`gsf_flags`): glTF has no additive material. The light shapes of the effect
+  decorations (the healing aura `fx_heal_area`, `fx_holy_forest`, the lava glow `ash_lava_glow_01`) carry the
+  selection-volume bit too, but are shown: an additive part of a decoration is not taken for a helper.
 * **Ground tiles of the game** (on by default): the ground is drawn with the setting's pre-blended transition tiles
   exactly as the game picks them (`Texture/Scape/<Setting>/ScapeTexture<Q>.dat`). From afar the viewer shows one
   picture of the whole map; close up it takes every tile straight from the game's atlas pages, so the ground is as
@@ -382,9 +384,11 @@ python -m pwexport.gsf "C:\Games\ParaWorld\Data\Base\GSF\all_animals.gsf" -o raw
 * **FBX is greyed out** – Blender was not found. Install it or set the path to `blender.exe` in the settings.
 * **The model is dark / pink in another program** – keep the `_textures` folder next to OBJ / glTF files, or use
   GLB, which carries its textures inside.
-* **Disk space** – converted models are cached in `%APPDATA%\ParaWorldToolkit\cache` (Linux/macOS:
-  `~/.config/paraworld-toolkit/cache`). Delete the folder any time; it is rebuilt when needed. Set the
-  environment variable `PWTOOLKIT_HOME` to keep settings and cache somewhere else (e.g. on a USB stick).
+* **Disk space** – converted models are cached in the toolkit's data folder, `cache\` (by default
+  `%APPDATA%\ParaWorldToolkit\cache`, Linux/macOS `~/.config/paraworld-toolkit/cache`). Delete it any time; it is
+  rebuilt when needed. **Toolkit data → Change** at the bottom of the launcher moves the data folder, e.g. to another
+  drive (or set the environment variable `PWTOOLKIT_DATA`); `PWTOOLKIT_HOME` keeps settings and cache somewhere else
+  (e.g. on a USB stick).
 * **Mods** – *All models* lists the models of every folder in `Data\<mod>\GSF` (BoosterPack 1/3, MIRAGE, Wintermod …)
   whatever is chosen in the title bar; a plain name means the copy of the chosen configuration. A unit you miss in
   the *Units & buildings* list probably belongs to an add-on: pick it in the **Mod** selector (the base game alone

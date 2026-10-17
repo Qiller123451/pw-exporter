@@ -34,10 +34,9 @@ OBJECT_DATA = 'Server/settings/Techtree/_AI_ObjectData.txt'
 
 # ------------------------------------------------------------------ files
 def _mods():
-    """the official mod folders of the installation in override order (Base, BoosterPack1): the rules come from
-    them only, as for the tech tree (pwexport.install)"""
-    from pwexport.install import Install
-    return list(Install(paths.DATA).mods)
+    """the Data folders of the configuration in override order (Base, BoosterPack1 / a mod's chain): the rules
+    come from them only, as for the tech tree (paths.game)"""
+    return list(paths.game().mods)
 
 
 def _find(rel):
@@ -750,7 +749,8 @@ def point_buy(path):
             continue
         ch = n.get('Chars') or {}
         rs = n.get('Resources') or {}
-        out[credits] = {'chars': [v for k, v in ch.items() if k != '_value' and isinstance(v, str)],
+        # chars: {key: class}; the key is the army pyramid slot (StartLocation.usl reads it as one: 0-24 level 1 ...)
+        out[credits] = {'chars': {k: v for k, v in ch.items() if k != '_value' and isinstance(v, str)},
                         'resources': {k: int(_num(rs.get(k))) for k in ('food', 'wood', 'stone', 'iron')}}
     return out
 

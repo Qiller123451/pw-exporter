@@ -1,3 +1,4 @@
+import { Stats } from './stats.js';
 import { WallMap } from './wallmap.js';
 // The game simulation.
 //
@@ -22,6 +23,7 @@ import { WallMap } from './wallmap.js';
 import * as THREE from 'three';
 import { AMPHIBIOUS, Unit, Building, ResNode } from './entities.js';
 import { NavGrid, SpatialHash } from './nav.js';
+import { DELAYED } from './delayed.js';
 import { cloneModel } from '../engine/assets.js';
 import { applyFow } from '../engine/terrain.js';
 import { Effects, active } from './systems/effects.js';
@@ -31,11 +33,35 @@ import { Construction } from './systems/construction.js';
 import { Production } from './systems/production.js';
 import { Healing } from './systems/healing.js';
 import { Moves, MOVES } from './systems/moves.js';
+import { MirageMoves } from './systems/moves_mirage.js';
 import { BuildingBehaviours } from './systems/buildings.js';
 import { Animals } from './systems/animals.js';
+import { Landmarks } from './systems/landmarks.js';
+import { Items } from './systems/items.js';
+import { Finishing } from './systems/finishing.js';
+import { WallWalk } from './systems/wallwalk.js';
+import { Siege } from './systems/siege.js';
+import { GameOver } from './systems/gameover.js';
 import { Naval } from './systems/naval.js';
 import { Transport } from './systems/transport.js';
 import { Scripting } from './scripting.js';
+import { applyNight } from '../engine/parts.js';
+
+const VIRTUAL_FACTOR = 144, DAY = 86400;      // CTimeMgr (PWServer.exe 0x7bcab0: factor 144.0, day length 86400.0)
+
+// the wall class table (gamedata "wallClasses", pipeline/build_data.py wall_classes); older data: every wall-placer
+// class by its kind, class 1
+function wallClassTable(D) {
+  const t = D && D.extra && D.extra.wallClasses;
+  if (t && Object.keys(t).length) return t;
+  const out = {}, T = { wall: 0, gate: 1, tower: 2, trap: 3 }, R = { Hu: 0, Aje: 1, Ninigi: 2, SEAS: 3 };
+  if (D && D.index) for (const [name, ix] of D.index) {
+    if (ix.type !== 'BLDG') continue;
+    const d = D.def(name, null);
+    if (d && d.wallKind in T) out[name.toLowerCase()] = d.wallKind === 'trap' ? [1, 0, 3] : [R[ix.tribe] ?? 0, 1, T[d.wallKind]];
+  }
+  return out;
+}
 
 export class World {
   // opts: scene, data (Rules), templates(name, soft), height(x, z), size, playHalf, fx, audio, props, foliage, fow,
@@ -48,36 +74,88 @@ export class World {
     this.applyFow = applyFow;
     this.rules = opts.rules || {};
     this.time = 0;
+    // the time of day (CTimeMgr: virtual seconds run 144 times as fast as the game's, a day is 86400 of them = 10
+    // minutes; day from 6:00 to 18:00 - SetVirtualDayOffset(0.25), SetVirtualNightOffset(0.75); the level's start
+    // time, 12:00 when it has none). nightFn: a mode with a night of its own (the sequel's missions)
+    this.dayStart = opts.startTime != null ? opts.startTime : 12 * 3600;
+    this.nightFn = null;
     this.players = [];
     this.units = []; this.buildings = []; this.resources = []; this.projectiles = [];
     this.uHash = new SpatialHash(12); this.bHash = new SpatialHash(16); this.rHash = new SpatialHash(12);
     this.nav = new NavGrid(this.size, 2);
     this.reserved = new Uint8Array(this.nav.n * this.nav.n);   // building footprints (also before they block the pathfinder)
     this.events = [];
+    this.stats = new Stats(this);  // the game's statistics (game/stats.js): every event passes it
     this.dead = [];
-    this.timers = [];              // later(): [time, fn]
+    this.timers = [];              // later(): [time, kind, args]
+    this.hooks = {};               // functions a game mode adds: damage(dmg, attacker, victim) -> true = handled; lethal(victim, attacker) -> true = it lives on at 1 hp; power(worker, plant, seconds)
     this.effects = [];             // periodicEffect()
     this.spirits = [];             // souls of fallen units (Aje shaman: Resurrect)
+    this.watchers = [];            // {player, host, until}: a player sees what the host sees (MIRAGE parasite)
     this.wildNests = [];           // nests of original maps: respawn wild animals (systems/animals.js)
+    this.wells = [];               // healing wells, lakes of healing / damage, the weather program (systems/landmarks.js)
+    this.lakes = [];
+    this.items = [];               // items (artefacts) on the map or carried (u.item): systems/items.js
+    this.weather = null;
+    this.regionOf = null;          // name -> the map's region (campaign/regions.js Region; set by the game's setup)
     this.reveals = [];             // revealArea(): fog of war circles given to players (scripting.js)
     this.standIns = new Map();     // class (lower case) -> model used when the class's own model does not exist
     this.onEntity = null;          // hook(entity): called for every unit / building created (campaign registry)
     this.wallMap = new WallMap(...(opts.wallGrid || [4, 4]));   // the 8 m wall grid (game/wallmap.js)
+    this.wallMap.world = this;
+    this.wallMap.classes = wallClassTable(opts.data);
     this.playHalf = opts.playHalf || this.size / 2;
     const h = this.playHalf;
     this.play = opts.play || { x0: -h, x1: h, z0: -h, z1: h };   // playable rectangle
     this.waterNav = null;                                       // ships / swimmers (markWater)
+    this.setting = opts.setting || 'Jungle';                    // the map's landscape (Jungle, Northland, Savanna, Icewaste, Ashvalley)
     // the setting's wood log carried by workers (product_wood_jun / _nor / _sav / _ice / _ash)
     const key = { Jungle: 'jun', Northland: 'nor', Savanna: 'sav', Icewaste: 'ice', Ashvalley: 'ash' }[opts.setting || 'Jungle'];
     this.productWood = this.templates && this.templates('product_wood_' + key, true) ? 'product_wood_' + key : 'product_wood_jun';
   }
   // height a unit stands at: the ground, or the water surface for ships (swimming animals a little below it)
   groundY(u) {
+    if (u.wallH != null) return u.wallH;                 // jumping on / off a wall, falling (systems/wallwalk.js)
+    if (u.onWall) return this.wallY(u);                  // on a wall's walkway
     const g = this.height(u.pos.x, u.pos.z);
     if (this.waterLevel == null) return g;
     if (u.naval) return Math.max(g, this.waterLevel - (u.cls === 'SHIP' ? 0.1 : 0.5));
     if (u.amphib) return Math.max(g, this.waterLevel - 0.2);
     return g;
+  }
+  // the land a point belongs to (the computer player's "island", GetDynamicIslandIdForChar [?engine]): the connected
+  // parts of the land grid where only the terrain counts - cliffs and water part them, buildings and trees don't.
+  // -> a number (-1: in the sea / on a cliff with no land within 8 m)
+  landIsland(x, z) {
+    const nav = this.nav, n = nav.n;
+    const bad = (k) => (this.steepCell && this.steepCell[k]) || (this.wetCell && this.wetCell[k]);
+    if (!this._island) {
+      const lab = new Int32Array(n * n).fill(-1);
+      let id = 0;
+      const st = [];
+      for (let k0 = 0; k0 < n * n; k0++) {
+        if (lab[k0] >= 0 || bad(k0)) continue;
+        lab[k0] = id; st.push(k0);
+        while (st.length) {
+          const k = st.pop(), i = k % n, j = (k - i) / n;
+          if (i > 0 && lab[k - 1] < 0 && !bad(k - 1)) { lab[k - 1] = id; st.push(k - 1); }
+          if (i < n - 1 && lab[k + 1] < 0 && !bad(k + 1)) { lab[k + 1] = id; st.push(k + 1); }
+          if (j > 0 && lab[k - n] < 0 && !bad(k - n)) { lab[k - n] = id; st.push(k - n); }
+          if (j < n - 1 && lab[k + n] < 0 && !bad(k + n)) { lab[k + n] = id; st.push(k + n); }
+        }
+        id++;
+      }
+      this._island = lab;
+    }
+    const k = nav.idx(x, z);
+    if (this._island[k] >= 0) return this._island[k];
+    const i0 = k % n, j0 = (k - i0) / n;
+    for (let r = 1; r <= 4; r++) for (let j = j0 - r; j <= j0 + r; j++) for (let i = i0 - r; i <= i0 + r; i++) {
+      if (i < 0 || j < 0 || i >= n || j >= n) continue;
+      const l = this._island[j * n + i];
+      if (l >= 0) return l;
+    }
+    return -1;
   }
   // the navigation grid a unit moves on: ships and swimming animals sail the water grid, everything else walks
   navFor(u) {
@@ -92,12 +170,31 @@ export class World {
     if (!A) { A = this._amp = new NavGrid(this.size, 2); A.ampT = -99; A.gateAt = L.gateAt; }
     const key = L.version * 100003 + Wn.version;
     if (A.key !== key && this.time - A.ampT > 2) {
-      for (let k = 0; k < A.block.length; k++) A.block[k] = Math.min(L.block[k], Wn.block[k]);
+      const S = this.shoreCell;
+      for (let k = 0; k < A.block.length; k++) A.block[k] = Math.min(S ? L.block[k] - S[k] : L.block[k], Wn.block[k]);
       A.key = key; A.ampT = this.time; A.version++;
     }
     return A;
   }
   // water of the original maps (level in m): land units can wade 0.4 m deep, ships need 1.5 m
+  // original maps: land units walk where the map's pathfinder grid lets them (maps/ula.js pathing) - not over
+  // mountains and cliffs, through shallow water up to about 0.6 m (fords) but not up the steep shore. steepCell marks
+  // the dry cells it blocks (coastal buildings may stand on them, construction.js); the ford cells are no longer wet.
+  markTerrain(walkable) {
+    const nav = this.nav, n = nav.n;
+    this.steepCell = new Uint8Array(n * n);
+    this.shoreCell = this.waterNav ? new Uint8Array(n * n) : null;     // steep cells at the waterline: amphibians go there
+    for (let k = 0; k < n * n; k++) {
+      const [x, z] = nav.center(k), ok = walkable(x, z);
+      if (this.wetCell && this.wetCell[k]) {
+        if (ok) { nav.block[k]--; this.wetCell[k] = 0; }
+      } else if (!ok) {
+        nav.block[k]++; this.steepCell[k] = 1;
+        if (this.shoreCell && this.height(x, z) < this.waterLevel + 2) this.shoreCell[k] = 1;
+      }
+    }
+    nav.version++;
+  }
   markWater(level) {
     this.waterLevel = level;
     const nav = this.nav, n = nav.n;
@@ -127,9 +224,12 @@ export class World {
   template(name, soft) { return this.templates(name, soft); }
   reserve(cells, d) { for (const k of cells) this.reserved[k] = Math.max(0, this.reserved[k] + d); }
   templateInfo(name) { if (!name) return null; const t = this.templates(name, true); return t ? t.info : null; }
-  emit(type, data) { this.events.push({ type, ...data }); }
-  // run fn after `sec` game seconds (hit delays, knockbacks, delayed effects)
-  later(sec, fn) { if (sec <= 0) { fn(); return; } this.timers.push([this.time + sec, fn]); }
+  emit(type, data) { const e = { type, ...data }; this.events.push(e); this.stats.on(e); }
+  // run DELAYED[kind](this, args) after `sec` game seconds (hit delays, knockbacks, delayed effects: game/delayed.js)
+  later(sec, kind, args = {}) {
+    if (!DELAYED[kind]) throw new Error('unknown delayed call ' + kind);
+    if (sec <= 0) DELAYED[kind](this, args); else this.timers.push([this.time + sec, kind, args]);
+  }
   // sound of an animation event, only for entities the player can see
   animSound(e, ev) {
     if (!this.audio || !e.obj || !e.obj.visible || e.onScreen === false) return;
@@ -159,7 +259,7 @@ export class World {
       // Aje tracker dino (Animal.usl CTrackerDino): acts on its own, scouts forward, attacks enemies within 50 m, dies after 180 s
       if (this.data.script(name) === 'CTrackerDino') {
         u.autonomous = true; u.tracker = true; u.task = { type: 'roam' };
-        this.later(180, () => { if (u.alive) this.kill(u, null); });
+        this.later(180, 'expire', { u });
       }
     }
     if (this.onEntity) this.onEntity(u);
@@ -182,7 +282,9 @@ export class World {
     const p = u.owner;
     if (!p || !p.tt || !u.def) return;
     for (const f of this.data.levelFilters(u.name, level)) if (!f.includes('_Bonus')) (on ? p.tt.enable(f) : p.tt.disable(f));
-    if (level === 5 && !u.def.unique) {
+    // level 5: the "chief" bonus of the class, heroes' included (FightingObj.usl SetLevelFilter; only the AllNonHeroes
+    // filters skip heroes): Ada's faster production, Cole's tougher infantry, Taslow's building loot ...
+    if (level === 5) {
       const f = `${u.def.tribe}/Upgrades/${u.name}/Chief_Bonus`;
       on ? p.tt.enable(f) : p.tt.disable(f);
     }
@@ -194,12 +296,27 @@ export class World {
     this.bHash.insert(b);
     this.emit('ground', { x: b.pos.x, z: b.pos.z, r: b.radius + 2 });   // ground cover (grass) under it goes away
     if (b.def.wallKind) this.wallMap.add(b);                            // walls, gates, towers, traps: the wall grid
+    // the Aje's floating harbour counts in the unit limit and has a card in the pyramid from its site on
+    // (CSwimmingHarbour.DoesCountInUnitLimit; Building.OnInit AddUnit)
+    if (owner && b.countsInPop) { owner.units++; owner.atLevel[b.level - 1]++; }
     if (built) {
       this.entityFilters(b, true);
       this.recomputeCaps(owner);
       if (b.behaviour && b.behaviour.built) b.behaviour.built(b, this);
     }
     if (this.onEntity) this.onEntity(b);
+    return b;
+  }
+  // a building a script puts down ready-made, like one built in the game: the ground levels to it and takes its
+  // brush's materials, the plants under it go (systems/construction.js startConstruction; the sequel's starts)
+  placeAdapted(name, owner, x, z, rot = 0, built = true) {
+    const def = this.data.def(name, owner);
+    if (this.adaptTerrain && def && !def.coastal && def.wallKind !== 'wall' && def.wallKind !== 'gate') {
+      const st = this.data.stats(name, 1, owner);
+      if (st && st.gfx) this.adaptTerrain(st.gfx, x, z, rot);
+    }
+    const b = this.placeBuilding(name, owner, x, z, rot, built);
+    if (this.clearVegetation && b) this.clearVegetation(x, z, b.hx ? Math.hypot(b.hx, b.hz) : b.radius);
     return b;
   }
   addResource(type, res, x, z, amount, opts) {
@@ -210,10 +327,11 @@ export class World {
   }
   entitiesOf(p) { return [...this.units.filter((u) => u.alive && u.owner === p), ...this.buildings.filter((b) => b.alive && b.owner === p)]; }
   // the game is won by player p (warp gate countdown); everybody else loses
-  victory(p) { p.won = true; for (const o of this.players) if (!p.isFriend(o)) o.defeated = true; this.emit('victory', { player: p }); }
+  // the warp gate's countdown (OnFireWarpGateTimer): its owner and the owner's friends win, everybody else loses
+  victory(p) { for (const o of this.players) { if (o === p || p.isFriend(o)) o.won = true; else o.defeated = true; } this.emit('victory', { player: p }); }
 
   // ------------------------------------------------------------------ orders (from the player or the AI)
-  // o.type: move | attackmove | attack | stop | hold | gather | build | repair | deliver | heal | board | unload
+  // o.type: move | attackmove | attack | stop | hold | gather | build | repair | deliver | heal | board | unload | fountain | pickup
   order(units, o) {
     for (const u of units) {
       if (!u.alive || u.kind !== 'unit' || u.autonomous || u.parked) continue;
@@ -221,10 +339,20 @@ export class World {
       if (u.name === 'aje_torpedo_turtle' && o.type !== 'kill') continue;                          // obeys nothing but Kill
       if (u.inside) { if (o.type === 'unload') this.leaveTransport(u); continue; }
       if (active(u, 'trapped', this.time) && u.st.trapWhy === 'dig') continue;
+      if (active(u, 'deaf', this.time) && o.type !== 'kill') continue;     // deafened: no orders (MIRAGE FO:14376)
+      if (u.flyChange > this.time) continue;                               // rising / landing jetpack (MIRAGE Hu.usl:165)
       if (u.st.camo.has('entr')) this.digOut(u);
       if (u.st.camo.has('aje') && o.type !== 'move') this.setCamo(u, 'aje', false);
       this.releaseTask(u);
       u.busyAnim = false;
+      // a new order drops the queued wall tiles (Q_Build: G.placeWall), unless it is the queue's own first step
+      if (!o.keepBuildQueue) u.buildQueue = null;
+      // jumping on or off a wall: the order comes after the landing; on a wall: systems/wallwalk.js
+      if (u.wjump) { u.wjump.then = o; continue; }
+      if (u.climbing) { u.task.then = o; continue; }
+      if (u.onWall && this.wallOrder(u, o)) continue;
+      // a docked siege vehicle undocks first (siege.js); its passengers still get out at once
+      if ((u.docked || (u.task.type === 'dock' && u.task.phase === 'docking')) && o.type !== 'unload') { this.undock(u, o); continue; }
       const user = o.auto ? false : true;
       switch (o.type) {
         case 'move': case 'attackmove':
@@ -232,8 +360,18 @@ export class World {
           u.setPath(o.x, o.z);
           u.anchor.set(o.x, o.z);
           break;
+        // to and fro between points, fighting what comes along (FightingObj AddPatrolPoint: Ctrl + right-click)
+        case 'patrol': {
+          const [x, z] = o.pts[o.i % o.pts.length];
+          u.task = { type: 'attackmove', x, z, user, then: { ...o, i: o.i + 1 } };
+          u.setPath(x, z);
+          u.anchor.set(x, z);
+          break;
+        }
         case 'attack':
           if (o.target && o.target.kind === 'res') { this.startGather(u, o.target); break; }
+          // a siege tower / brachiosaurus told to attack a wall docks to it (VH:511-514)
+          if (this.canDock(u) && o.target && o.target.def && o.target.def.wallKind === 'wall') { this.dockOrder(u, o.target, user); break; }
           // an order to attack a neutral player's object makes both players hostile; a friend's object is never
           // attacked (FightingObj.usl:6594-6617). Automatic fights never get here with a non-hostile target.
           if (o.target && o.target.owner && u.owner && o.target.owner !== u.owner && !u.owner.isEnemy(o.target.owner)) {
@@ -249,14 +387,33 @@ export class World {
         case 'repair': u.task = { type: 'idle', user }; this.startRepair(u, o.target); break;
         case 'deliver': u.task = { type: 'gather', res: u.carry ? u.carry.res : 'food', phase: 'deliver', drop: o.target || null, user }; break;
         case 'heal': if (u.stats.heal) { u.task = { type: 'heal', target: o.target, user }; u.repathT = 0; } break;
-        case 'board': if (this.canBoard(u, o.target)) u.task = { type: 'board', target: o.target, user }; break;
+        case 'board':
+          if (o.target && o.target.docked && this.isSiegeBrachio(o.target)) { this.climbSiege(u, o.target, user); break; }   // up the docked brachiosaurus (CH:351)
+          if (this.canBoard(u, o.target)) u.task = { type: 'board', target: o.target, user };
+          break;
+        case 'dock': this.dockOrder(u, o.target, user); break;
+        case 'fountain': if (this.canUseWell(u, o.target)) u.task = { type: 'fountain', target: o.target, user }; break;
+        case 'pickup': if (this.canCarry(u) && o.target && o.target.item) u.task = { type: 'pickup', target: o.target, user }; break;
+        case 'use': this.useWall(u, o.target, user); break;                                  // up onto an own wall (wallwalk.js)
+        case 'climb': this.climbSiege(u, o.target, user); break;                              // a ladder / docked tower (siege.js)
         case 'unload': if (u.passengers) this.unloadAll(u, false); break;
         case 'trade': this.startTrade(u, o.target); break;
+        case 'rallyJob': u.task = { type: 'idle' }; this.rallyJob(u, o.x, o.z); break;      // a new worker at its rally point
       }
     }
   }
+  // Shift + right-click: the order comes after the walks the unit has (HandleWalkCommand /Queued); false: it has none
+  queueOrder(u, o) {
+    let t = u.task;
+    if (!u.alive || u.kind !== 'unit' || (t.type !== 'move' && t.type !== 'attackmove' && !(t.type === 'attack' && t.amove))) return false;
+    while (t.then && t.then.type !== 'patrol') t = t.then;
+    if (t.then) return false;
+    t.then = o;
+    return true;
+  }
   releaseTask(u) {
     const t = u.task;
+    if (t.type === 'cast') this.castCancel(u);
     if (t.node) t.node.workers.delete(u);
     if (t.building) { t.building.builders.delete(u); t.building.freeSlot(u); }
     if (t.farm) t.farm.workers.delete(u);
@@ -269,29 +426,47 @@ export class World {
     if (!u.alive) return this.deadUnitUpdate(u, dt);
     if (u.parked) return;                          // taken out of the world by a mission (scripting.js setParked)
     if (u.inside) { this.passengerUpdate(u, dt); return; }
+    if (u.tpl && u.tpl.fourcc === 'Ship') { this.nightCheck(u, dt); applyNight(u.model, u.night); }    // a ship's lamps
     if (u.invulnT > 0) u.invulnT -= dt;
     if (u.st.poison) this.poisonUpdate(u);
+    if (u.fatigue > 0) this.fatigueUpdate(u, dt);                   // a wild animal that fled (systems/animals.js)
     if (u.pending) { u.pending.t -= dt; if (u.pending.t <= 0) { const p = u.pending; u.pending = null; this.fire(u, p.w, p.target); } }
     if (u.queue.length) this.productionUpdate(u, dt);
     // knockback slide / jetpack jump
-    if (u.knock) { const k = u.knock; const s = Math.min(dt, k.t); u.pos.x += k.vx * s; u.pos.z += k.vz * s; k.t -= dt; if (k.t <= 0) u.knock = null; }
+    // (a throw ends at a cliff, a building or a closed gate: it does not carry the unit up or into it)
+    if (u.knock) {
+      const k = u.knock, s = Math.min(dt, k.t), nx = u.pos.x + k.vx * s, nz = u.pos.z + k.vz * s;
+      if (u.flying || u.canWalkInto(this.navFor(u), nx, nz)) { u.pos.x = nx; u.pos.z = nz; k.t -= dt; } else k.t = 0;
+      if (k.t <= 0) u.knock = null;
+    }
     if (u.jumpFx) {
       const j = u.jumpFx; j.t += dt; const f = Math.min(1, j.t / j.T);
       u.pos.x = j.from.x + (j.to.x - j.from.x) * f; u.pos.z = j.from.z + (j.to.z - j.from.z) * f;
       u.jumpH = Math.sin(f * Math.PI) * Math.min(20, j.T * 8);
       if (f >= 1) { u.jumpFx = null; u.jumpH = 0; u.anchor.set(u.pos.x, u.pos.z); }
     }
+    // rising / sinking (jetpack flight, Babbage going up, the exo suit coming down)
+    if (u.lift) { const l = u.lift; l.t += dt; const f = Math.min(1, l.t / l.T); u.liftH = l.from + (l.to - l.from) * f; if (f >= 1) u.lift = null; }
     // trapped, frozen, stunned: no actions
     if (active(u, 'trapped', this.time)) { u.path = []; u.vel.set(0, 0, 0); this.animTick(u, dt); return; }
+    if ((u.onWall || u.wjump || u.climbing) && this.wallPreUpdate(u, dt)) { this.animTick(u, dt); return; }
     if ((this.waterNav || u.naval) && this.navalUnitUpdate(u, dt)) { this.animTick(u, dt); return; }
     const t = u.task;
     switch (t.type) {
       case 'heal': this.healUpdate(u, dt); break;
       case 'idle': case 'hold': this.idleUpdate(u, dt); break;
       case 'move': case 'attackmove': {
+        // a gate of the enemy shuts the way (Unit.setPath): break it, then go on
+        const bg = u.breach;
+        if (bg && (!bg.alive || !u.world.nav.gateAt.size)) u.breach = null;
+        else if (bg && bg.surfDist(u.pos.x, u.pos.z) < 10) {
+          u.breach = null;
+          u.task = { type: 'attack', target: bg, amove: [t.x, t.z], then: t.then, user: false, auto: true };
+          break;
+        }
         if (t.type === 'attackmove') {
           u.scanT = (u.scanT || 0) - dt;
-          if (u.scanT <= 0) { u.scanT = 0.4; const e = this.findTarget(u, Math.max(30, this.alarmRange(u))); if (e) { u.task = { type: 'attack', target: e, amove: [t.x, t.z], user: false, auto: true }; break; } }
+          if (u.scanT <= 0) { u.scanT = 0.4; const e = this.findTarget(u, Math.max(30, this.alarmRange(u))); if (e) { u.task = { type: 'attack', target: e, amove: [t.x, t.z], then: t.then, user: false, auto: true }; break; } }
         }
         const sp = u.steer(dt, u.task.user && !t.back && !t.slow ? u.runSpeed : u.speed, 0.8);
         u.moveAnim(sp, u.task.user && !t.slow && u.runSpeed > u.speed * 1.2);
@@ -305,8 +480,15 @@ export class World {
       case 'flee': this.fleeUpdate(u, dt); break;
       case 'special': this.specialUpdate(u, dt); break;
       case 'board': this.boardUpdate(u, dt); break;
+      case 'fountain': this.fountainUpdate(u, dt); break;
+      case 'pickup': this.pickupUpdate(u, dt); break;
+      case 'wall': this.wallUpdate(u, dt); break;
+      case 'climb': this.climbUpdate(u, dt); break;
+      case 'dock': this.dockUpdate(u, dt); break;
+      case 'finish': this.finishUpdate(u, dt); break;
       case 'trade': this.tradeUpdate(u, dt); break;
       case 'entrench': u.vel.set(0, 0, 0); break;
+      case 'cast': this.castUpdate(u, dt); break;
     }
     this.animTick(u, dt);
   }
@@ -323,6 +505,7 @@ export class World {
     u.idleTick(dt);
     if (u.wild || u.autonomous) { u.task = { type: 'roam' }; return; }
     if (u.name === 'ninigi_ninja' && !u.st.camo.has('disg') && this.time > (u.disgT || 0) && this.data.invented(u.rulesOwner(), 'disguise', u.owner.tribe, u)) u.st.camo.add('disg');
+    if (t.victoryAt != null && this.time >= t.victoryAt) { t.victoryAt = null; this.victoryAnim(u); }
     u.scanT = (u.scanT || Math.random()) - dt;
     if (u.scanT > 0) return;
     u.scanT = 0.9 + Math.random() * 0.2;
@@ -341,14 +524,41 @@ export class World {
       if (e1) this.engage(u, e1, {});
       return;
     }
-    const hold = t.type === 'hold' || u.stance === 0;
+    const hold = t.type === 'hold' || u.stance === 0 || !!u.onWall;      // on a wall: no walk back to the post (FO:2393)
     const r = hold ? this.attackRangeOf(u, cs) + u.radius + 2 : Math.max(this.attackRangeOf(u, cs), 30);
     const e = this.findTarget(u, r, { leash: !hold, filter: hold ? (x) => this.rangeZone(u, x).zone > 0 : null });
-    if (e) this.engage(u, e, { hold });
+    if (e) { this.engage(u, e, { hold }); return; }
+    // an enemy within the alarm range but not taken on: alarmed (FightingObj.SetAlarmed, CAlarmed)
+    const a = this.findTarget(u, this.alarmRange(u), {});
+    if (a) this.alarmUnit(u, a);
+  }
+  // SetAlarmed / CAlarmed: the unit turns to the enemy and threatens it once - characters jans_anim_0 .. 2, animals
+  // "menace" (not in the water) - again at most every 10 s
+  alarmUnit(u, e) {
+    if (this.time < (u.alarmT || 0) || u.busyAnim || u.inside) return;
+    u.alarmT = this.time + 10;
+    const name = u.cls === 'CHTR' ? 'jans_anim_' + Math.floor(Math.random() * 3) : u.swimming ? '' : 'menace';
+    if (!name || !u.anim.has(name)) return;
+    u.face(e.pos.x, e.pos.z, 1, 100);
+    u.busyAnim = true;
+    u.anim.play(name, { loop: false, restart: true, onDone: () => { u.busyAnim = false; } });
+    this.later(Math.max(0.5, u.anim.duration(name)) + 0.2, 'animDone', { u, name });
+  }
+  // PlayRandomVictoryAnim: no enemy around - one time in four victory_0 .. 2
+  victoryAnim(u) {
+    if (u.busyAnim || this.findTarget(u, this.alarmRange(u), {})) return;
+    if (Math.random() >= 0.25) return;
+    const name = 'victory_' + Math.floor(Math.random() * 3);
+    if (!u.anim.has(name)) return;
+    const loops = 1 + Math.floor(Math.random() * 2), d = u.anim.duration(name);
+    u.busyAnim = true;
+    u.anim.play(name, { restart: true });
+    this.later(Math.max(0.5, d * loops), 'animDone', { u, name });
   }
   deadUnitUpdate(u, dt) {
     u.deadT += dt;
     u.anim.update(dt);
+    if (u.finish) this.finishedUpdate(u);              // the victim of a finishing move (systems/finishing.js)
     const stay = u.corpseNode ? (u.corpseGone ? 0 : 1e9) : 12;
     if (u.corpseNode && u.corpseNode.alive) { u.corpseNode.rotT -= dt; if (u.corpseNode.rotT <= 0) this.depleteNode(u.corpseNode); }
     if (u.comp && u.comp.wagon) u.comp.syncWagon(0);
@@ -357,6 +567,20 @@ export class World {
   }
 
   // ------------------------------------------------------------------ per-building update
+  // the time of day in seconds (0 .. 86400) and whether it is night (CTimeMgr.IsVirtualDay)
+  dayTime() { return (((this.dayStart + this.time * VIRTUAL_FACTOR) % DAY) + DAY) % DAY; }
+  isNight() {
+    if (this.nightFn) return !!this.nightFn();
+    const f = this.dayTime() / DAY;
+    return f < 0.25 || f > 0.75;
+  }
+  // a finished building (Building.usl NIGHT_TIMER) or a ship (Ship.usl TIMER_NIGHT) looks at the time of day every
+  // 20 s and switches its lights (parts.js applyNight); it starts with them off
+  nightCheck(e, dt) {
+    if ((e.nightT = (e.nightT || 0) + dt) < 20) return;
+    e.nightT = 0;
+    e.night = this.isNight();
+  }
   buildingUpdate(b, dt) {
     if (!b.alive) {
       if (b.removed) return;
@@ -367,10 +591,10 @@ export class World {
     }
     if (b.parked) return;
     b.updateAnim(dt, this.time);
+    if (b.built) this.nightCheck(b, dt);
     b.updateVisual();
     this.damageFx(b, dt);
     if (!b.built) { this.constructionUpdate(b, dt); return; }
-    if (b.dismantling) { this.buildDownUpdate(b, dt); return; }
     this.productionUpdate(b, dt);
     this.towerUpdate(b, dt);
     if (this.waterNav) this.harbourUpdate(b, dt);
@@ -398,7 +622,7 @@ export class World {
     if (!this._resBy) this._resBy = new Map();      // unit name -> has Resurrect
     const has = (u) => {
       const k = u.name + '|' + (u.level || 1);
-      if (!this._resBy.has(k)) this._resBy.set(k, this.movesOf(u).some((a) => a.id === 'Resurrect'));
+      if (!this._resBy.has(k)) this._resBy.set(k, this.movesOf(u).some((a) => a.id === 'Resurrect' || a.id === 'reanimation'));
       return this._resBy.get(k);
     };
     const v = this.units.some((u) => u.alive && u.owner === p && u.cls === 'CHTR' && has(u));
@@ -416,7 +640,8 @@ export class World {
     }
     this.spirits = this.spirits.filter((s) => s.alive);
   }
-  nearestSpirit(p, x, z, r = 8) { let best = null, bd = r; for (const s of this.spirits) { if (s.owner !== p || !s.alive) continue; const d = Math.hypot(s.pos.x - x, s.pos.z - z); if (d < bd) { bd = d; best = s; } } return best; }
+  // (p null: any player's spirit)
+  nearestSpirit(p, x, z, r = 8) { let best = null, bd = r; for (const s of this.spirits) { if ((p && s.owner !== p) || !s.alive || s.busy) continue; const d = Math.hypot(s.pos.x - x, s.pos.z - z); if (d < bd) { bd = d; best = s; } } return best; }
   // an entity whose tree changed re-reads its values (checked every half second)
   refreshTick() {
     const changed = (e) => {
@@ -435,12 +660,17 @@ export class World {
     // delayed actions
     if (this.timers.length) {
       const due = this.timers.filter((x) => x[0] <= this.time);
-      if (due.length) { this.timers = this.timers.filter((x) => x[0] > this.time); for (const [, fn] of due) fn(); }
+      if (due.length) { this.timers = this.timers.filter((x) => x[0] > this.time); for (const [, kind, args] of due) DELAYED[kind](this, args); }
     }
     this.effectsTick(dt);
     this.effectsUpdate();
     if (this.spirits.length) this.spiritTick(dt);
     if (this.wildNests.length) this.wildNestsUpdate(dt);
+    if (this.wells.length) this.wellsUpdate(dt);
+    if (this.lakes.length) this.lakesUpdate(dt);
+    if (this.weather) this.weatherUpdate();
+    if (this.go) this.gameOverUpdate(dt);              // the end of a skirmish (systems/gameover.js)
+    this.stats.update();
     this.refreshT = (this.refreshT || 0) - dt;
     if (this.refreshT <= 0) { this.refreshT = 0.5; this.refreshTick(); }
     for (let i = 0; i < this.units.length; i++) this.unitUpdate(this.units[i], dt);
@@ -448,7 +678,7 @@ export class World {
     for (const p of this.projectiles) this.projectileUpdate(p, dt);
     this.projectiles = this.projectiles.filter((p) => p.alive);
     this.separation(dt);
-    for (const u of this.units) if (u.alive && !u.inside && !u.parked) { u.pos.y = this.groundY(u) + (u.jumpH || 0); u.syncObj(); this.uHash.move(u); }
+    for (const u of this.units) if (u.alive && !u.inside && !u.parked) { u.pos.y = this.groundY(u) + (u.jumpH || 0) + (u.liftH || 0); u.syncObj(); this.uHash.move(u); }
     if (this.units.some((u) => u.removed)) this.units = this.units.filter((u) => !u.removed);
     if (this.buildings.some((b) => b.removed)) this.buildings = this.buildings.filter((b) => !b.removed);
     if (this.resources.length > 50 && this.resources.some((r) => !r.alive)) this.resources = this.resources.filter((r) => r.alive);
@@ -464,9 +694,9 @@ export class World {
       else if (u.canWalkInto(nav, u.pos.x, z)) u.pos.z = z;
     };
     for (const a of us) {
-      if (!a.alive || a.inside || a.parked) continue;
+      if (!a.alive || a.inside || a.parked || a.flying || a.onWall || a.wjump || a.climbing) continue;   // (in the air, on a wall: over everything)
       this.uHash.query(a.pos.x, a.pos.z, a.radius + 6, (b) => {
-        if (b === a || !b.alive || b.inside || b.id < a.id || !!b.naval !== !!a.naval) return;
+        if (b === a || !b.alive || b.inside || b.id < a.id || !!b.naval !== !!a.naval || b.flying || b.onWall || b.wjump || b.climbing) return;
         const dx = b.pos.x - a.pos.x, dz = b.pos.z - a.pos.z;
         const min = (a.radius + b.radius) * 0.9;
         const d2 = dx * dx + dz * dz;
@@ -495,4 +725,4 @@ export class World {
   }
 }
 // install the systems
-Object.assign(World.prototype, Effects, Combat, Economy, Construction, Production, Healing, Moves, BuildingBehaviours, Animals, Transport, Naval, Scripting);
+Object.assign(World.prototype, Effects, Combat, Economy, Construction, Production, Healing, Moves, MirageMoves, BuildingBehaviours, Animals, Landmarks, Items, Finishing, WallWalk, Siege, GameOver, Transport, Naval, Scripting);

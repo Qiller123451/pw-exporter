@@ -166,6 +166,9 @@ zone = IsInCombatRangeAttackZone(V, SecS', SecM', AttackR', cone)   (engine, unc
 - **Height**: `heightOk = |zA-zV| < min(7, sizeZ of the lower unit)`. Non-projectile attackers need `heightOk`.
   Projectiles only need it for zones 1 and 2.
 - **LOS**: required (engine `CheckLineOfSightFight`) unless zone 3 with a primary projectile, or either side is a building.
+  - Remake (`combat.js rangeZone` / `fightLos`): the height rule as above (a primary projectile also hits from zone 1
+    / 2 range when the height fails - the original would leave such a target alone) and the line of sight as the
+    walk grid's blocked cells between the two units (the cells at either unit not counted); walls: walls_walk.md.
 - A unit on an open transporter treats any zone other than 0 as 3.
 - Zone results:
   - Zone 3: use the right-hand weapon; in range.
@@ -395,7 +398,7 @@ if weaponSize > 0: InvokeAreaThrow(center, victims, weaponSize)   (§4)
   - Level up (`SetLevel` FO:3412): costs `CharLevels.txt` scalps (25/50/100/300) and does a full heal plus 1.5 s
     invulnerability.
   - Per-level unit caps (default 25/15/8/3/1 per level index, overridable in the map).
-  - Level-4 non-heroes enable `Chief_Bonus` and `AllNonHeroes/Lvl5`.
+  - Level 4 (shown as 5) enables `Chief_Bonus`, heroes' included (FO:3388-3395); non-heroes also `AllNonHeroes/Lvl5`.
   - Auras (CH:758-930, recomputed every 20 s by `ExamineFlags`):
     - `hu_warrior` Warcry (invention `warcry`) gives friends WARCRY_3/4/5. At levels 2/3/4 the radius is 10/15/20 and
       the attack multiplier is 1.1/1.15/1.2.

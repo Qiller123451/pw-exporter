@@ -70,8 +70,10 @@ export const Economy = {
     if (!e.unique) return e.done ? 0 : 1;
     let have = 0;
     if (R.kind === 'bldg') {
-      // with an ObjFlag only the buildings that carry it count (and the ones still being built)
-      for (const b of S.blds) if (b.name === R.cls && (!b.built || this.hasFlag(b, R.flag))) have++;
+      // with an ObjFlag only the buildings that carry it count (and the ones still being built); an outpost's
+      // request: only those at the outpost (BuildIfNotExist per outpost)
+      const o = e.outpost;
+      for (const b of S.blds) if (b.name === R.cls && (!b.built || this.hasFlag(b, R.flag)) && (!o || Math.hypot(b.pos.x - o.pos.x, b.pos.z - o.pos.z) <= 60)) have++;
     } else {
       have = S.count.get(R.cls) || 0;
       for (const x of [...S.blds, ...S.units]) if (x.queue) for (const q of x.queue) if (q.action.path === a.path) have++;
@@ -146,9 +148,10 @@ export const Economy = {
     const R = this.resolve(request, objFlag);
     if (!R) return false;
     this.extra = this.extra || [];
-    if (this.extra.some((e) => e.R.action.path === R.action.path)) return true;
+    // (opts.pos / opts.outpost: a building of an outpost - placed there, counted there: ai/outposts.js)
+    if (this.extra.some((e) => e.R.action.path === R.action.path && (e.outpost || null) === (opts.outpost || null))) return true;
     if (this.extra.length >= 4) return false;
-    this.extra.push({ request, objFlag, count: opts.count || 1, unique: opts.unique !== false, R, failed: 0, t: this.W.time, done: false });
+    this.extra.push({ request, objFlag, count: opts.count || 1, unique: opts.unique !== false, R, failed: 0, t: this.W.time, done: false, pos: opts.pos || null, outpost: opts.outpost || null });
     return true;
   },
 
@@ -161,7 +164,7 @@ export const Economy = {
     this.workerThink(S, avail);
     this.housingThink(S);
     this.pickRequests(S);
-    const pending = S.blds.filter((b) => !b.built).length;
+    const pending = S.blds.filter((b) => !b.built && b.def.wallKind !== 'wall' && b.def.wallKind !== 'gate').length;
     let started = 0;
     const all = [...(this.extra || []), ...this.requests];
     for (const e of all) {
@@ -213,9 +216,10 @@ export const Economy = {
       if (!this.canPay(a.cost, avail)) return 'cost';
       const spot = this.findSpot(S, R.cls, a, e.pos);
       if (!spot) return 'fail';
-      const ws = [];
+      let ws = [];
       const n = S.workers.length >= 9 ? 3 : S.workers.length >= 5 ? 2 : 1;
-      for (let i = 0; i < n; i++) { const w = this.pickWorker(S, { x: spot[0], z: spot[1] }, ws); if (w) ws.push(w); }
+      if (e.outpost && this.outpostWorkers) ws = this.outpostWorkers(e.outpost).slice(0, n);          // its crew builds it
+      if (!ws.length) for (let i = 0; i < n; i++) { const w = this.pickWorker(S, { x: spot[0], z: spot[1] }, ws); if (w) ws.push(w); }
       if (!ws.length) return 'wait';
       const b = W.startConstruction(p, a, spot[0], spot[1], spot[2], ws);
       if (typeof b === 'string') return b === 'cost' ? 'cost' : 'fail';
@@ -409,7 +413,7 @@ export const Economy = {
   keepBuilders(S) {
     const W = this.W;
     for (const b of S.blds) {
-      if (b.built) continue;
+      if (b.built || b.def.wallKind === 'wall' || b.def.wallKind === 'gate') continue;        // (the village wall: ai/walls.js)
       const active = [...b.builders].filter((u) => u.alive && u.task.type === 'build' && u.task.building === b);
       if (active.length < (S.workers.length >= 8 ? 2 : 1)) { const w = this.pickWorker(S, b.pos, active); if (w) W.order([w], { type: 'build', target: b, auto: true }); }
     }
@@ -629,6 +633,15 @@ export const Economy = {
       // placement() = where it really goes (wall-grid snapping for towers / traps)
       const pl = W.placement(name, x, z, rot, p);
       if (pl.ok && !pl.replace && !pl.existing) { if (tower && near === this.towerAt) this.towerAt = null; return [pl.x, pl.z, pl.rot]; }
+    }
+    // nothing on the preferred side (a base at the water or a cliff: death_valley): any side, farther out (the
+    // engine's planner places them itself [?engine])
+    for (let k = 0; k < 60 && !near; k++) {
+      const r = 14 + (k / 60) * 60 + Math.random() * 6, ang = Math.random() * 6.283;
+      const x = Math.round(hx + Math.cos(ang) * r), z = Math.round(hz + Math.sin(ang) * r);
+      if (this.regions.size && this.regionValue('BuildModifier', x, z) < 0) continue;
+      const pl = W.placement(name, x, z, Math.round((toE + Math.PI / 2) / (Math.PI / 2)) * (Math.PI / 2), p);
+      if (pl.ok && !pl.replace && !pl.existing) return [pl.x, pl.z, pl.rot];
     }
     return null;
   },

@@ -133,9 +133,10 @@ export class FX {
     const p01 = load('particle_01.png'), p08 = load('particle_08.png'), gore = load('gore.png');
     this.fire = new Layer(scene, p01, THREE.AdditiveBlending, 1500);
     this.smoke = new Layer(scene, p01, THREE.NormalBlending, 1200);
+    this.bank = new Layer(scene, p01, THREE.NormalBlending, 1600);       // the smoke of the smoke towers: big, slow, many
     this.gore = new Layer(scene, gore, THREE.NormalBlending, 900);
     this.misc = new Layer(scene, p08, THREE.AdditiveBlending, 300);
-    this.layers = [this.smoke, this.gore, this.fire, this.misc];
+    this.layers = [this.bank, this.smoke, this.gore, this.fire, this.misc];
     // tracers: stretched glowing boxes
     this.tracers = [];
     this.tracerMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }), 96);
@@ -225,6 +226,12 @@ export class FX {
       this.smoke.add({ x: pos.x + Math.cos(a) * size * 0.3, y: pos.y + 0.3, z: pos.z + Math.sin(a) * size * 0.3, vx: Math.cos(a) * size * 2, vy: rnd(0.5, 2.5), vz: Math.sin(a) * size * 2, drag: 2.5,
         life: rnd(0.6, 1.3), s0: size * 0.6, s1: size * 2.2, spin: rnd(-1, 1), uv: pick(UV.smoke2), c0: color });
     }
+  }
+  // one puff of a smoke screen: big, slow, there for seconds
+  screen(x, y, z, size = 10) {
+    // (alpha above 1: the sprite is soft, and a bank of smoke is not - it stays dense for most of its life)
+    this.bank.add({ x, y, z, vx: rnd(-0.7, 0.7), vy: rnd(0.05, 0.4), vz: rnd(-0.7, 0.7), life: rnd(6, 8), s0: size * 0.35, s1: size * 1.5, spin: rnd(-0.25, 0.25), uv: pick(UV.smoke2),
+      c0: [0.66, 0.66, 0.64, 2.4], c1: [0.74, 0.74, 0.72, 0] });
   }
   explosion(pos, radius = 9) {
     const k = radius / 9;

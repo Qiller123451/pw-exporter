@@ -221,7 +221,10 @@ tick:
   3. Skulls ≥ Σ foodcost for each level step. The costs are **25, 50, 100, 300** (CharLevels `scalps`, Player.usl:90-101), and multi-step jumps sum them.
   4. Then `SetLevelClean` runs:
      - It swaps the `Filters/<Tribe>/Upgrades/<class>/Lvl<k>` filters (not cumulative: only the current level's `LvlN_Bonus` is active).
-     - For non-heroes it swaps `AllNonHeroes/Lvl<k>`. At level 4 it enables `<class>/Chief_Bonus` on the player tree.
+     - For non-heroes it swaps `AllNonHeroes/Lvl<k>`. At level 4 it enables `<class>/Chief_Bonus` on the player tree,
+       for every unit, heroes included (SetLevelFilter, FO:3388-3395): the heroes' level-5 bonuses (Ada: production x0.5,
+       Cole: +100 HP for infantry, Stina: animal armour, Taslow: `BLDG_res_back`, Babbit: buildup time factors).
+     - Production time = TT duration x `/Modifications/<tribe>/Build/<type>/duration` (FO:8435 GetTechTreeActionModifier).
      - It sets inventory size 1 and `formation_x = 1 − level/5` (0 for `unique`).
   5. If the level went up: play the `level_up` anim, FullHeal, and reset the destruct level.
 - **Invulnerability during level-up:** **2.5 s** for characters (CH:948-964; rules_spec's 1.5 s is the FightingObj base, FO:3533). There is no anim or invulnerability on walls, in closed transports, or while trapped. On an open transporter only the anim plays.
@@ -511,6 +514,7 @@ the agility timer (no nest) picks the next target: a random point ±30 m (babies
 - **Feed task:** walk to the food (give up if the 2-D distance is > 25 `[?]`). Then do 2..6 bouts of 3..10 `feeding` loops. Each loop mines `dmg` from a food object and heals half of it.
 - **After killing a wild animal** a wild hunter feeds on `<victim>_food` within 20 m (AN:1062-1076).
 - `IsVegetarian = aggressive != 1`.
+- The sleep check comes before the hunger check and its random number is the same, so an animal that can sleep never starts to feed in its sleeping time (r > 0.8 implies r > 0.6).
 
 ### 7.4 Nests, respawn and flock
 
@@ -526,6 +530,7 @@ Nest attributes: `spawn_type`, `spawn_amount` (-1 = infinite), `spawn_max`, `spa
   - Every 2 s, members outside the action area are sent back.
   - The flock centre moves every `agility` s (to the safe area at night).
 - **Growth:** `strength = clamp((now−birth)/growup, 0.2, 1)` scales max HP and damage (AN:629-647, 1110-1116). Babies stay in the safe area.
+  The client shows a baby smaller: the GSF's `growup` animation (two keys: grown, newborn root scale, e.g. 0.485) sampled at `1 − age/growup`. Skulls scale by the same share without the 0.2 floor (at least 1).
 
 ### 7.5 Owned animals
 

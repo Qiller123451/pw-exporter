@@ -6,6 +6,8 @@ and checked by rendering the results.
 
 ## General
 - Little endian. Every offset is a **self-relative** int32: target = field position + value. `0x80000000` = null.
+  Archives written by mod tools (MIRAGE's `mirage_animals.gsf`) also store empty slots of a model's chunk table as
+  `0` (a pointer to the field itself): read as null as well.
 - File: `"GSF\0"`, version 0, u32 offset of header 2 (usually 0x10000). Header 1 is the table of contents: model
   names, animation names, sound, dust-trail and walk-set tables.
 - **new:** header 1 walk-set entries are 42 variable-length indices. One byte each, or two bytes
@@ -96,7 +98,10 @@ collision" list of SEK's exporter; attr = the record's visibility bits): type 0 
 - Vertex (8 bytes): bits 0–38 = 3×13-bit position (value/8191 inside bbox), bits 39–47 = index into a 511-entry
   unit-normal table, byte 6 = u×256, byte 7 = v×256. **v runs bottom-up** (OpenGL style): for glTF/top-down
   images use v = 1 − byte7/256. (Checked against atlas features: nuts, valve wheels and skin charts line up exactly.) 16-byte vertices add 4 bone indices (255 = none) and 4 u8 weights.
-- Triangles: u16 triplets, counter-clockwise when viewed from the side the normals point to (right-handed).
+- Triangles: u16 triplets, clockwise when viewed from the side the normals point to in the model's own left-handed
+  space (x, y, z with z up, like the maps: docs/MAP_FORMAT.md) - the Direct3D way. Read as right-handed they are
+  counter-clockwise but the model comes out mirrored: the exporter mirrors x (glTF (-x, z, -y)), which keeps them
+  counter-clockwise as glTF wants them.
 - Submesh material index → model's used-material list → global material.
 
 ## Skeleton chunk (type 5) — **new** parts
@@ -132,11 +137,16 @@ collision" list of SEK's exporter; attr = the record's visibility bits): type 0 
 ## Object animation chunk (0x40000003) — **new**
 - Animates a mesh chunk (buildings, vehicles). `+64` key table (n × [pos3, quat4], absolute; quat conjugated as
   above), `+72` u16 per-frame key index, `+76` frame count. Alternative layout: `+52` 4x4 matrix per frame.
-- 0x40000002 = particle emitter animation (not converted).
+- 0x40000002 = particle emitter animation: `+8` is the guid of the emitter it drives (3212 emitters of Base: the
+  blood of finishing moves, a sinking ship's smoke). Its keys are not converted; the converter lists the names of the
+  animations that drive an emitter (`extras.emitter.anims`) and the remake lets it spray only while one of them plays.
 
 ## Links (0xB, 0x8000000B)
 - pos[3], quat[4], 4-char name (`HndR`, `HndL`, `Shld`, `Back`, `Ride`, …). The skinned version adds a skeleton index and 4 bone
   ids/weights. Position is in model (bind) space.
+- A model can consist of links only: the pirate boss ship `pirate_boss` (sl_pirate_outpost.gsf, 8 links) - its
+  visible parts (`pirate_boss_row`, `_sail`, `_tail`, `_cannons`) are buildings of their own. The converter writes
+  such a model too (its link nodes, no mesh).
 
 ## Billboards (1, 0x80000001)
 - `+4` attribute flags (the LOD mask in bits 0–4 works like a mesh's: tree foliage comes in sets for LOD 0–1, 2, 3
@@ -151,6 +161,32 @@ collision" list of SEK's exporter; attr = the record's visibility bits): type 0 
 - Static: bbox `+104`, count `+128`, vertex ptr `+132`, stride `+136`. Skinned: everything 4 bytes later.
   Vertex: 5 bytes = 3 × 13-bit position in the bbox (relative to the chunk matrix); skinned sprites (stride 13): byte
   5 = the bone (joint index, as mesh vertices), bytes 6–9 = 0xFFFFFFFF (colour?).
+
+## Particle emitters (2, 0x80000002)
+Layout from SEK's exporter (gsf.ksy `particle_chunk`), read by `pwexport.gsf.parse_particle`:
+- `+4` attribute flags (LOD mask bits 0-4 and the state bits like a mesh's: the fires of the epoch variants of a
+  main building, the smoke of the damage stages `DEST_*`), `+8` guid, `+12` particle source type in bits 0-30 (3 for
+  10430 of the 10439 emitters of Base, 0 for 9) and bit 31 = heat haze ("mirage", 23 fires), `+16` position,
+  `+28` quaternion (D3D: conjugate it, as for links), `+44` size of the emitting volume (3 floats), `+56` maximum
+  number of living particles. The skinned version adds the skeleton index and 4 bone ids / weights at `+60`.
+- Then the spread (float), self-relative pointers to the emitter's name (name block, e.g. `oben_01`,
+  `Age_03_Fire_02`), to its atlas cells (`count` records of 9 bytes: used-material index, log2 columns, log2 rows,
+  first cell, cell count - 1, border width, border left, pivot x + 127, pivot y + 127) and to its parameters
+  (`count` × 4 bytes; source type 3: size, life_time, rotate, gravitation, size_var, drag, flags, fade_in, fade_out,
+  tile_anim_speed, life_time_var, size_increase, colour variance r/g/b, emit_timer, speed_var, emit_timer_var,
+  colour r/g/b (0-255), emit_rot_inc, src_rot_speed, center_suck, suck_vel, rotation_var, alpha (0-255),
+  emit_per_meter, size_inc_exp; older exports have fewer).
+  How the remake reads the growth: `size_increase` is added in size units over the life (the shockwave of a
+  collapsing building: 6 -> 24), `size_inc_exp` bends the curve (t^(2^exp), a guess). Taken as a factor instead,
+  the dust and wave sprites grew to 50-100 m and a camera near a waterfall had ~150 screens of overdraw a frame -
+  enough for Windows to reset the graphics card.
+- 1254 models of Base have emitters (buildings' fires and smoke, torches, the waterfalls' spray). Some models are
+  emitters only (`sav_waterfall_01_top` / `_bottom`): the converter keeps them.
+- The converter writes one node per emitter (`particles_<name>`, placed like a link) with
+  `extras = {kind: 'particles', attr, emitter: {src, mirage, scale, max, spread, tiles: [{..., tex, additive}],
+  params, anims?}}`; `tex` is the sprite texture written with the model, `anims` the animations that drive the
+  emitter (0x40000002 above). Additive sprite textures (`gore.tga` flames) have alpha 0: they are drawn by colour. What the parameters mean is partly guessed
+  (remake: `src/engine/particles.js`).
 
 ## Corrections 2026-10-01 (found while building the Model Exporter; pwexport/gsf.py VERSION 2026.10.3)
 - **Walk-set indices are 1-based positions in the model's animation list** (0 = slot unused). Slots: 0–2 walk

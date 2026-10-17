@@ -219,8 +219,10 @@ u32     flags2
 ```
 
 and `u32 flags` sits at bytes 4..8 of the record (before the owner). Decoded by correlation only: bit 0
-selectable, bit 1 hitable, bit 31 set on objects the designers protect (exported as `invulnerable`; the script's
-real flag `m_bLDInvulnerable` lives in the object's `FOba` data chunk, which is not decoded).
+selectable, bit 1 hitable, bit 31 exported as `invulnerable` - but its meaning is NOT invulnerability: it is also set
+on trees, decoration, question marks and a group, mission 9's flagged objects are made invulnerable by triggers at
+the start, and mission 1's hostile prison guard `hu_warrior_68` has it although the mission waits for his death (the
+remake ignores it). The `FOba` chunks of flagged and unflagged characters differ only in positions.
 
 Object data chunks used:
 
@@ -314,7 +316,7 @@ films it shows).
 ## 10. The JSON document (`pw-campaign/1`)
 
 `campaign.campaign(map_path, install=None, lang='uk')` returns a dict; the CLI writes it as JSON. Positions are
-map metres (x east, y north, z up), angles radians, GUIDs the 32-letter form. Top level:
+map metres (x east, y south, z up), angles radians, GUIDs the 32-letter form. Top level:
 
 | key | content |
 |---|---|
@@ -372,7 +374,7 @@ pool[]}`, `ai_options {walls, markplace_outpost, harbour, warpgate, hunt_animals
 Object: `index` (position in the map's object list), `guid`, `name` (unique, `<class>_<n>`), `class`, `type`
 (4 letters), `owner` (null = nobody), `x, y, z`, `rot` (heading, counter-clockwise from east), `q` (quaternion as
 stored), `level` (0-based), `hp`, `max_hp` (if stored), `visible`, `flags`, `selectable`, `hitable`,
-`invulnerable` (§6: by correlation), `gfx` (model name), `handle [index, serial]`, `attr` (the object's
+`invulnerable` (§6: bit 31, meaning unknown, not applied by the remake), `gfx` (model name), `handle [index, serial]`, `attr` (the object's
 attribute table, raw).
 
 Group: `guid`, `name`, `index`, `x, y, z` (editor icon), `members[]` (GUIDs). Question mark: `guid`, `name`,

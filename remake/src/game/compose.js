@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { cloneModel } from '../engine/assets.js';
+import { cloneModel, toLinkFrame } from '../engine/assets.js';
 import { applyFow } from '../engine/terrain.js';
 import { animalMask, applyMask, applyState, woundStage } from '../engine/parts.js';
 import { AnimCtl } from './anim.js';
@@ -11,8 +11,15 @@ import { AnimCtl } from './anim.js';
 //   aje_resource_collector: drawbar at "Db_1", wagon aje_resource_collector_<a..e> (by epoch) trailing at "Db_2"
 //   ridden animals:         captain (tech tree captainclass) at "Ride", level flag <tribe>_animal_flag_0<level> at "flag"
 //   brachiosaurus etc.:     optional build-ups after a per-unit upgrade, with their own rider / flag links
+//   open transporters:      the passengers ride on the build-up at its links Dri0..Dri9 that no part of the table uses
+//                           (BuildUpBase.usl CBuildUpTransporterOpen.UpdateLinkedObjs: LinkAction to "Dri<i>" in
+//                           link order, the captain's link ignored, playing TransportObj.GetPassengerLoopAnim
+//                           "standanim"); closed transporters (TYPE_TRANSPORTER: ships, vehicles) hide them
 // Every part: {kind, gfx, variants, by, link, pi (parent part, -1 = the unit), anim, attack_anim, cond, arg, flex}.
 // Weapons, worker tools and carried goods are handled by the unit itself (entities.js / economy.js).
+
+// wild animals whose "misc" parts belong to the beast (MIRAGE FightingObj.ShowAnmlMiscFlag)
+const WILD_MISC = /^(stegosaurus|kentrosaurus|mammoth|macrolemy[sd]_(land|water))$/i;
 
 export function linksOf(root) {
   const out = {};
@@ -26,7 +33,7 @@ export function attach(world, link, gfx, party = null) {
   const tpl = world.template(gfx.toLowerCase(), true);
   if (!tpl) return null;
   const obj = cloneModel(tpl, party);
-  if (obj.children[0]) obj.children[0].rotation.set(0, 0, 0);
+  toLinkFrame(obj);
   obj.traverse((o) => { if (o.isMesh) applyFow(o.material); });
   link.add(obj);
   const anim = tpl.clips && tpl.clips.length ? new AnimCtl(obj, tpl.clips) : null;
@@ -92,14 +99,20 @@ export class Composite {
     this.bar = null;
     this.maskKey = '';
     this.key = '';
+    this.seats = [];          // open transporters: the free passenger links of the build-up
+    this.riding = [];         // the passengers shown on them: {obj, anim, pas}
+    this.paxKey = '';
   }
   dispose() {
+    this.clearRiding();
+    this.seats = [];
     for (const p of this.parts) { p.obj.removeFromParent(); p.anim && p.anim.dispose(); }
     if (this.wagon) { this.wagon.obj.removeFromParent(); this.wagon.anim && this.wagon.anim.dispose(); }
     this.parts = []; this.turrets = []; this.top = this.rider = this.wagon = this.bar = null;
     this.key = '';
   }
-  specs() { return this.u.owner ? this.u.world.data.composites(this.u.name) : []; }
+  specs() { return this.u.owner && !this.wild() ? this.u.world.data.composites(this.u.name) : []; }
+  wild() { return this.u.cls === 'ANML' && this.u.world.data.isWildClass(this.u.name); }
   // signature of what should be shown: rebuilt when it changes (level up, upgrade, epoch)
   wanted() {
     const u = this.u, W = u.world;
@@ -136,7 +149,43 @@ export class Composite {
         if (a && s.kind !== 'turret') p.anim.play(a);
       }
     }
+    // the passengers' seats: the build-up's Dri links in their order, but those its own parts (the captain) take
+    const bu = this.parts.find((p) => p.spec.kind === 'buildup');
+    if (bu) {
+      const used = new Set(act.filter((s) => s.pi === bu.spec.i).map((s) => s.link));
+      this.seats = Object.keys(bu.links).filter((k) => /^Dri\d$/.test(k) && !used.has(k)).sort().map((k) => bu.links[k]);
+    }
     this.updateMask(true);
+  }
+  clearRiding() {
+    for (const r of this.riding) { r.obj.removeFromParent(); r.anim && r.anim.dispose(); }
+    this.riding = []; this.paxKey = '';
+  }
+  // the passengers of an open transporter on their seats (a model of each, playing its stand clip; the shooting
+  // clip while it shoots from up there: transport.js passengerUpdate)
+  syncPassengers(dt) {
+    const u = this.u, W = u.world;
+    const pax = this.seats.length ? (u.passengers || []).filter((p) => p.alive && p.gfx).slice(0, this.seats.length) : [];
+    const key = pax.map((p) => p.id + ':' + p.gfx).join(',');
+    if (key !== this.paxKey) {
+      this.clearRiding();
+      this.paxKey = key;
+      pax.forEach((p, i) => {
+        const r = attach(W, this.seats[i], p.gfx, p.party);
+        if (!r) return;
+        r.pas = p;
+        r.stand = r.anim && r.anim.pick('standanim', 'idle_0', 'stand');
+        r.shoot = r.anim && r.anim.pick('bow_1', 'shoot_1', 'throw_1', 'attack_front', 'attack_1');
+        if (r.stand) r.anim.play(r.stand);
+        this.riding.push(r);
+      });
+    }
+    for (const r of this.riding) {
+      if (!r.anim) continue;
+      const want = r.shoot && W.time - (r.pas.lastHitDone ?? -1e9) < 0.8 ? r.shoot : r.stand;
+      if (want && r.anim.curName !== want) r.anim.play(want, want === r.shoot ? { loop: false, fade: 0.1 } : undefined);
+      r.anim.update(dt);
+    }
   }
   // trailers (collector wagon, carts, drum wagon) follow the drawbar like a trailer instead of hanging on a link
   makeWagon(spec, gfx, parent) {
@@ -180,11 +229,12 @@ export class Composite {
     const p = u.owner;
     const armor = !!(p && /^aje_(allosaurus|stegosaurus|brachiosaurus)$/.test(u.name) && p.tt && p.tt.invented(u.name + '_armor'));
     const hr = u.alive ? u.hp / u.maxHp : 1;
-    const key = (p ? 1 : 0) + '|' + armor + '|' + woundStage(hr);
+    const wild = this.wild(), owned = !!p && !wild;
+    const key = (owned ? 1 : 0) + '|' + armor + '|' + woundStage(hr);
     if (key === this.maskKey && !force) return;
     this.maskKey = key;
-    applyMask(u.model, animalMask({ owned: !!p, armor, hp: hr, misc: !/^aje_(ankylosaurus|brachiosaurus)$/.test(u.name) }));
-    if (p && !u.partyTinted) {
+    applyMask(u.model, animalMask({ owned, armor, hp: hr, misc: this.miscShown(wild) }));
+    if (owned && !u.partyTinted) {
       u.partyTinted = true;
       const col = new THREE.Color(p.color);
       u.model.traverse((o) => {
@@ -195,6 +245,17 @@ export class Composite {
     }
     for (const q of this.parts) if (q.tpl.fourcc !== 'Char' && q.tpl.fourcc !== 'Anim') applyState(q.obj, 4, 0, 1);
   }
+  // the animal's "misc" parts (VIS_FLAG_ANML_MISC): on a wild animal only what is part of the beast itself - the plates,
+  // shells, the mammoth's coat (MIRAGE FightingObj.ShowAnmlMiscFlag); the platforms and racks of the others are tack.
+  // Tamed ones (Base Animal.usl OnInit): hidden on ankylosaurus, brachiosaurus and parasaurolophus unless they carry
+  // a weapon build-up (catapult, gatling), on the lumber mammoth and on arena animals
+  miscShown(wild) {
+    const u = this.u;
+    if (wild) return WILD_MISC.test(u.gfx || u.name);
+    if (u.name === 'hu_mammoth_lumber_upgrade' || (u.def && u.def.script) === 'CArenaAnimal') return false;
+    if (/^C(Ankylosaurus|Brachiosaurus|Parasaurolophus)$/.test((u.def && u.def.script) || '')) return this.parts.some((p) => /catapult|gatling/.test(p.spec.gfx));
+    return true;
+  }
   // turn the turrets towards a world point (relative to the carrier's heading); returns the first turret's error
   aim(x, z, dt) {
     if (!this.turrets.length) return 0;
@@ -204,9 +265,9 @@ export class Composite {
       t.obj.updateMatrixWorld(true);
       const p = new THREE.Vector3(); t.obj.getWorldPosition(p);
       const want = Math.atan2(-(x - p.x), -(z - p.z)) - u.heading;
-      const cur = t.obj.rotation.z;
+      const cur = -t.obj.rotation.z;           // the link's z turns the other way in the world (mirrored root, game/maps/frame.js)
       let diff = want - cur; diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-      t.obj.rotation.z = cur + Math.sign(diff) * Math.min(Math.abs(diff), 3 * dt);
+      t.obj.rotation.z = -(cur + Math.sign(diff) * Math.min(Math.abs(diff), 3 * dt));
       if (first === null) first = Math.abs(diff);
     }
     return first;
@@ -225,6 +286,7 @@ export class Composite {
       if (this.wanted().key !== this.key) this.build();
     }
     this.syncWagon(dt);
+    if (this.seats.length || this.riding.length) this.syncPassengers(dt);
     this.updateMask(false);
   }
 }

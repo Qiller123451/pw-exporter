@@ -10,8 +10,9 @@ const pal = G.buildActions().find((a) => a.results[0].obj === 'hu_palisade');
 const gateA = G.data.actions(me).find((a) => a.results[0].obj === 'hu_palisade_gate');
 const age2 = G.producerActions(G.homeEntity()).find((a) => a.id === 'age_2');
 if (age2) { W.queueAction(G.homeEntity(), age2); G.step(10); }
-const towerA = G.data.actions(me).find((a) => /^hu_(small_tower|bunker)$/.test(a.results[0].obj) && !G.data.check(me, a));
-check('actions exist', !!pal && !!gateA && !!towerA, [pal && pal.id, gateA && gateA.id, towerA && towerA.id]);
+// (a mod may take a tower out of the wall placer: MIRAGE's hu_small_tower is a free building)
+const towerA = G.data.actions(me).find((a) => a.results && a.results[0] && /^hu_(small_tower|bunker)$/.test(a.results[0].obj) && !G.data.check(me, a) && G.data.def(a.results[0].obj, me).wallKind === 'tower');
+check('actions exist', !!pal && !!gateA, [pal && pal.id, gateA && gateA.id, towerA && towerA.id]);
 const h = G.homeEntity();
 // a clear spot 60 m from the HQ
 // a clear area near the HQ: every tile the test uses must be placeable
@@ -66,17 +67,31 @@ const [nx, nz] = T(2, -2), [sx, sz] = T(2, 2);
 const path = W.nav.find(nx, nz, sx, sz, 0.7, 30000, me);
 check('a path through the gate', !!path && path.length > 0 && path.length < 6, path && path.length);
 // 6. a tower on a wall piece is a joint
-const [tx, tz] = T(4, 2);
-const pt = W.placement(towerA.results[0].obj, tx + 1.3, tz - 2.2, 0.7, me);
-check('tower snaps to the tile, no rotation, may replace an own piece', pt.ok && pt.x === tx && pt.z === tz && pt.rot === 0 && !!pt.replace, { ok: pt.ok, rot: pt.rot, rep: !!pt.replace });
-const tw = W.startConstruction(me, towerA, tx, tz, 0, []);
-check('tower placed', typeof tw !== 'string', typeof tw === 'string' ? tw : [!!at(4, 2).tower, !!at(4, 2).wall, at(4, 2).tower === tw]);
-check('tower joins the line (pieces keep their arms to it)', at(4, 2).tower === tw && !at(4, 2).wall && (mask(4, 1) & 64) && (mask(4, 3) & 4), [mask(4, 1), mask(4, 3)]);
+if (towerA) {
+  const [tx, tz] = T(4, 2);
+  const pt = W.placement(towerA.results[0].obj, tx + 1.3, tz - 2.2, 0.7, me);
+  check('tower snaps to the tile, no rotation, keeps the own piece under it', pt.ok && pt.x === tx && pt.z === tz && pt.rot === 0 && !pt.replace, { ok: pt.ok, rot: pt.rot, rep: !!pt.replace });
+  const tw = W.startConstruction(me, towerA, tx, tz, 0, []);
+  check('tower placed', typeof tw !== 'string', typeof tw === 'string' ? tw : [!!at(4, 2).tower, !!at(4, 2).wall, at(4, 2).tower === tw]);
+  check('tower stands on the piece, the line stays whole', at(4, 2).tower === tw && !!at(4, 2).wall && (mask(4, 1) & 64) && (mask(4, 3) & 4) && (mask(4, 2) & 68) === 68, [mask(4, 1), mask(4, 2), mask(4, 3)]);
+} else out.push('skip  tower: no tower of the wall placer (this mod)');
+// 6b. part names (BuildName): a straight middle piece, a 135 degree bend, an end piece
+const parts = (i, j) => { const t = at(i, j); return t && t.wall ? (t.wall.wallParts || []).join('.') : ''; };
+check('straight N-S piece: hub x1, arms N and S, closed sides', /^x1\.1[abc]\.3d\.5[abc]\.7d$/.test(parts(4, 1)), parts(4, 1));
+check('diagonal piece: hub x0, arms NE and SW', /^x0\.2[abc]\.4d\.6[abc]\.0d$/.test(parts(-4, 4)), parts(-4, 4));
+const r135 = place([-2, 2], [0, 2]);
+check('135 degree bend: hub x36', r135.n === 2 && /^x36\.3[abc]\.6[abc]$/.test(parts(-2, 2)), { n: r135.n, p: parts(-2, 2) });
+// 6c. all or nothing: a line whose end lies on an obstacle gives no tiles
+W.wallMap.setBlocked(ci + 2, cj - 3, true);
+const rNo = W.wallLine(me, pal, ...T(2, -6), ...T(2, -3), []);
+check('a line ending on a blocked tile is refused as a whole', rNo === null, rNo && rNo.length);
+W.wallMap.setBlocked(ci + 2, cj - 3, false);
+
 // 7. a destroyed piece: neighbours drop their arm, no ruin
 const victim = at(0, 0) && at(0, 0).wall;   // west end (wing? no: wing is tile 1)
 W.kill(victim, null);
 check('destroyed piece: no ruin, freed tile', !victim.ruin && !at(0, 0), { ruin: !!victim.ruin });
 // 8. towers are not "walls" for targeting
-check('wallKind', G.data.def('hu_small_tower', me).wallKind === 'tower' && G.data.def('hu_palisade', me).wallKind === 'wall' && G.data.def('hu_palisade_gate', me).wallKind === 'gate', null);
+check('wallKind', (!towerA || G.data.def(towerA.results[0].obj, me).wallKind === 'tower') && G.data.def('hu_palisade', me).wallKind === 'wall' && G.data.def('hu_palisade_gate', me).wallKind === 'gate', null);
 } catch (e) { out.push('ERROR ' + e.message + ' ' + (e.stack || '').split('\n')[1]); }
 return out.join('\n');

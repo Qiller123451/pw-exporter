@@ -117,6 +117,8 @@ export function makeGame(data, opts = {}) {
       return { x, z, mx, my, mz, zero: mx === 0 && my === 0 && mz === 0 };
     },
     heading(r) { return +r || 0; },
+    swap: null,                                   // the mission's own tribe (game/campaign/tribes.js is not mocked)
+    filterFor(p, path) { return path; },
     player(s) { return s >= 0 && s < 8 ? this.players[s] : null; },
     text(k) { const t = data.texts || {}; return k in t ? t[k] : k; },
     warn(m) { if (!this.warnings.includes(m)) this.warnings.push(m); },

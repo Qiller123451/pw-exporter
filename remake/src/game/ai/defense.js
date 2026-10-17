@@ -11,6 +11,12 @@ const NEAR = 28;            // an enemy this close to one of the village's build
 const HIDE = 22;            // workers take cover from attackers this close
 const SAFE = 36;
 
+// the units of the base guard or of a defence area (AIDA): claimed units leave it by drop()
+export class Pool {
+  constructor(fields = {}) { this.units = new Set(); Object.assign(this, fields); }
+  drop(u) { this.units.delete(u); }
+}
+
 export const Defense = {
   // what happened to this player since the last look (world events: deaths, hits)
   readEvents() {
@@ -33,6 +39,7 @@ export const Defense = {
         const v = e.entity, k = e.killer;
         // a worker killed by a wild animal: pest patrol there on the next strategy think (DA:689)
         if (v && v.owner === p && v.isWorker && k && !k.owner && this.multimap) this.pest = P(v);
+        if (v && v.owner === p && v.naval && this.ferryLost) this.ferryLost(v);          // (a crossing's transport: ai/naval.js)
       }
     }
     this.evI = ev.length; this.evLast = ev[ev.length - 1];
@@ -64,7 +71,7 @@ export const Defense = {
   defenseThink(S) {
     const W = this.W, p = this.p;
     if (this.prm.noDefence) { this.alarm = null; this.defending = false; return; }
-    const guard = this.guard || (this.guard = { units: new Set(), drop(u) { this.units.delete(u); } });
+    const guard = this.guard || (this.guard = new Pool());
     const threats = [];
     let animals = [];
     for (const u of W.units) {
@@ -104,6 +111,7 @@ export const Defense = {
       this.claim(add, guard);
     }
     this.militia(S, threats, have, need);
+    if (!this.alarm.animal) this.cryForHelp(S, threats.filter((u) => !u.isWorker), guard.units.size);      // (GV:696-716, ai/chat.js)
     const moved = !guard.at || Math.hypot(guard.at.x - cx, guard.at.z - cz) > 12;
     if (moved) guard.at = { x: cx, z: cz };
     for (const u of guard.units) {
@@ -183,7 +191,7 @@ export const Defense = {
     // the idle army patrols to a building that was just hit, else it stands at the guard point (GV:399-428)
     let at = null;
     if (this.hitAt && W.time - this.hitT < 15 && !this.alarm) at = this.hitAt;
-    const g = at || this.guardPoint(S);
+    const g = at || this.crystalGuard() || this.guardPoint(S);              // (a Defender game's crystal, ai/gametypes.js)
     const changed = !this.guardAt || d2(this.guardAt, g) > 8;
     this.guardAt = g;
     const R = 30;                                         // SetGuardRange(30)
@@ -205,7 +213,7 @@ export const Defense = {
       if (old) { this.release([...old.units]); this.areas.delete(id); }
       return;
     }
-    const a = old || { id, units: new Set(), drop(u) { this.units.delete(u); } };
+    const a = old || new Pool({ id });
     a.x = pos.x; a.z = pos.z; a.r = Math.max(5, +radius || 20); a.max = Math.round(maxUnits);
     this.areas.set(id, a);
     this.next.guard = Math.min(this.next.guard || 0, this.W.time + 0.2);
@@ -254,6 +262,7 @@ export const Defense = {
   towerThink(S) {
     const p = this.p, D = this.D, W = this.W;
     if (!this.prm.upgrade_towers || this.prm.noTowers || this.alarm) return;
+    if (this.gameType === 'Defender' && !this.isDefender) return;           // the attackers build no towers (DM:148)
     if ((this.extra || []).some((e) => e.tower) || S.blds.some((b) => !b.built && b.def.wallKind === 'tower')) return;
     const a = this.bestTower(S);
     if (!a) return;

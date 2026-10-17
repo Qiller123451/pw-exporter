@@ -14,9 +14,10 @@ Test: `python3 tests/evaljs.py tests/mission_ui.js "&campaign=1"` (in `tests/reg
 | element | place | original |
 |---|---|---|
 | **Quests** button | top right, left of *Menu* (`hud/menu_questbutton.tga`); flashes after a quest change until the log is opened | `IngameScreen.usl:309-326`, `QuestWindow.usl:509-523` |
-| news ticker, dialogue box | left column under the resource bar, down to the minimap (272 px × interface size) | `NewsTicker.usl` (a 235 px column); the original shows dialogue lines *through* the ticker (`DialogScene.usl:35`) |
+| news ticker | the HUD's right column (`hud.js` `rcol`): 235 px under the menu buttons, down to the minimap; the lines fade from the right edge | `NewsTicker.usl:12-13` (235 × 350 at x desktop − 235, y 37) |
+| dialogue box | bottom left, right of the army pyramid, above the info window (x 212, 198 above the bottom); a window too narrow for it between the pyramid and the minimap gets it above the minimap's top | `DialogScene.usl:143` (x 212, y desktop − (198 + height)); the original shows dialogue lines *through* the ticker (`DialogScene.usl:35`) |
 | info bar, timers | top centre under the top row; the HUD's own messages move below them | `IngameScreen.usl:281, 384`, `TimerWnd.usl` |
-| quest log | a menu window (`G.menu.open`): modal, pauses the game, Esc / L / Close | `QuestWindow.usl` (765 × 515, `CGameWrap.Pause`) |
+| quest log | a menu window (`G.menu.open`): modal, pauses the game, Esc / J / Close | `QuestWindow.usl` (765 × 515, `CGameWrap.Pause`) |
 | cutscene | full screen, above the HUD and below the menus (z-index 55): letterbox bars, subtitles | engine |
 | title card | upper third: mission title + description for 7 s, fades (earlier when a dialogue line shows); not with `?manual` | - |
 | question marks, marker rings | in the world | `QuestionMark.usl`, `MiniMap2.usl` |
@@ -91,7 +92,18 @@ ticker line; kinds `new` / `good` / `bad`) · `showTitle()` · `closeDialog()` �
 `_GAOV_Failed`), the mission title, `text` (the reason of a defeat, red), the visible quests with their result and
 "Bonus points: `points`" (without `points`: the sum of the accomplished quests "of" the possible).
 
-Keys: **L** quest log (the original has only the button). Options: "Show the mentor's hints in campaign missions".
+Keys: **J** quest log (the original has only the button; L is its weapon smith key). Options: "Show the mentor's hints in campaign missions".
+
+### Story films
+
+A sequence with `videos` (the pre-rendered films, `hs_*.bik` / `ns_*.bik`: Taslow's workshop in mission 7, the
+landings ...) plays them one after the other full screen (`playFilms` / `nextFilm`, `assets/video/<name>.webm`) with
+the game paused; the sequence's text lines are spread evenly over the films as subtitles (`filmSubtitle`; the
+original times them by its own table). Esc ends the sequence. A film that is not there (not converted yet, or the
+installation has only the 4-second placeholders of `Data/Base/Video`) shows the sequence's lines as a cutscene
+without pictures instead (`filmMissing`). The toolkit converts the films to WebM in the background the first time
+the campaign menu asks for its missions (`pwexport/video.py`: ffmpeg from the PATH or the pip package
+`imageio-ffmpeg`, installed on first use). Test: `tests/films.js`.
 
 ## 5. Hooks in other files
 
@@ -103,8 +115,10 @@ Keys: **L** quest log (the original has only the button). Options: "Show the men
 * `index.src.html`: the CSS block "campaign: mission UI".
 * `toolkit/remake.py`: `assets/SeqSounds/<path>` → `Data/<mod>/Audio/SeqSounds/<path>`.
 
-The quest button, the left column and the top stack are created by `MissionUI.build()` inside the HUD's root (so
-the HUD's own click shield covers them) - `hud.js` is untouched.
+The quest button, the dialogue box and the top stack are created by `MissionUI.build()` inside the HUD's root, the
+ticker in the HUD's right column (so the HUD's own click shield covers them). `hud.js` keeps the right column's
+scale and height and the CSS variables of the bottom-left boxes (`--s`, `--dlgw`, `--dlgb`; the sequel's radio uses
+them too). The left side is the army pyramid's.
 
 ## 6. Speech
 

@@ -35,7 +35,6 @@ BoosterPack1 - its data build does not depend on this module.
 The models of every folder stay listed whatever is chosen (model_mods, archive_list): the exporter's model viewer
 can show any mod's copy of a model.
 """
-import glob
 import os
 
 from . import scape, texts as texts_mod
@@ -195,34 +194,10 @@ class ModInstall(Install):
         low = {p.lower() for p in packs}
         return [e for e in out if e['pack'].lower() in low]
 
-    def locale_dirs(self, lang):
-        """the text folders of a language, base first: Data/locale/<lang>/Texts, then Data/<folder>/locale/<lang>/
-        Texts of every loaded mod folder (the Locale_<LANG>.info rules: a mod's texts replace the base ones)"""
-        out = [d for d in [self.locale_dir(lang)] if d]
-        for m in self.mods[1:]:
-            d = _ci_join(os.path.join(self.data, m), 'locale/%s/Texts' % lang)
-            if d and d not in out:
-                out.append(d)
-        return out
 
-
-class Texts(texts_mod.Texts):
-    """texts.Texts with the texts of the loaded mod folders over the base ones: a mod's encyclopedia files and
-    string tables (boosterpack1.ltf, mirage.ltf ...) replace and extend the base game's"""
-
-    def __init__(self, install, lang='uk'):
-        super().__init__(install, lang)
-        dirs = install.locale_dirs(lang) if hasattr(install, 'locale_dirs') else []
-        for d in dirs[1:]:
-            for f in sorted(glob.glob(os.path.join(d, 'Help', '*'))):
-                if f.lower().endswith('.seml'):
-                    with open(f, encoding='utf-8-sig', errors='replace') as fh:
-                        self.help.update(texts_mod.parse_help(fh.read()))
-            for f in sorted(glob.glob(os.path.join(d, '*'))):
-                base = os.path.basename(f).lower()
-                if base.endswith('.ltf') and not base.startswith(('sequences', 'dialogscenes')):
-                    with open(f, encoding='utf-8-sig', errors='replace') as fh:
-                        self.ltf.update(texts_mod.parse_ltf(fh.read()))
+# the texts follow the configuration through Install.locale_dirs (the mods' encyclopedia files and string tables,
+# boosterpack1.ltf, mirage.ltf ..., over the base ones)
+Texts = texts_mod.Texts
 
 
 # ---------------------------------------------------------------- ground textures

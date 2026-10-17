@@ -8,14 +8,15 @@ export class Player {
     this.name = opts.name || tribe;
     this.ai = !!opts.ai;
     this.color = opts.color || 0x3080ff;          // minimap / UI colour
-    this.partyColor = opts.partyColor ?? null;    // model tint (0xRRGGBB) or null = untinted
+    this.partyColor = opts.partyColor ?? null;
+    this.colorSlot = opts.colorSlot ?? -1;         // PlayerColor0..7 (the minimap's player colours); -1 none    // model tint (0xRRGGBB) or null = untinted
     this.team = opts.team != null ? opts.team : id;      // skirmish diplomacy: players of one team are friends
     // Diplomacy as the original keeps it (CDiplomacySrvMgr): rel[j] = this player's relation TOWARDS player j,
     // 0 hostile, 1 neutral, 2 friendly; one direction per pair (campaign maps: PlayerSettings/Player_<i>/Diplomacy,
     // ServerApp.usl:539-551). Without a table (skirmish) the teams decide; a slot the table does not cover is neutral.
     this.rel = opts.diplomacy ? opts.diplomacy.slice() : null;
     this.human = !opts.ai;
-    this.res = { food: 0, wood: 0, stone: 0, skulls: 0 };
+    this.res = { food: 0, wood: 0, stone: 0, skulls: 0, power: 0 };      // power: the sequel's electricity
     this.caps = { food: 300, wood: 300, stone: 300 };    // rescap_* default 300 (player_attrib_def.txt)
     this.maxUnits = 0;
     this.units = 0;
@@ -36,6 +37,7 @@ export class Player {
     // handicaps of a computer player by its difficulty 0-9 (game/ai/brain.js setDifficulty; docs/spec/ai.md §3), read by
     // the systems: { gather, buildTime, researchTime, weaponTime, attack, defense, pyramid: [+slots per level] | null, unitLimit }
     this.aiMods = null;
+    this.gained = { food: 0, wood: 0, stone: 0, skulls: 0 };       // collected and stored (game/stats.js)
   }
   // relation towards p: 0 hostile, 1 neutral, 2 friendly
   relation(p) {
@@ -57,31 +59,38 @@ export class Player {
   // debug mode (skirmish option, or ?debug): everything is free and builds instantly (systems/production.js,
   // systems/construction.js check `debug` for the times). Nothing is paid, so nothing is refunded either.
   canAfford(cost) { return this.debug || COSTS.every((r) => (this.res[r] || 0) >= (cost[r] || 0)); }
-  pay(cost) { if (this.debug) return; for (const r of COSTS) this.res[r] -= cost[r] || 0; }
-  // give resources back (cancelled production); storage caps apply to food/wood/stone
+  pay(cost) { if (this.debug) return; for (const r of COSTS) this.res[r] = (this.res[r] || 0) - (cost[r] || 0); }
+  // give resources back (cancelled production); storage caps apply to food/wood/stone (not to skulls and power)
   refund(cost, frac = 1) {
     if (this.debug) return;
     for (const r of COSTS) {
       const v = Math.floor((cost[r] || 0) * frac);
       if (!v) continue;
-      this.res[r] = r === 'skulls' ? this.res[r] + v : Math.max(this.res[r], Math.min(this.caps[r], this.res[r] + v));
+      this.res[r] = r === 'skulls' || r === 'power' ? (this.res[r] || 0) + v : Math.max(this.res[r], Math.min(this.caps[r], this.res[r] + v));
     }
   }
-  // CPlayer.AddResource: add resources up to the storage cap; returns the amount that didn't fit
+  // CPlayer.AddResource (Player.usl:329-353): add resources up to the storage cap - what fits is rounded to whole
+  // units (2.5 stone of a trade cart -> 3); returns the amount that didn't fit
   deliver(r, amount, time) {
-    if (r === 'skulls') { this.res.skulls += amount; return 0; }
-    const space = Math.max(0, this.caps[r] - this.res[r]);
-    const take = Math.floor(Math.min(space, amount));
-    this.res[r] += take;
-    if (take > 0) this.log.push([time, r, take]);
-    return amount - take;
+    if (r === 'skulls' || r === 'power') { this.res[r] = (this.res[r] || 0) + amount; if (r === 'power') this.log.push([time, r, amount]); return 0; }
+    const cur = this.res[r], cap = this.caps[r];
+    if (cur >= cap) return amount;
+    if (cur + amount <= cap) {
+      const v = Math.floor(cur + amount + 0.5);
+      if (v > cur) this.log.push([time, r, v - cur]);
+      this.res[r] = v;
+      return 0;
+    }
+    this.res[r] = cap;
+    this.log.push([time, r, cap - cur]);
+    return amount - (cap - cur);
   }
   incomePerMin(time) {
     while (this.log.length && this.log[0][0] < time - 60) this.log.shift();
-    const out = { food: 0, wood: 0, stone: 0 };
+    const out = { food: 0, wood: 0, stone: 0, power: 0 };
     for (const [, r, a] of this.log) out[r] += a;
     const span = Math.min(60, Math.max(10, time));
-    for (const r of RES) out[r] = Math.round(out[r] * 60 / span);
+    for (const r of [...RES, 'power']) out[r] = Math.round(out[r] * 60 / span);
     return out;
   }
   // pyramid / population check for one more unit at level lv (1..5)

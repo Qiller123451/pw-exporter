@@ -4,10 +4,12 @@ Texture/Scape/<Setting>/ScapeTexture<Q>.dat lists, for every map cell pattern, o
 variants of a material tile seamlessly, so a random mosaic of them is a faithful repeating ground texture for the
 remake's splat shader (pwexport/scape.py does the reading; the Model Exporter's map viewer uses it too).
 
-Output (<OUT>/assets/terrain): <Setting>/scape_<k>.jpg (8 materials, 512 px), <Setting>/setting.json (minimap colours),
+Output (<OUT>/assets/terrain): <Setting>/scape_<k>.jpg (8 materials, 512 px), <Setting>/setting.json (the minimap's colour table),
 <Setting>/grass.png (grass clump atlas, drawn by engine/grass.js), the jungle set again at the top (random skirmish
-maps) plus the fallback names grass_green.jpg ..., water_normal.png (sea ripples).
+maps) plus the fallback names grass_green.jpg ..., water_normal.png (sea ripples), objbrush.json (the buildings' ground
+brushes: how the ground levels where a player puts one down, game/ground.js).
 """
+import base64
 import json
 import os
 import sys
@@ -18,9 +20,8 @@ try:
 except ImportError:
     import paths
 from pwexport import scape                    # noqa: E402
-from pwexport.install import Install          # noqa: E402
 
-SETTINGS = ['Jungle', 'Northland', 'Savanna', 'Icewaste', 'Ashvalley', 'Cave1']
+SETTINGS = ['Jungle', 'Northland', 'Savanna', 'Icewaste', 'Ashvalley', 'Cave1', 'Cave2', 'Cave3']     # (Cave2: the volcano crater of mission 16)
 FALLBACK = ['grass_green', 'grass_yellow', 'dirt', 'rock', 'mud', 'sand']
 
 
@@ -43,14 +44,41 @@ def grass(game, setting, out):
     return True
 
 
+def brushes(game, base, log):
+    """objbrush.json: {'metres_per_pixel', 'brushes': {gfx: {'w', 'h', 'a': base64 alpha, 'm': base64 ground material
+    0..7 per pixel, row 0 = -y of the model}}} (pwexport/scape.py obj_brushes, brush_materials)"""
+    out = {}
+    for name, img in scape.obj_brushes(game).items():
+        h, w = img.shape[:2]
+        out[name] = {'w': int(w), 'h': int(h), 'a': base64.b64encode(img[:, :, 3].tobytes()).decode('ascii'),
+                     'm': base64.b64encode(scape.brush_materials(img).tobytes()).decode('ascii')}
+    with open(os.path.join(base, 'objbrush.json'), 'w') as f:
+        json.dump({'metres_per_pixel': scape.BRUSH_METRES_PER_PIXEL, 'brushes': out}, f, separators=(',', ':'))
+    log('object brushes', len(out))
+
+
+def minimap_colors(game, setting):
+    """the setting's minimap colour table Texture/Scape/<Setting>/minimap_colors.tga (21 x 6, docs/MINIMAP.md): rows
+    [visible ground, buildings, units, explored ground, buildings / units in the fog] x columns [5 relief shades, the
+    same for special ground, shallow water, deep water, forest, resources, items, (passability), player colours ...],
+    each [r, g, b, a]. The engine keeps them as ARGB4444 textures: 4 bits a channel. None if the setting has none."""
+    f = game.file('Texture/Scape/%s/minimap_colors.tga' % setting)
+    if not f:
+        return None
+    im = Image.open(f).convert('RGBA')
+    q = lambda c: (c & 0xF0) | (c >> 4)
+    return [[[q(c) for c in im.getpixel((x, y))] for x in range(im.size[0])] for y in range(im.size[1])]
+
+
 def run(log=print, progress=None):
-    game = Install(paths.DATA)
+    game = paths.game()
     base = os.path.join(paths.OUT, 'assets', 'terrain')
     os.makedirs(base, exist_ok=True)
     # sea ripples (the same normal map for every setting)
     wn = game.file('Texture/Scape/Settings/Jungle/WaterNormalMap.tga')
     if wn:
         Image.open(wn).convert('RGB').resize((512, 512), Image.BILINEAR).save(os.path.join(base, 'water_normal.png'))
+    brushes(game, base, log)
     for i, s in enumerate(SETTINGS):
         if progress:
             progress('Ground textures: %s' % s, i / len(SETTINGS))
@@ -60,16 +88,14 @@ def run(log=print, progress=None):
         out = os.path.join(base, s)
         os.makedirs(out, exist_ok=True)
         imgs = scape.material_textures(game, s)
-        cols = []
         for k, img in enumerate(imgs):
             img.save(os.path.join(out, 'scape_%d.jpg' % k), quality=90)
-            cols.append([int(c) for c in img.resize((1, 1), Image.BILINEAR).getpixel((0, 0))])
             if s == 'Jungle':
                 img.save(os.path.join(base, 'scape_%d.jpg' % k), quality=90)
                 if k < len(FALLBACK):
                     img.resize((256, 256)).save(os.path.join(base, FALLBACK[k] + '.jpg'), quality=88)
         with open(os.path.join(out, 'setting.json'), 'w') as f:
-            json.dump({'materials': 8, 'minimap': cols}, f)
+            json.dump({'materials': 8, 'minimap': minimap_colors(game, s)}, f)
         grass(game, s, out)
         log(s, 'ok')
 

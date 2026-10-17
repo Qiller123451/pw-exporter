@@ -1,6 +1,5 @@
-"""Step "menu": the original menu art (Data/Base/UI/menue/**) -> <OUT>/assets/ui/menu/menue__<folder>__<name>.png|jpg.
+"""Step "menu": the original menu art (UI/menue/** of every Data folder of the configuration) -> <OUT>/assets/ui/menu/menue__<folder>__<name>.png|jpg.
 Used by the menus and the loading screen (index.src.html CSS, src/ui/menu.js)."""
-import glob
 import os
 import shutil
 import stat
@@ -21,16 +20,15 @@ def _writable(dst):
 
 
 def run(log=print, progress=None):
-    src = paths.data('Base/UI/menue')
     out = os.path.join(paths.OUT, 'assets', 'ui', 'menu')
     os.makedirs(out, exist_ok=True)
     n = 0
-    for f in glob.glob(os.path.join(src, '**', '*'), recursive=True):
-        ext = os.path.splitext(f)[1].lower()
+    # the menu art of every folder of the configuration (a mod ships only what it changes or adds)
+    for rel, f in paths.game().tree('UI/menue').items():
+        ext = os.path.splitext(rel)[1]
         if ext not in ('.tga', '.jpg', '.png'):
             continue
-        rel = os.path.relpath(f, src)
-        name = 'menue__' + '__'.join(os.path.splitext(rel)[0].split(os.sep)).lower()
+        name = 'menue__' + '__'.join(os.path.splitext(rel)[0].split('/'))
         if ext == '.jpg':
             # copyfile: data only, not the permission bits (the game's files are often read-only)
             shutil.copyfile(f, _writable(os.path.join(out, name + '.jpg')))

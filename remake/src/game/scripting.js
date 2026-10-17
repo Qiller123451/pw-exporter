@@ -1,6 +1,8 @@
 // World methods for mission scripting (the trigger engine of the campaign calls these; nothing here is specific to
 // one trigger). Game coordinates, Player objects and 1-based levels like everywhere in the world code; the campaign
 // layer (game/campaign/setup.js) wraps them for map coordinates, player slots and 0-based levels.
+import { DELAYED } from './delayed.js';
+
 const RES_NAME = { food: 'food', wood: 'wood', stone: 'stone', iron: 'skulls', skulls: 'skulls' };
 const warned = new Set();
 const warnOnce = (msg) => { if (!warned.has(msg)) { warned.add(msg); console.warn(msg); } };
@@ -19,18 +21,44 @@ export const Scripting = {
   // may unit / tower u be ORDERED to attack t? Hostile and ownerless targets: yes. A neutral player's object: yes -
   // the order makes both players hostile (declareWar). Never if either player is a friend of the other
   // (FightingObj.usl:6594-6603, single player).
+  // A skirmish (multiplayer level): anyone may be attacked, except a friend while the diplomacy is locked
+  // (FightingObj.usl:6604-6612).
   attackAllowed(u, t) {
     if (!u || !t || !t.alive || t === u || t.kind === 'res') return false;
     const a = u.owner, b = t.owner;
     if (!a || !b) return true;
     if (a === b) return false;
+    if (this.rules && this.rules.multiplayer) return !(this.rules.diplomacyLocked && a.isFriend(b));
     return !(a.isFriend(b) || b.isFriend(a));
+  },
+  // a player's opinion of another set in the diplomacy window (SetMyOpinion, DiplomacyWindow.usl:155-172), told to
+  // everybody (ServerApp.usl:710-737: _NT_DiplChangeEnemy / Neutral / Ally)
+  changeOpinion(a, b, rel) {
+    if (!a || !b || a === b || a.relation(b) === rel) return false;
+    this.setDiplomacy(a, b, rel);
+    const key = ['_NT_DiplChangeEnemy', '_NT_DiplChangeNeutral', '_NT_DiplChangeAlly'][rel];
+    for (const p of this.players) this.emit('msg', { player: p, key, arg: [a.name, b.name], kind: rel === 0 ? 'bad' : '' });
+    return true;
+  },
+  // resources sent to another player (ServerApp.usl TransferTribute 796-836): food, wood or stone, at most what the
+  // sender has, to anybody (enemies too), no fee, and the receiver's storage limit does not apply
+  tribute(from, to, res, n) {
+    if (!from || !to || from === to || !['food', 'wood', 'stone'].includes(res)) return 0;
+    n = Math.min(Math.floor(n) || 0, Math.floor(from.res[res] || 0));
+    if (n <= 0) return 0;
+    from.res[res] -= n;
+    to.res[res] = (to.res[res] || 0) + n;
+    this.emit('tribute', { from, to, res, n });
+    this.emit('msg', { player: to, key: '_NT_DiplTribute', arg: [this.data.ui('_UI_DiplWind_' + res, res), n, from.name] });
+    return n;
   },
   // an attack order on a non-hostile player's object: both sides become hostile (FightingObj.usl:6613-6614)
   declareWar(a, b) {
     if (!a || !b || a === b || (a.isEnemy(b) && b.isEnemy(a))) return false;
     a.setRelation(b, 0); b.setRelation(a, 0);
     this.emit('diplomacy', { a, b, rel: 0, mutual: true, attacked: true });
+    // a skirmish: everybody hears of it (_NT_DiplChangeEnemyAttacked, FightingObj.usl:6613-6618)
+    if (this.rules && this.rules.multiplayer) for (const p of this.players) this.emit('msg', { player: p, key: '_NT_DiplChangeEnemyAttacked', arg: [a.name, b.name], kind: 'bad' });
     return true;
   },
 
@@ -133,7 +161,7 @@ export const Scripting = {
     if (!e) return;
     e.invulnT = on ? 1e12 : 0;
     e.invulnUntil = on && seconds > 0 ? this.time + seconds : 0;
-    if (e.invulnUntil) this.later(seconds, () => { if (e.invulnUntil && this.time >= e.invulnUntil - 1e-6) { e.invulnT = 0; e.invulnUntil = 0; } });
+    if (e.invulnUntil) this.later(seconds, 'invulnEnd', { e });
   },
   // set a unit's level (1..5) without paying skulls or playing the level-up (SetLevelClean); full hit points
   setLevel(u, level) {
@@ -236,3 +264,8 @@ export const Scripting = {
     return out;
   },
 };
+
+Object.assign(DELAYED, {
+  // the end of a timed invulnerability (a later call for the same object may have extended it)
+  invulnEnd(W, { e }) { if (e.invulnUntil && W.time >= e.invulnUntil - 1e-6) { e.invulnT = 0; e.invulnUntil = 0; } },
+});

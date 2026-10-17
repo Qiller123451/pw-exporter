@@ -5,6 +5,7 @@
 // docs/CAMPAIGN_RUNTIME.md. An action that finds nothing to work on does nothing; an exception is caught by the
 // engine and recorded in G.campaign.errors.
 import { toInt, valueString } from './trigutil.js';
+import { JOBS } from '../delayed.js';
 
 const on = (v, d = false) => (v == null || v === '' ? d : v === true || v === '1' || v === 'true' || v === 1);
 const num = (v, d = 0) => { const n = parseFloat(v); return Number.isFinite(n) ? n : d; };
@@ -91,16 +92,20 @@ const DO = {
   'Close Gate'(E, u, rec) { gate(E, u, rec, 1); },
   'Auto Gate'(E, u, rec) { gate(E, u, rec, 2); },
   SetRallyPoint(E, u, rec, prm) { const v = E.C.vec(prm[0]); if (u && v && !v.zero) u.rally = [v.x, v.z]; },
-  // the actor receives the first object of the dst query as an item; the next actor gets the next (AF:1390-1395).
-  // The remake has no item objects: an item of the wanted class that somebody carries changes hands.
-  GiveItem(E, u, rec, prm, targets, p) {
-    const cls = String(p.dst_obj_class || '').toLowerCase();
-    if (!/^item_/.test(cls)) return;
-    for (const r of E.C.objects.all) { const i = (r.items || []).findIndex((c) => c.toLowerCase() === cls); if (i >= 0 && r !== rec) { r.items.splice(i, 1); E.giveItem(rec, cls, false); return; } }
+  // the actor receives the first object of the dst query as an item; the next actor gets the next (AF:1390-1395;
+  // FightingObj.AddItem: one that carries an item already gets none)
+  GiveItem(E, u, rec, prm, targets) {
+    const i = targets.findIndex((r) => r.prop && r.prop.item);
+    if (i < 0) return;
+    const it = targets.splice(i, 1)[0].prop;
+    if (!u || u.kind !== 'unit' || u.item) return;
+    if (it.item.carrier) E.W.dropItem(it.item.carrier);
+    E.W.takeItem(u, it);
   },
   // a worker is sent to build / finish the first building of the dst query
   BuildUp(E, u, rec, prm, targets) { const b = ents(targets).find((e) => e.kind === 'building'); if (u && b && u.kind === 'unit') E.W.order([u], { type: 'build', target: b }); },
-  JumpOffWall() {},
+  // the Scorpion of mission 16 wakes up (Building.usl CScorpionBoss.HandleGamePlayCommand "/JumpOffWall")
+  JumpOffWall(E, u) { if (u && u.behaviour && u.behaviour.activate) u.behaviour.activate(u, E.W); },
 };
 function gate(E, u, rec, state) {
   if (u && u.kind === 'building' && u.def && u.def.gate && E.W.setGate) { E.W.setGate(u, state); return; }
@@ -212,6 +217,11 @@ export const ACTIONS = {
     const v = E.C.vec(p.position);
     A.play(p.soundname, v && !v.zero && E.W.height ? { x: v.x, y: E.W.height(v.x, v.z), z: v.z } : null);
   },
+  // CActionMusic: a track for every player, once (the Trigger switch) or looped (BackgroundLeveled)
+  MUSI(E, p) { const A = E.G && E.G.audio; if (A && A.mus && p.musicfile) A.mus.trigger(p.musicfile, toInt(p.loop) === 1); },
+  // CActionWeather: chgtype 0 starts the weather program of a file (progpath), any other the next track of the running
+  // one (Game.usl "WeatherChg"; systems/landmarks.js). No mission uses it and the game has no program files.
+  WTHR(E, p) { if (toInt(p.chgtype) !== 0) E.W.nextWeatherTrack(); else E.unknown('action', 'WTHR program ' + (p.progpath || '')); },
 
   // ------------------------------------------------------------------------------------------- 5.3 objects
   ACDO(E, p, t) {
@@ -249,17 +259,17 @@ export const ACTIONS = {
     const mode = toInt(p.patrolmode), speed = num(p.walkspeed, 2), straight = on(p.straightwalk);
     for (const u of units(objs(E, p, t))) E.startPatrol(u, pts, mode, speed, straight);
   },
-  // AF:745-896: one object of class obj_name
+  // AF:745-896: one object of class obj_name; obj_owner missing = 0 (GetValueInt, the editor does not store 0)
   COBJ(E, p, t) {
     const C = E.C;
     let v = C.vec(p.obj_pos), rot = C.vec(p.obj_rot);
     let heading = rot ? rot.mz : num(p.obj_rot, 0);
     if (on(p.pos_from_obj)) {
       const r = objs(E, p, t, 'trgt_')[0];
-      if (r) { const [x, z] = posOf(E, r); const [mx, my] = C.toMap(x, z); v = { x, z, mx, my }; heading = r.entity ? r.entity.heading || 0 : r.prop ? r.prop.rot || 0 : heading; }
+      if (r) { const [x, z] = posOf(E, r); const [mx, my] = C.toMap(x, z); v = { x, z, mx, my }; heading = r.entity ? C.heading(r.entity.heading || 0) : r.prop ? C.heading(r.prop.rot || 0) : heading; }   // world heading -> map angle (C.heading is its own inverse)
     }
     if (!v) return;
-    const slot = slotOf(p.obj_owner, -1), level0 = Math.max(0, toInt(p.obj_level));
+    const slot = slotOf(p.obj_owner, 0), level0 = Math.max(0, toInt(p.obj_level));
     if (!on(p.ignore_pyramid, true) && !slotFree(E, C.player(slot), level0 + 1)) return;
     const rec = C.spawn(p.obj_name, slot, v.mx, v.my, { level0, rot: heading });
     if (!rec) E.warn(`${t.name}: COBJ ${p.obj_name} could not be created`);
@@ -297,37 +307,19 @@ export const ACTIONS = {
     const target = v && !v.zero ? v : null;
     DO.SetAnim(E, null, src, ['open', '1']);
     if (src.entity && src.entity.kind === 'building' && target) src.entity.rally = [target.x, target.z];
-    list.forEach((e, i) => E.after(i * delay, () => {
-      const [x, z] = src.alive ? exitPoint(E, src, target) : target ? [target.x, target.z] : posOf(E, src);
-      const rec = spawnOne(E, e.cls, slot, x, z, e.level, group, t, false);
-      const u = rec && rec.entity;
-      if (u && u.kind === 'unit' && target) W.order([u], { type: 'move', x: target.x, z: target.z, auto: true });
-    }, t));
-    E.after((list.length - 1) * delay + 2.5, () => { if (src.alive) DO.SetAnim(E, null, src, ['close', '1']); }, t);
+    list.forEach((e, i) => E.after(i * delay, 'spawnOut', { src, target, cls: e.cls, level: e.level, slot, group }, t));
+    E.after((list.length - 1) * delay + 2.5, 'closeSpawner', { src }, t);
   },
-  // AF:2644-2865: a transporter with passengers "class/level|..." (levels 1-based)
+  // AF:2644-2865: a transporter with passengers "class/level|..." (levels 1-based); obj_owner missing = 0
   CPLX(E, p, t) {
     const C = E.C, W = E.W, v = C.vec(p.obj_pos);
     if (!v) return;
-    const slot = slotOf(p.obj_owner, -1);
+    const slot = slotOf(p.obj_owner, 0);
     const lvl = Math.max(1, toInt(p.cptlvl || '1'));
     if (!on(p.ignore_pyramid, true) && !slotFree(E, C.player(slot), lvl)) return;
     const tr = C.spawn(p.obj_name, slot, v.mx, v.my, { level: lvl });
     if (!tr || !tr.entity) { E.warn(`${t.name}: CPLX ${p.obj_name} could not be created`); return; }
-    E.after(0.2, () => {
-      const T = tr.entity;
-      if (!T || !T.alive) return;
-      for (const e of String(p.passengers || '').split('|')) {
-        const [cls, lv] = e.trim().split('/');
-        if (!cls) continue;
-        const cap = W.capacity ? W.capacity(T) : 0;
-        if ((T.passengers || []).length >= cap) break;
-        const [mx, my] = C.toMap(T.pos.x, T.pos.z);
-        const r = C.spawn(cls, slot, mx, my, { level: Math.max(1, toInt(lv || '1')), exact: true });
-        if (!r || !r.entity) { E.warn(`${t.name}: CPLX passenger ${cls} could not be created`); continue; }
-        if (W.enterTransport && r.entity.kind === 'unit') W.enterTransport(r.entity, T);
-      }
-    }, t);
+    E.after(0.2, 'loadPassengers', { tr, passengers: String(p.passengers || ''), slot }, t);
   },
   // AF:4334-4406: the FIRST object of the query becomes an object of class new_obj (same place, rotation, owner)
   REPL(E, p, t) {
@@ -335,7 +327,7 @@ export const ACTIONS = {
     if (!rec) return;
     const [x, z] = posOf(E, rec), [mx, my] = C.toMap(x, z);
     const e = rec.entity, slot = rec.slot;
-    const rot = e ? e.heading || 0 : rec.prop ? rec.prop.rot || 0 : 0;
+    const rot = e ? C.heading(e.heading || 0) : rec.prop ? C.heading(rec.prop.rot || 0) : 0;   // the map angle (C.heading is its own inverse)
     const y = rec.prop ? rec.prop.pos.y : null;
     const group = rec.group;
     C.remove(rec);
@@ -377,8 +369,13 @@ export const ACTIONS = {
     }
     for (const T of ents(a)) if (T.passengers && T.passengers.length && W.unloadAll) { W.unloadAll(T, false); E.touch(); }
   },
-  // a particle effect: decoration, not shown
-  EFCT() {},
+  // AF:6108-6182 CActionEffect: an effect of the particle database at pos, or at the first object of the query
+  EFCT(E, p, t) {
+    let at = null;
+    if (on(p.use_objquery)) { const r = objs(E, p, t)[0]; if (r) { const [x, z] = posOf(E, r); at = { x, z }; } }
+    if (!at) at = E.C.vec(p.pos);
+    if (at) E.playEffect(p.effect_path, at.x, at.z, toInt(p.loop_value));
+  },
   // AF:2258-2337: all appearance bits at once
   OBAP(E, p, t) { const f = toInt(p.flags); for (const rec of objs(E, p, t)) E.C.setAppearance(rec, f); E.touch(); },
 
@@ -401,8 +398,8 @@ export const ACTIONS = {
   TECH(E, p) {
     for (const l of lines(p.filters)) {
       const [pl, act, path] = l.split('|');
-      const P = E.C.player(toInt(pl));
-      if (P && path) E.W.setFilter(P, path.trim(), toInt(act) === 1);
+      const P = E.C.player(toInt(pl)), f = P && path ? E.C.filterFor(P, path.trim()) : null;
+      if (f) E.W.setFilter(P, f, toInt(act) === 1);
     }
   },
   // AF:3246-3334: lines "plyr1|relation|plyr2", one direction each
@@ -509,20 +506,51 @@ export function prescanActions(C, aiData) {
 export const ACTION_STATUS = {
   TRIG: ['implemented', ''], ACND: ['implemented', 'deactivate covers sub-folders, activate only the folder itself'],
   QUIT: ['implemented', 'G.endMission(true)'], GAOV: ['implemented', 'G.endMission(false) 4 s later with the reason text'],
-  BONI: ['implemented', 'G.campaign.boni (not carried to the next mission: there is no army screen)'],
+  BONI: ['implemented', 'G.campaign.boni; a won mission gives the next one at least that army budget (main.js G.endMission)'],
   FDBK: ['ignored', 'designer debug texts, off in the original too; printed with &trace'],
   SQNZ: ['implemented', 'G.mission.playSequence; end event, camera_data, quit'], DGSC: ['implemented', 'G.mission.playDialog; DSEN on its end'],
   QUES: ['implemented', ''], QMRK: ['implemented', 'state and tooltip (G.campaign.setQuestionMark)'], MPNG: ['implemented', 'G.mission.marker / removeMarker; only markers for the human player'],
   INBA: ['implemented', 'refreshed when a variable changes'], TIMR: ['implemented', 'create / pause / unpause / kill'], PSND: ['implemented', 'G.audio.play if the sound event exists'],
-  ACDO: ['implemented', 'WalkAction, Aggressive Walk, Attack, SetPos, RotateTo, SetAnim, Invulnerability, AbortTask, Stop, Kill, FullHeal, Open / Close / Auto Gate, SetRallyPoint, BuildUp; GiveItem approximated; JumpOffWall ignored'],
+  MUSI: ['implemented', 'G.audio.mus.trigger (engine/music.js); no mission of the campaign uses it'],
+  WTHR: ['approximated', 'the next track of the level\'s weather program (systems/landmarks.js); a program file (chgtype 0) is not loaded - the game has none, no mission uses it'],
+  ACDO: ['implemented', 'WalkAction, Aggressive Walk, Attack, SetPos, RotateTo, SetAnim, Invulnerability, AbortTask, Stop, Kill, FullHeal, Open / Close / Auto Gate, SetRallyPoint, BuildUp, GiveItem, JumpOffWall (the Scorpion wakes)'],
   WYPT: ['approximated', 'patrol driver in the engine (once / circle / back and forth); fighters walk as an attack-move; straightwalk ignored (path finding)'],
   COBJ: ['implemented', ''], OCPY: ['implemented', 'highlight ignored'], UNIT: ['implemented', 'hitpoints only (all that occurs)'],
   SPGR: ['approximated', 'units leave a spawn building on the line towards `pos` (no link points); §buildup variants ignored'],
   CPLX: ['implemented', ''], REPL: ['implemented', ''], DELO: ['implemented', ''], ADGR: ['implemented', ''],
   TRSP: ['approximated', 'mount: board orders to the nearest passengers; dismount: every transporter of the query unloads'],
-  EFCT: ['ignored', 'particle effect (decoration)'], OBAP: ['implemented', 'visible / hitable / selectable; the other bits are kept on the record'],
+  EFCT: ['implemented', 'the model of the particle database (sequencer/particles.txt) for loop_value × its length; not kept in saved games'], OBAP: ['implemented', 'visible / hitable / selectable; the other bits are kept on the record'],
   VARS: ['implemented', ''], RSRC: ['implemented', ''], TECH: ['implemented', ''], DIPL: ['implemented', ''], POPL: ['implemented', ''], BLSL: ['implemented', ''],
   PLCP: ['implemented', ''], SNFA: ['implemented', ''], ARGN: ['implemented', ''], MRGN: ['implemented', ''], SFOW: ['implemented', ''],
   AIBV: ['implemented', 'brain.setBehaviour'], AIFT: ['implemented', 'brain.startAttack / startAutoAttack'], AIDA: ['implemented', 'brain.setDefenceArea'],
   AILU: ['implemented', 'brain.lockUnits; the query runs when the action fires'], AIAM: ['implemented', 'world.setAggro'], AIRG: ['implemented', 'brain.setRegionMap'], AICM: ['implemented', 'brain.callModule (unused by the campaign)'],
 };
+
+// the delayed parts of the actions (TriggerEngine.after, game/delayed.js)
+Object.assign(JOBS, {
+  // SPGR out of a building: one unit leaves it and walks on to the target
+  spawnOut(E, { src, target, cls, level, slot, group }, t) {
+    const W = E.W;
+    const [x, z] = src.alive ? exitPoint(E, src, target) : target ? [target.x, target.z] : posOf(E, src);
+    const rec = spawnOne(E, cls, slot, x, z, level, group, t, false);
+    const u = rec && rec.entity;
+    if (u && u.kind === 'unit' && target) W.order([u], { type: 'move', x: target.x, z: target.z, auto: true });
+  },
+  closeSpawner(E, { src }) { if (src.alive) DO.SetAnim(E, null, src, ['close', '1']); },
+  // CPLX: the passengers board the transporter
+  loadPassengers(E, { tr, passengers, slot }, t) {
+    const C = E.C, W = E.W;
+    const T = tr.entity;
+    if (!T || !T.alive) return;
+    for (const e of passengers.split('|')) {
+      const [cls, lv] = e.trim().split('/');
+      if (!cls) continue;
+      const cap = W.capacity ? W.capacity(T) : 0;
+      if ((T.passengers || []).length >= cap) break;
+      const [mx, my] = C.toMap(T.pos.x, T.pos.z);
+      const r = C.spawn(cls, slot, mx, my, { level: Math.max(1, toInt(lv || '1')), exact: true });
+      if (!r || !r.entity) { E.warn(`${t.name}: CPLX passenger ${cls} could not be created`); continue; }
+      if (W.enterTransport && r.entity.kind === 'unit') W.enterTransport(r.entity, T);
+    }
+  },
+});

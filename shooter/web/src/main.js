@@ -39,6 +39,7 @@ class Game {
     try { Object.assign(this.settings, JSON.parse(localStorage.getItem('pwshooter.settings') || '{}')); } catch (e) { /* first start */ }
     if (params.get('quality')) this.settings.quality = params.get('quality');
     if (params.get('difficulty')) this.settings.difficulty = params.get('difficulty');
+    if (params.has('models')) this.settings.models = params.get('models');        // '' | hd | remodel (pwexport/hd)
     this.settings.test = TEST;
     this.state = 'loading';            // loading | menu | play | pause | end
     this.timeScale = 1; this.stop = 0; this.slow = null;
@@ -76,6 +77,9 @@ class Game {
     this.log.attach(this);
     THREE.Cache.enabled = true;          // one image per file, however many models use it (see engine.warm)
     await initAssets('data/assets/');
+    // HD versions of models (python -m pwexport.hd; server: /api/hd, /data/hd/<model>/<variant>.glb) - Settings "Models"
+    try { Assets.hd = await (await fetch('api/hd')).json(); } catch (e) { Assets.hd = {}; }
+    Assets.hdVariant = this.settings.models || '';
     Assets.maxAniso = Math.min(8, this.engine.renderer.capabilities.getMaxAnisotropy());
     const gamedata = await (await fetch('data/gamedata.json')).json();
     this.audio = new Audio('data/assets/');
@@ -185,7 +189,9 @@ class Game {
   }
   applySettings() {
     const s = this.settings;
-    try { localStorage.setItem('pwshooter.settings', JSON.stringify({ quality: s.quality, difficulty: s.difficulty, sensitivity: s.sensitivity, invertY: s.invertY, volume: s.volume, blood: s.blood, numbers: s.numbers, showFps: s.showFps, music: s.music })); } catch (e) { /* private mode */ }
+    try { localStorage.setItem('pwshooter.settings', JSON.stringify({ quality: s.quality, difficulty: s.difficulty, sensitivity: s.sensitivity, invertY: s.invertY, volume: s.volume, blood: s.blood, numbers: s.numbers, showFps: s.showFps, music: s.music, models: s.models })); } catch (e) { /* private mode */ }
+    // other models: the mission loads again with them (from where it was started)
+    if (Assets.hd && (s.models || '') !== (Assets.hdVariant || '')) { Assets.hdVariant = s.models || ''; this.restart(false, this.from || 0); }
     if (this.engine && s.quality !== this._q) { this._q = s.quality; this.engine.applyQuality(); }
     if (this.audio) { this.audio.vol.master = s.volume; this.audio.applyVolumes(); }
     if (this.hud) this.hud.fps.style.display = s.showFps ? '' : 'none';

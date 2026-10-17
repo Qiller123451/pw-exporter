@@ -89,6 +89,7 @@ export class Actor {
 // Something built onto a model with its own animation and crew - a turret, a catapult:
 //   addon = {model, link, clip, crew: [[model, link on the addon, idle clip, clip when it fires]]}  (or a list of them)
 // Returns {obj, links, fire(), update(dt), muzzle(out)} (or null); fire() plays the addon's and the crew's clips once.
+const _a = new THREE.Vector3();
 export function addAddon(actor, A, templates) {
   // several of them (the two ballistas of the titan): they take turns
   if (Array.isArray(A)) {
@@ -98,11 +99,13 @@ export function addAddon(actor, A, templates) {
     return { obj: list[0].obj, links: list[0].links, list,
       fire() { k = (k + 1) % list.length; list[k].fire(); },
       update(dt) { for (const x of list) x.update(dt); },
+      aim(p, dt) { for (const x of list) x.aim(p, dt); },
       muzzle(out) { return list[k].muzzle(out); } };
   }
   const t = templates.get(A.model), obj = t && actor.attach(A.link, t);
   if (!obj) return null;
   const links = linksOf(obj), anim = new AnimCtl(obj, t.clips), crew = [];
+  let fwd = null;
   for (const [m, link, idle, atk] of A.crew || []) {
     const ct = templates.get(m), l = links[link];
     if (!ct || !l) continue;
@@ -123,6 +126,24 @@ export function addAddon(actor, A, templates) {
     },
     update(dt) { anim.update(dt); for (const c of crew) c.an.update(dt); },
     muzzle(out) { const l = links[A.muzzle || 'Proj'] || links.unnamed; return l ? l.getWorldPosition(out) : obj.getWorldPosition(out).setY(out.y + 1); },
+    // A.aims (radians a second): the thing turns on its link towards the point p - a launcher, the top of a gun.
+    // It hangs in the link's frame, where z is up, so it turns about z; which way its barrel looks is taken from
+    // its muzzle link (A.fwd = [x, y] in its own frame where that link sits in the middle), and which way a turn
+    // goes is tried out rather than assumed.
+    aim(p, dt) {
+      if (!A.aims) return;
+      const Y = (r) => { obj.rotation.z = r; obj.updateWorldMatrix(true, false); _a.set(fwd.x, fwd.y, 0).transformDirection(obj.matrixWorld); return Math.atan2(_a.x, _a.z); };
+      if (!fwd) {
+        fwd = new THREE.Vector3(0, 1, 0);
+        if (A.fwd) fwd.set(A.fwd[0], A.fwd[1], 0).normalize();
+        else { const l = links[A.muzzle || 'Proj']; if (l) { const r0 = obj.rotation.z; obj.rotation.z = 0; obj.updateWorldMatrix(true, true); obj.worldToLocal(l.getWorldPosition(_a)); obj.rotation.z = r0; _a.z = 0; if (_a.length() > 0.3) fwd.copy(_a).normalize(); } }
+      }
+      const r = obj.rotation.z, y0 = Y(r), y1 = Y(r + 0.02);
+      const sign = Math.sin(y1 - y0) >= 0 ? 1 : -1;
+      obj.getWorldPosition(_a);
+      let e = Math.atan2(p.x - _a.x, p.z - _a.z) - y0; e = Math.atan2(Math.sin(e), Math.cos(e));
+      obj.rotation.z = r + sign * Math.max(-A.aims * dt, Math.min(A.aims * dt, e));
+    },
   };
 }
 

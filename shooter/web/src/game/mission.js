@@ -332,7 +332,8 @@ export class Mission {
       done = this.targets.every((t) => !t.alive);
       // the marker points at the nearest one still standing
       let best = null, bd = 1e9;
-      for (const t of this.targets) { if (!t.alive) continue; const d = t.pos.distanceTo(P.pos); if (d < bd) { bd = d; best = t; } }
+      // (what stands in the smoke of a smoke tower is not pointed at while anything else is left)
+      for (const pass of [0, 1]) { for (const t of this.targets) { if (!t.alive || (pass === 0 && t.smoked)) continue; const d = t.pos.distanceTo(P.pos); if (d < bd) { bd = d; best = t; } } if (best) break; }
       if (best) { this.goalPos = [best.pos.x, best.pos.z]; this.goalRadius = best.def.radius + 16; this.marker.set(best.pos.x, best.pos.y + best.def.height + 2, best.pos.z); }
     } else if (o.type === 'boss') {
       done = this.bosses.every((b) => !b.alive);

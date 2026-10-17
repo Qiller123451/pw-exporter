@@ -31,7 +31,7 @@ const T = {
     loadingExp: (s, p) => `Reading the game files… ${p}% ${s || ''}`,
     remake: 'ParaWorld Remake',
     remakeText: 'The game rebuilt for the browser, with the models, sounds, maps and rules of your installation.',
-    remakeList: ['Skirmish against the computer on the original maps or random maps', 'All four tribes, their units, buildings, upgrades and epochs'],
+    remakeList: ['The campaign\'s 17 missions, playable with any tribe and with a mod', 'Skirmish against the computer on the original maps or random maps', 'Containment (1964): a new SEAS campaign of ten missions (needs MIRAGE)'],
     play: 'Play', prepare: 'Prepare the game data', rebuild: 'Rebuild game data',
     ready: 'Ready', notReady: 'Game data not prepared yet', building: 'Preparing…', failed: 'Preparing failed',
     reasons: { 'not built': 'The first start converts the models, textures and rules of your installation (about 5–15 minutes, once).',
@@ -42,6 +42,12 @@ const T = {
     elapsed: (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} min`,
     gameAt: 'Game folder:', change: 'Change', dataAt: 'Toolkit data:', github: 'About & help',
     builtIn: (s) => `prepared in ${Math.round(s / 60)} min`,
+    dataTip: 'The converted models and the remake\'s game data (several GB). Change moves them to another folder, e.g. onto another drive.',
+    dataPick: 'Where should the toolkit keep its data?',
+    dataAsk: (size, to) => `Move the toolkit's data (${size}) to\n${to}?\n\nThe game data can't be prepared while it moves.`,
+    dataMoving: (p) => `Moving the toolkit's data… ${p}%`, dataWait: 'Waiting for the film conversion to stop…',
+    dataWhere: (p) => `It is stored in ${p} (Toolkit data, below: Change moves it, e.g. onto another drive).`,
+    dataEnv: '(set by PWTOOLKIT_DATA)', dataFailed: 'Could not move the data:',
   },
   de: {
     title: 'ParaWorld Toolkit',
@@ -59,7 +65,7 @@ const T = {
     loadingExp: (s, p) => `Spieldateien werden gelesen… ${p}% ${s || ''}`,
     remake: 'ParaWorld Remake',
     remakeText: 'Das Spiel für den Browser nachgebaut – mit den Modellen, Klängen, Karten und Regeln deiner Installation.',
-    remakeList: ['Gefechte gegen den Computer auf den Originalkarten oder Zufallskarten', 'Alle vier Völker mit ihren Einheiten, Gebäuden, Verbesserungen und Epochen'],
+    remakeList: ['Die 17 Missionen der Kampagne, mit jedem Volk und mit einer Mod spielbar', 'Gefechte gegen den Computer auf den Originalkarten oder Zufallskarten', 'Containment (1964): eine neue SEAS-Kampagne mit zehn Missionen (braucht MIRAGE)'],
     play: 'Spielen', prepare: 'Spieldaten vorbereiten', rebuild: 'Spieldaten neu erstellen',
     ready: 'Bereit', notReady: 'Spieldaten noch nicht vorbereitet', building: 'Wird vorbereitet…', failed: 'Vorbereitung fehlgeschlagen',
     reasons: { 'not built': 'Beim ersten Start werden Modelle, Texturen und Regeln deiner Installation umgewandelt (etwa 5–15 Minuten, einmalig).',
@@ -70,11 +76,20 @@ const T = {
     elapsed: (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} Min.`,
     gameAt: 'Spielordner:', change: 'Ändern', dataAt: 'Toolkit-Daten:', github: 'Info & Hilfe',
     builtIn: (s) => `in ${Math.round(s / 60)} Min. vorbereitet`,
+    dataTip: 'Die umgewandelten Modelle und die Spieldaten des Remakes (mehrere GB). „Ändern“ verschiebt sie in einen anderen Ordner, z. B. auf ein anderes Laufwerk.',
+    dataPick: 'Wo soll das Toolkit seine Daten ablegen?',
+    dataAsk: (size, to) => `Die Toolkit-Daten (${size}) nach\n${to}\nverschieben?\n\nSolange sie verschoben werden, können keine Spieldaten vorbereitet werden.`,
+    dataMoving: (p) => `Toolkit-Daten werden verschoben… ${p}%`, dataWait: 'Warte, bis die Filmumwandlung anhält…',
+    dataWhere: (p) => `Sie werden in ${p} abgelegt (Toolkit-Daten, unten: „Ändern“ verschiebt sie, z. B. auf ein anderes Laufwerk).`,
+    dataEnv: '(durch PWTOOLKIT_DATA festgelegt)', dataFailed: 'Die Daten konnten nicht verschoben werden:',
   },
 };
 let L = T.en;
 let ST = null;
 let editing = false;
+let dataErr = '';
+let timer = null;
+const later = (ms) => { if (!timer) timer = setTimeout(() => { timer = null; refresh(); }, ms); };   // one poll at a time
 
 async function refresh() {
   ST = await api.get('/api/toolkit/state');
@@ -141,14 +156,14 @@ function home() {
       el('span', { class: 'status ok', text: L.ready + (R.built && R.built.seconds >= 30 ? ' · ' + L.builtIn(R.built.seconds) : '') }),
       el('button', { onclick: () => build(true), title: L.rebuild }, '↻'));
   } else {
-    rem.append(el('p', { class: 'note', text: (L.reasons[R.reason] || R.reason || '') }));
+    rem.append(el('p', { class: 'note', text: (L.reasons[R.reason] || R.reason || '') + (ST.data ? ' ' + L.dataWhere(ST.data.path) : '') }));
     if (R.error) rem.append(el('div', { class: 'log', text: R.error + '\n' + (R.log || []).slice(-12).join('\n') }));
     act.append(el('button', { class: 'primary', id: 'prepare', onclick: () => build(false), disabled: !R.code || !ST.install_path }, L.prepare),
       el('span', { class: 'status ' + (R.error ? 'bad' : 'warn'), text: R.error ? L.failed : L.notReady }));
   }
   rem.append(act);
   m.append(el('div', { class: 'cards' }, exp, rem));
-  if (R.building || !P.ready) setTimeout(refresh, 1200);
+  if (R.building || !P.ready) later(1200);
 }
 
 // the "prepare" button redoes only what is out of date, the rebuild button (↻) everything
@@ -163,8 +178,30 @@ function footer() {
   if (ST.install_path) {
     f.append(el('span', {}, L.gameAt + ' ', el('code', { text: ST.install_path })), el('button', { onclick: () => { editing = true; setup(); } }, L.change));
   }
-  f.append(el('span', {}, L.dataAt + ' ', el('code', { text: ST.home || '' })));
+  const D = ST.data || { path: ST.home };
+  const data = el('span', { title: L.dataTip }, L.dataAt + ' ', el('code', { text: D.path || '' }));
+  if (D.moving) {
+    const pc = D.moving.total ? Math.floor(100 * D.moving.done / D.moving.total) : 0;
+    data.append(' ', el('span', { class: 'status warn', text: D.moving.stage === 'waiting' ? L.dataWait : L.dataMoving(pc) }));
+    later(1000);
+  } else if (D.env) data.append(' ' + L.dataEnv);
+  else data.append(' ', el('button', { onclick: moveData }, L.change));
+  const err = dataErr || D.error;
+  if (err) data.append(' ', el('span', { class: 'status bad', text: L.dataFailed + ' ' + err }));
+  f.append(data);
   f.append(el('span', { text: `v${ST.toolkit || ''}` }));
+}
+
+// "Toolkit data: Change": a folder from the native dialog, then the data moves there (toolkit/datadir.py)
+async function moveData() {
+  const r = await api.post('/api/browse', { title: L.dataPick, initial: (ST.data && ST.data.path) || '' });
+  if (!r.path) return;
+  const D = await api.get('/api/toolkit/data?size=1');
+  const gb = D.size >= 1e9 ? (D.size / 1e9).toFixed(1) + ' GB' : Math.round(D.size / 1e6) + ' MB';
+  if (!confirm(L.dataAsk(gb, r.path))) return;
+  const m = await api.post('/api/toolkit/data', { path: r.path });
+  dataErr = m.ok ? '' : m.error || 'failed';
+  refresh();
 }
 
 $('#lang').onchange = async (e) => {

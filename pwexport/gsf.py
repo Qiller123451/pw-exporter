@@ -56,7 +56,7 @@ try:
 except ImportError:  # textures are optional
     Image = None
 
-VERSION = '2026.10.11'     # bump when the output changes (invalidates cached conversions)
+VERSION = '2026.10.14'     # bump when the output changes (invalidates cached conversions)
 NULL = 0x80000000
 
 _SPHERE_B64 = "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"
@@ -77,8 +77,8 @@ class R:
 
     def ptr(self, o):
         v = self.u32(o)
-        if v == NULL:
-            return None
+        if v == NULL or v == 0:          # 0 would point at the field itself: archives written by mod tools (MIRAGE's
+            return None                  # mirage_animals.gsf) store empty chunk slots that way
         return o + struct.unpack_from('<i', self.d, o)[0]
 
     def lstr(self, o):
@@ -154,11 +154,42 @@ def parse_header2(r):
                 n_materials=r.u32(h2 + 32), materials=r.ptr(h2 + 36))
 
 
-def parse_materials(r, h):
+# The parts of the wall models (walls, gates) are found by name: the engine switches on the meshes whose GUID is the
+# crc32 of "<component><variant>" - components "x0" "x1" "x2" "x03".."x47" (hubs) and "<d><a..h>" (the piece towards
+# tile neighbour d; a/b/c an arm ending one 2 m level lower / level / higher, d a closed side, e/f the arm / closed
+# side of an x2 hub), variants A..P (construction / damage states). (PWClient 0x4f9100, PWServer 0x7df930;
+# docs/spec/walls.md, _notes/walls_re.md)
+def _wall_part_names():
+    import zlib
+    out = {}
+    comps = ['x0', 'x1', 'x2', 'x03', 'x05', 'x14', 'x16', 'x25', 'x27', 'x36', 'x47'] + ['%d%c' % (d, 97 + k) for d in range(8) for k in range(8)]
+    for c in comps:
+        for v in range(16):
+            n = '%s%c' % (c, 65 + v)
+            out[zlib.crc32(n.encode()) & 0xffffffff] = n
+    return out
+
+
+WALL_PARTS = _wall_part_names()
+
+
+def parse_materials(r, h, upto=0):
+    """the material table; upto: read that many records even past the header's count (a modded archive may say
+    fewer than its models use: MIRAGE seas_buildings.gsf counts 93, its seas_laboratory uses a 94th record right after
+    them - the engine indexes the table without a bound; records past the count are kept only while their texture
+    name reads)"""
     mats = []
     if h['materials'] is None:
         return mats
-    for i in range(h['n_materials']):
+    for i in range(max(h['n_materials'], upto)):
+        if i >= h['n_materials']:
+            b = h['materials'] + i * 24
+            try:
+                tex = r.ptr(b + 8)
+                if not tex or not r.name_block(tex):
+                    break
+            except Exception:
+                break
         b = h['materials'] + i * 24
         tex, nm, env = r.ptr(b + 8), r.ptr(b + 12), r.ptr(b + 16)
         mats.append(dict(attr1=r.u32(b), attr2=r.u32(b + 4),
@@ -391,6 +422,38 @@ def parse_link(r, c):
         L['skel'] = r.u32(c + 44)
         L['bidx'] = list(r.d[c + 48:c + 52]); L['bw'] = list(r.d[c + 52:c + 56])
     return L
+
+
+# particle emitters (chunk type 2 / 0x80000002; gsf.ksy particle_chunk): source type 3 parameters, four bytes each in
+# this order (names found by changing them in the game; older exports have fewer). The integers are colours / flags.
+PARTICLE_PARAMS = ['size', 'life_time', 'rotate', 'gravitation', 'size_var', 'drag', 'flags', 'fade_in', 'fade_out',
+                   'tile_anim_speed', 'life_time_var', 'size_increase', 'color_var_r', 'color_var_g', 'color_var_b',
+                   'emit_timer', 'speed_var', 'emit_timer_var', 'color_r', 'color_g', 'color_b', 'emit_rot_inc',
+                   'src_rot_speed', 'center_suck', 'suck_vel', 'rotation_var', 'alpha', 'emit_per_meter', 'size_inc_exp']
+PARTICLE_INTS = {'flags', 'color_var_r', 'color_var_g', 'color_var_b', 'color_r', 'color_g', 'color_b', 'alpha'}
+
+
+def parse_particle(r, c):
+    """emitter: placement and emitting volume (scale) in the model's frame, the atlas cells of its sprites and the
+    parameters of its particle source"""
+    t = r.u32(c)
+    P = dict(skinned=bool(t & 0x80000000), attr=r.u32(c + 4), guid=r.u32(c + 8), src=r.u32(c + 12) & 0x7FFFFFFF,
+             mirage=bool(r.u32(c + 12) >> 31), pos=r.fs(c + 16, 3), quat=r.fs(c + 28, 4), scale=r.fs(c + 44, 3),
+             max=r.u32(c + 56))
+    o = c + 60
+    if P['skinned']:
+        P['skel'] = r.u32(o); P['bidx'] = list(r.d[o + 4:o + 8]); P['bw'] = list(r.d[o + 8:o + 12])
+        o += 12
+    P['spread'] = r.f32(o)
+    pn, pt, nt, pp, npar = r.ptr(o + 4), r.ptr(o + 8), r.u32(o + 12), r.ptr(o + 16), r.u32(o + 20)
+    P['name'] = r.name_block(pn) if pn is not None else ''
+    keys = ('mat', 'tiles_w_log2', 'tiles_h_log2', 'tile_start', 'tile_last', 'border_w', 'border_l', 'mid_x', 'mid_y')
+    P['tiles'] = [dict(zip(keys, r.d[pt + 9 * i:pt + 9 * i + 9])) for i in range(nt)] if pt is not None else []
+    P['params'] = {}
+    if pp is not None:
+        for i, n in enumerate(PARTICLE_PARAMS[:npar]):
+            P['params'][n] = r.u32(pp + 4 * i) if n in PARTICLE_INTS else round(r.f32(pp + 4 * i), 5)
+    return P
 
 
 def fill_invalid(fr, nq):
@@ -843,6 +906,10 @@ class GLTF:
 
 # =========================================================================== export
 ZUP_TO_YUP = [-math.sqrt(0.5), 0.0, 0.0, math.sqrt(0.5)]  # -90 deg about X
+# The game's space is LEFT-handed (Direct3D): x east, y south, z up for maps, and the models' axes the same way. glTF
+# is right-handed, so the root also mirrors x: GSF (x, y, z) -> glTF (-x, z, -y). Without it every model came out
+# mirrored (the right hand link HndR on the left side, the sword in the left hand) - and the maps with them.
+GSF_MIRROR = [-1.0, 1.0, 1.0]
 
 
 def safe(s):
@@ -852,7 +919,7 @@ def safe(s):
 def export_model(r, h, model, mats, names, texfinder, out_path, fps=25.0, all_lods=False, log=print, reduce_keys=False, skip_anims=None,
                  all_parts=False, billboards=True, quantize=True, tex_dir=None, sounds=None, walksets=None):
     g = GLTF()
-    root = g.node(name=model['name'], rotation=ZUP_TO_YUP)
+    root = g.node(name=model['name'], rotation=ZUP_TO_YUP, scale=GSF_MIRROR)
     g.j['scenes'][0]['nodes'].append(root)
 
     chunks = [(i, c, r.u32(c)) for i, c in enumerate(model['chunks']) if c is not None]
@@ -1011,6 +1078,8 @@ def export_model(r, h, model, mats, names, texfinder, out_path, fps=25.0, all_lo
             obj_nodes[ci] = (n, t_, q_, s_)
             kit.append((n, t_, float(np.hypot(me['bbox'][3] - me['bbox'][0], me['bbox'][4] - me['bbox'][1]))))
         g.j['nodes'][n]['extras'] = dict(attr=int(me['attr']), kind=me['kind'])
+        if me.get('guid') in WALL_PARTS:                 # a wall piece's part ("3bD": arm 3, level b, state D)
+            g.j['nodes'][n]['extras']['part'] = WALL_PARTS[me['guid']]
         g.add_child(root, n)
         nmesh += 1
 
@@ -1123,6 +1192,7 @@ def export_model(r, h, model, mats, names, texfinder, out_path, fps=25.0, all_lo
         nmesh += 1
 
     # ---------------------------------------------------------------- attachment points
+    nlink = 0
     for _, c, t in chunks:
         if t not in (0xB, 0x8000000B):
             continue
@@ -1143,6 +1213,63 @@ def export_model(r, h, model, mats, names, texfinder, out_path, fps=25.0, all_lo
         t_, q_, _ = decompose(Mw)
         n = g.node(name='link_' + safe(L['name']), translation=[float(x) for x in t_], rotation=[float(x) for x in q_])
         g.add_child(parent, n)
+        nlink += 1
+
+    # ---------------------------------------------------------------- particle emitters
+    # One node per emitter (placed like a link) with the emitter in its extras: what an engine needs to spray the
+    # sprites (fires, smoke, sparks, waterfall spray ...). Its sprites' texture is the material's (tex) or none.
+    # An emitter that an animation drives (particle animation chunk 0x40000002, +8 = the emitter's guid: the blood of
+    # a finishing move) sprays only while one of those animations plays (extras anims).
+    nemit = 0
+    driven = {}
+    for ak, entries in enumerate(model['anims']):
+        for e in entries:
+            c_ = e[0] if isinstance(e, (list, tuple)) else e
+            if c_ is not None and r.u32(c_) == 0x40000002:
+                driven.setdefault(r.u32(c_ + 8), []).append(names.get(ak, 'anim_%d' % ak))
+    for ci, c, t in chunks:
+        if t & 0x7FFFFFFF != 2:
+            continue
+        try:
+            P = parse_particle(r, c)
+        except Exception as e:
+            log('   ! particle chunk %d: %s' % (ci, e))
+            continue
+        lodmask = P['attr'] & 0x1F
+        if not all_lods and lodmask and not (lodmask & 1):
+            continue
+        q = qnorm(qconj(P['quat']))
+        Mw = np.eye(4); Mw[:3, :3] = qmat(q); Mw[:3, 3] = P['pos']
+        parent = root
+        if P['skinned'] and P['skel'] < len(rigs):
+            rig = rigs[P['skel']]
+            bi = P['bidx'][int(np.argmax(P['bw']))]
+            if bi != 255 and bi < len(rig['sk']['dfs']):
+                parent = rig['node_of'][rig['sk']['dfs'][bi]]
+                Mw = np.linalg.inv(rig['world_bind'][bi]) @ Mw
+        t_, q_, _ = decompose(Mw)
+        um_ = model['used_materials']
+        tiles = []
+        for T in P['tiles']:
+            T = dict(T)
+            gi_ = um_[T['mat']] if T['mat'] < len(um_) else None
+            mj = g.j['materials'][material(gi_)] if gi_ is not None and material(gi_) is not None else {}
+            pbr_ = mj.get('pbrMetallicRoughness', {})
+            if 'baseColorTexture' in pbr_:
+                T['tex'] = g.j['images'][g.j['textures'][pbr_['baseColorTexture']['index']]['source']].get('uri')
+            if gi_ is not None and 0 <= gi_ < len(mats):
+                T['additive'] = bool(mats[gi_]['attr1'] & 0x4)
+            del T['mat']
+            tiles.append(T)
+        em = dict(src=P['src'], mirage=P['mirage'], scale=[round(float(x), 4) for x in P['scale']], max=P['max'],
+                  spread=round(float(P['spread']), 5), tiles=tiles, params=P['params'])
+        if P['guid'] in driven:
+            em['anims'] = sorted(set(driven[P['guid']]))
+        n = g.node(name='particles_' + safe(P['name'] or str(ci)), translation=[float(x) for x in t_],
+                   rotation=[float(x) for x in q_])
+        g.j['nodes'][n]['extras'] = dict(kind='particles', attr=int(P['attr']), emitter=em)
+        g.add_child(parent, n)
+        nemit += 1
 
     # ---------------------------------------------------------------- animations
     nanim = 0
@@ -1300,10 +1427,12 @@ def export_model(r, h, model, mats, names, texfinder, out_path, fps=25.0, all_lo
     if model.get('pf'):
         g.j['nodes'][root].setdefault('extras', {})['pf'] = model['pf']
     g.j['nodes'][root].setdefault('extras', {})['fourcc'] = model['fourcc'].strip()
-    if nmesh == 0 and not rigs:
+    # a model of attachment points only is kept: the pirate boss ship (sl_pirate_outpost.gsf) is its links, the
+    # visible parts are buildings of their own that the map places on them
+    if nmesh == 0 and not rigs and not nlink and not nemit:
         return None
     g.save(out_path)
-    return dict(meshes=nmesh, skeletons=len(rigs), bones=sum(len(x['sk']['dfs']) for x in rigs), anims=nanim)
+    return dict(meshes=nmesh, skeletons=len(rigs), bones=sum(len(x["sk"]["dfs"]) for x in rigs), anims=nanim, particles=nemit)
 
 
 # =========================================================================== driver
@@ -1355,8 +1484,8 @@ class Archive:
             raise ValueError('not a GSF archive: %s' % path)
         self.r = R(data)
         self.h = parse_header2(self.r)
-        self.mats = parse_materials(self.r, self.h)
         self.infos = parse_model_infos(self.r, self.h)
+        self.mats = parse_materials(self.r, self.h, 1 + max((k for m in self.infos for k in m['used_materials']), default=-1))
         try:
             h1 = parse_header1(self.r)
         except Exception:

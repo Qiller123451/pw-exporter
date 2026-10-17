@@ -38,8 +38,6 @@ class ModelIndex:
 
     def __init__(self, install, progress=None):
         self.install = install
-        # one index per installation (crc32 of the path: Python's hash() changes from run to run)
-        self.cache_file = os.path.join(cache_dir(), 'index_%08x.json' % (zlib.crc32(install.data.lower().encode('utf-8')) & 0xffffffff))
         self._archives = {}             # path -> gsf.Archive (parsed, kept for re-use)
         self._finders = {}              # (texture folders, quality) -> gsf.TextureFinder
         self._lock = threading.Lock()
@@ -47,6 +45,12 @@ class ModelIndex:
         self.models = {}                # lower name -> entry
         self.all = []                   # every (archive, model) pair, also duplicates
         self._build(progress)
+
+    @property
+    def cache_file(self):
+        """one index per installation (crc32 of the path: Python's hash() changes from run to run); in the data folder
+        as it is now (it can be moved while the toolkit runs)"""
+        return os.path.join(cache_dir(), 'index_%08x.json' % (zlib.crc32(self.install.data.lower().encode('utf-8')) & 0xffffffff))
 
     def _build(self, progress):
         try:
@@ -254,7 +258,7 @@ class Catalog:
             info = self.texts.info(node.get('description', '').lstrip('_') or name) if self.texts.has(
                 (node.get('description') or '').lstrip('_')) else self.texts.info(name)
             out.append({'id': name.lower(), 'key': name, 'tribe': tribe, 'type': typ,
-                        'name': info['name'], 'desc': info.get('medium') or info.get('short') or '',
+                        'name': info['name'], 'desc': info.get('medium') or '\n'.join(v for _, v in sorted((info.get('lvl') or {}).items())),
                         'models': models, 'addons': self._addons(name.lower())})
         out.sort(key=lambda e: (TYPE_ORDER.get(e['type'], 9), e['name'].lower()))
         return out

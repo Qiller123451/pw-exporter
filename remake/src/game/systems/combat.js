@@ -10,6 +10,7 @@
 //   hit points lost = max(ceil(dmg), 1)
 import * as THREE from 'three';
 import { Projectile, headingTo, wrap } from '../entities.js';
+import { DELAYED } from '../delayed.js';
 import { attackBoni, tempDef, tempRangedDef, rangeBonus, active } from './effects.js';
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -45,6 +46,7 @@ export const Combat = {
   // attack range of a weapon: range + 2 (characters) / own radius (others); projectile weapons add nothing
   attackRangeOf(u, cs) {
     if (!cs) return 0;
+    if (active(u, 'storm', this.time)) return 2;          // in a blinding storm: melee range only (MIRAGE FO:9222)
     const proj = !!cs.w.projectile;
     const r = proj ? 0 : u.cls === 'CHTR' ? 2 : u.radius;
     return cs.range + r + rangeBonus(u);
@@ -69,12 +71,38 @@ export const Combat = {
     if (proj) atk += inner;
     else if (pcs.w.penetration && pcs.range > 5) atk += inner;
     else { atk += u.radius + 2; if (atk > 0 && atk < 4) atk = 4; }
-    const minR = pcs.minRange > 0 ? pcs.minRange + u.radius : 0;
+    // the minimum range is measured between the centres (FO:5058-5070): + the fighter's radius, for projectile weapons
+    // - the target's inner radius; d is to the target's surface, so its radius comes off too
+    const minR = pcs.minRange > 0 ? Math.max(0.01, pcs.minRange + u.radius - (v.radius || 0) - (proj ? (v.radius || 0) * 0.5 : 0)) : 0;
     if (minR > 0) secM = minR;
-    if (d <= secS) return { zone: 1, w: W.short, d };
-    if (d <= secM) return minR > 0 && !W.medium ? { zone: 2, min: true, w: W.short, d } : { zone: 2, w: W.medium || W.short, d };
-    if (d <= atk) return { zone: 3, w: W.long, d };
-    return { zone: 0, w: W.long, d };
+    // the height (FO:5080-5094): |dz| < min(7, the lower one's height) - else only a primary projectile weapon
+    // reaches (zone 3; the original's secondary weapons need the height, a shooter right below a wall shoots
+    // with its primary); a projectile gains 0.5 m of range per metre it shoots down (FALLOFFCONE_VAL, FO:930)
+    const pp = proj || (pcs.w.penetration && pcs.range > 5);
+    const dy = u.pos.y - v.pos.y, low = dy < 0 ? u : v;
+    const heightOk = Math.abs(dy) < Math.min(7, low.kind === 'building' ? low.ht || 7 : low.height || 2);
+    if (pp && dy > 0) atk += 0.5 * dy;
+    if (!heightOk) return pp && d <= atk && !(minR > 0 && d <= minR) ? { zone: 3, w: W.long, d } : { zone: 0, w: W.long, d, high: true };
+    let z;
+    if (d <= secS) z = { zone: 1, w: W.short, d };
+    else if (d <= secM) z = minR > 0 && !W.medium ? { zone: 2, min: true, w: W.short, d } : { zone: 2, w: W.medium || W.short, d };
+    else if (d <= atk) z = { zone: 3, w: W.long, d };
+    else return { zone: 0, w: W.long, d };
+    // the line of sight (CheckLineOfSightFight, FO:5105-5110): not for a primary projectile in zone 3, nor when
+    // either side is a building - a wall (or a cliff of the walk grid) between them stops a melee blow
+    if (!(z.zone === 3 && pp) && u.kind === 'unit' && v.kind === 'unit' && !u.inside && !v.inside && !this.fightLos(u, v)) return { zone: 0, w: z.w, d, los: true };
+    return z;
+  },
+  // is the ground between two units free (the walk grid's blocked cells; the cells at either unit are not counted)
+  fightLos(u, v) {
+    if (u.onWall || v.onWall || u.flying || v.flying || u.naval || v.naval) return true;
+    const nav = this.nav, x0 = u.pos.x, z0 = u.pos.z, x1 = v.pos.x, z1 = v.pos.z, d = Math.hypot(x1 - x0, z1 - z0);
+    const a = u.radius + 0.6, b = d - v.radius - 0.6;
+    for (let s = a; s < b; s += nav.cell * 0.5) {
+      const f = s / d, k = nav.idx(x0 + (x1 - x0) * f, z0 + (z1 - z0) * f);
+      if (nav.block[k] && !(this.wetCell && this.wetCell[k] >= nav.block[k])) return false;
+    }
+    return true;
   },
   // FollowEnemy: stop at this surface distance when chasing
   approachDist(u, w) {
@@ -85,14 +113,22 @@ export const Combat = {
   },
   // seconds between attacks (Duration, x1.2 in Lovelace's aura)
   // a computer player's units strike a little faster at difficulty 8 / 9 (FightingObj.GetAICheatModifier)
-  attackDuration(u, cs) { return (cs ? cs.dur : 2) * (u.st && u.st.aura.slowhand ? 1.2 : 1) * (u.owner && u.owner.aiMods ? u.owner.aiMods.weaponTime || 1 : 1); },
+  attackDuration(u, cs) { return (cs ? cs.dur : 2) * (u.st && u.st.aura.slowhand || 1) * (u.owner && u.owner.aiMods ? u.owner.aiMods.weaponTime || 1 : 1); },
 
   // ------------------------------------------------------------------ targets
+  // a primary projectile weapon: shoots up to and down from a wall (FO:5096)
+  shootsUp(u) {
+    const cs = u.weapons && u.weapons.long && u.cs(u.weapons.long);
+    return !!(cs && (cs.w.projectile || (cs.w.penetration && cs.range > 5)));
+  },
   canTarget(u, e) {
     if (!e || !e.alive || e === u || e.inside) return false;
+    // up on a wall / down from one: only shooters, or fighters with a way up (systems/wallwalk.js)
+    if (u.kind === 'unit' && !!e.onWall !== !!u.onWall && e.kind === 'unit' && !this.shootsUp(u) && (u.onWall || !this.wallReach(u, e))) return false;
     if (e.kind !== 'unit' && e.kind !== 'building') return false;
     if (!u.isEnemy(e)) return false;
-    if (e.untargetable) return false;
+    if (e.untargetable || active(e, 'peace', this.time)) return false;     // (ceasefire: MIRAGE FO:6586)
+    if (e.flying && !this.reachesFlyer(u)) return false;
     if (u.owner && this.hiddenFrom(e, u.owner)) return false;
     if (this.waterLevel != null && !this.navalCanTarget(u, e)) return false;   // water / land reach (naval.md §6)
     return true;
@@ -126,11 +162,14 @@ export const Combat = {
   nearestEnemy(u, r, filter) { return this.findTarget(u, r, { filter }); },
   validTarget(u, t, task) {
     if (!t || !t.alive || t.inside) return false;
+    if (active(t, 'peace', this.time) || (t.flying && !this.reachesFlyer(u))) return false;
     if (!u.isEnemy(t) && !(task && task.forceAttack)) return false;
     if (u.owner && this.hiddenFrom(t, u.owner) && !(task && task.user)) return false;
     if (t.kind === 'unit' && u.owner && u.owner.id === 0 && t.owner !== u.owner && this.fow && !this.fow.visible(t.pos.x, t.pos.z) && !(task && task.user)) return false;
     return true;
   },
+  // a unit in the air (MIRAGE's jetpack flight) is out of reach of melee weapons
+  reachesFlyer(u) { const w = u.weapons && u.weapons.long; return !!(w && w.projectile); },
   // start fighting (Fight(): automatic fights never replace an order of the player)
   engage(u, target, opts = {}) {
     if (!u.alive || u.inside || !target) return false;
@@ -154,6 +193,9 @@ export const Combat = {
       u.stance = state;
       u.guard20 = state === 1;
       if (u.anchor && (u.task.type === 'idle' || u.task.type === 'hold')) u.anchor.set(u.pos.x, u.pos.z);
+      // passive (-1): it fights nobody - an attack-move it is on goes on as a plain walk, a fight stops
+      if (state === -1 && u.task.type === 'attackmove' && u.task.x != null) this.order([u], { type: 'move', x: u.task.x, z: u.task.z, auto: true });
+      else if (state === -1 && u.task.type === 'attack') this.order([u], { type: 'stop' });
     }
   },
   // ShoutForHelp (FO:6641): own fighters within 1.1 x AlarmRange join (7 s throttle, 3 s when hurt)
@@ -171,7 +213,7 @@ export const Combat = {
       if (!defend && o.stance === 1) return;
       if (Math.hypot(o.pos.x - u.pos.x, o.pos.z - u.pos.z) > R) return;
       if (o.stats.heal && this.healScan(o)) return;
-      this.later(0.1, () => { if (o.alive && (o.task.type === 'idle' || o.task.type === 'hold' || o.task.type === 'roam')) this.engage(o, enemy, { defend, hold: o.stance === 0 }); });
+      this.later(0.1, 'helpEngage', { o, enemy, defend });
     });
   },
 
@@ -179,10 +221,21 @@ export const Combat = {
   attackUpdate(u, dt) {
     const t = u.task;
     const tgt = t.target;
-    if (!this.validTarget(u, tgt, t)) return this.endAttack(u);
+    if (!this.validTarget(u, tgt, t) || active(u, 'peace', this.time)) return this.endAttack(u);   // (ceasefire: InvalidFighter)
     if (active(u, 'trapped', this.time)) { u.vel.set(0, 0, 0); return; }
     // wild animals give up when the target leaves their territory
-    if (u.wild && Math.hypot(u.pos.x - u.home.x, u.pos.z - u.home.y) > 70) { u.task = { type: 'roam', back: true }; u.setPath(u.home.x, u.home.y); return; }
+    if (u.wild && Math.hypot(u.pos.x - u.home.x, u.pos.z - u.home.y) > 70) { this.animalWalk(u, u.home.x, u.home.y); return; }
+    // an automatic fight looks at its enemies again every 3 s (FightingObj TIMER_AGGRO -> ExamineEnemies, FO:4679-4770)
+    // and turns to a better one - units before buildings, the nearer before the farther; one out of reach only after
+    // it stayed the better for 2 s. Defensive units (stance 1) only consider those that attacked them.
+    if (!t.user && !u.wild && (t.examT = (t.examT ?? 3 * (0.9 + 0.2 * Math.random())) - dt) <= 0) {
+      t.examT = 3 * (0.9 + 0.2 * Math.random());
+      const best = this.findTarget(u, Math.max(this.alarmRange(u), this.reach(u, tgt)), { leash: !t.amove, filter: u.stance === 1 ? (e) => !!(u.attackers && u.attackers.has(e)) : null });
+      if (best && best !== tgt) {
+        if (this.rangeZone(u, best).zone > 0 || (t.changeT != null && this.time - t.changeT >= 2)) { t.target = best; t.changeT = null; t.chasing = false; return; }
+        if (t.changeT == null) t.changeT = this.time;
+      } else t.changeT = null;
+    }
     let z = this.rangeZone(u, tgt);
     // too close for a weapon with a minimum range and no short weapon: look for another target
     if (z.min && !u.weapons.short) {
@@ -205,6 +258,19 @@ export const Combat = {
       const pressed = t.noProg > 0.4;
       if (z.zone > 0 && !z.min && (z.d <= approach + 0.3 || fleeing || pressed || t.chaseT > 1.5 && u.vel.lengthSq() < 0.05)) { t.chasing = false; t.bestD = undefined; t.noProg = 0; }
     }
+    if (t.chasing && (u.onWall || tgt.onWall)) {
+      // on a wall: along the walkway or down after it (systems/wallwalk.js); after one on a wall: up where the unit
+      // may (its own wall, a ladder of its side), a shooter from the ground; a fighter without a way up gives up
+      if (u.onWall) return this.wallChase(u, t, tgt, dt);
+      if (z.high && !this.shootsUp(u)) {
+        const r = this.wallReach(u, tgt);
+        if (!r) return this.endAttack(u);
+        const then = { type: 'attack', target: tgt, auto: !t.user };
+        if (r.ladder) this.climbSiege(u, r.ladder, t.user); else this.useWall(u, r.wall, t.user);
+        u.task.then = then;
+        return;
+      }
+    }
     if (t.chasing) {
       // turrets that can't move (water turret ...): an ordered target is kept until it comes into range
       if (u.stationary) { if (!t.user) return this.endAttack(u); u.vel.set(0, 0, 0); return; }
@@ -214,6 +280,10 @@ export const Combat = {
         const L = this.leash(u);
         if (Math.hypot(tgt.pos.x - u.anchor.x, tgt.pos.z - u.anchor.y) > L) return this.endAttack(u, true);
       }
+      // automatic special moves are also tried while following the enemy (Fight.usl:505): those that are made for it
+      // (the stampedes; the others check for an enemy in reach in the original's Check functions)
+      t.chaseMoveT = (t.chaseMoveT || 0) - dt;
+      if (t.chaseMoveT <= 0 && this.autoMove) { t.chaseMoveT = 1; if (this.autoMove(u, tgt, true)) return; }
       u.repathT = (u.repathT || 0) - dt;
       if (u.repathT <= 0 || !u.path.length) {
         const d = z.d;
@@ -242,8 +312,11 @@ export const Combat = {
     const dur = this.attackDuration(u, cs);
     if (this.time - u.lastHitDone > dur && off < (proj ? (w.penetration ? Math.PI / 16 : Math.PI / 4) : Math.PI)) {
       u.lastHitDone = this.time;
+      if (u.rageT) u.rageHit = true;                 // a mammoth's stampede ends with its first real attack
       // automatic special moves replace the normal hit (CheckSpecialMoves)
       if (this.autoMove && this.autoMove(u, tgt)) return;
+      // a blow that would kill: a finishing move instead (Fight.usl:426-437, systems/finishing.js)
+      if (this.startFinishingMove(u, tgt, w)) return;
       const anims = w.anims && w.anims.length ? w.anims : [{ name: 'attack_front', delay: 0.4, shootdelay: 0.3 }];
       const pick = anims.filter((a) => !a.combo)[Math.floor(Math.random() * anims.filter((a) => !a.combo).length)] || anims[0];
       const clip = u.anim.pick(pick.name, 'attack_front', 'attack_1', 'res_strike_3', 'nat_strike_0');
@@ -263,6 +336,12 @@ export const Combat = {
   // the fight is over: resume work (workers), look for the next enemy, or go back to the post
   endAttack(u, leashed) {
     const t = u.task;
+    // a worker that killed an animal on an order of the player gathers its carcass (Fight.usl:332-343 "GetFood"; the
+    // hunting chain of GetFood.usl orders the next animal the same way)
+    const prey = t.target, meat = prey && !prey.alive && prey.corpseNode;
+    if (meat && meat.alive && u.isWorker && t.user && !u.inside) { u.prevTask = null; return this.startGather(u, meat); }
+    // a wild animal feeds on the wild animal it killed (Fight.usl "Feed")
+    if (u.wild && prey && !prey.alive && this.feedOnKill(u, prey)) return;
     if (u.prevTask && u.prevTask.type) {
       const pt = u.prevTask; u.prevTask = null;
       if (pt.node && pt.node.alive) return this.startGather(u, pt.node);
@@ -273,11 +352,15 @@ export const Combat = {
       const next = this.findTarget(u, t.amove ? u.fow : this.alarmRange(u), { leash: !t.amove && !u.wild });
       if (next) { u.task = { type: 'attack', target: next, amove: t.amove, auto: true, user: false }; return; }
     }
-    if (t.amove) { u.task = { type: 'attackmove', x: t.amove[0], z: t.amove[1], user: true }; u.setPath(t.amove[0], t.amove[1]); return; }
+    if (t.amove) { u.task = { type: 'attackmove', x: t.amove[0], z: t.amove[1], then: t.then || null, user: true }; u.setPath(t.amove[0], t.amove[1]); return; }
     u.task = { type: u.wild ? 'roam' : t.hold ? 'hold' : 'idle' }; u.path = []; u.busyAnim = false;
     u.fightStandT = 4;
+    // character.usl OnIdleTick after a fight ("victory state"): soon after, when no enemy is left around, one time in
+    // four a victory animation (victory_0 .. 2, once or twice) - not workers, not on a transport
+    if (!u.wild && u.cls === 'CHTR' && !/worker/.test(u.name) && !u.inside && prey && !prey.alive) u.task.victoryAt = this.time + Math.random() * 0.8;
     // characters after an automatic fight walk back to their post (CheckPatrol)
-    if (!u.wild && u.anchor && !t.user && Math.hypot(u.pos.x - u.anchor.x, u.pos.z - u.anchor.y) > 3) { u.task = { type: 'move', x: u.anchor.x, z: u.anchor.y, back: true }; u.setPath(u.anchor.x, u.anchor.y); }
+    // (not on a wall: CheckPatrol returns at once there, FO:2393)
+    if (!u.wild && u.anchor && !t.user && !u.onWall && Math.hypot(u.pos.x - u.anchor.x, u.pos.z - u.anchor.y) > 3) { u.task = { type: 'move', x: u.anchor.x, z: u.anchor.y, back: true }; u.setPath(u.anchor.x, u.anchor.y); }
   },
   // the delayed part of an attack: melee hit, area hit, cone hit or projectile launch
   fire(u, w, tgt) {
@@ -351,7 +434,7 @@ export const Combat = {
     // Aje ankylosaurus catapult "dino ammo": the egg hatches a velociraptor that fights for 30 s (CDinoAmmoEgg)
     if ((w.projectile || '').toLowerCase() === 'aje_ammo_dino' && (A ? A.owner : p.ownerPlayer)) {
       const r = this.spawnUnit('aje_velociraptor', A ? A.owner : p.ownerPlayer, p.aim.x, p.aim.z, 1, 0, { autonomous: true });
-      if (r) { r.home.set(p.aim.x, p.aim.z); r.homeRadius = 60; this.later(30, () => { if (r.alive) { r.silentDeath = true; this.kill(r, null); } }); }
+      if (r) { r.home.set(p.aim.x, p.aim.z); r.homeRadius = 60; this.later(30, 'hatchlingGone', { u: r }); }
     }
     // OnDoDmg (Product.usl:535): area weapons hit the (jittered) aim point, others always hit their target
     if (s.splash > 0) {
@@ -374,14 +457,19 @@ export const Combat = {
 
   // ------------------------------------------------------------------ damage (FightingObj.usl)
   // TakeDmg: the attacker's weapon hits the victim with `factor` (splash falloff); the hit lands after hitDelay
-  takeDmg(A, V, factor = 1, hitDelay = 0, weapon = null) {
+  // ap: armour piercing instead of the weapon's (MIRAGE's triceratops tusk: 100)
+  takeDmg(A, V, factor = 1, hitDelay = 0, weapon = null, ap = null) {
     if (!V.alive || V.inside) return 0;
     if (V.st && V.st.camo.has('aje')) this.setCamo(V, 'aje', false);
     if (A.cls === 'ANML' && active(V, 'anmlImmune', this.time)) return 0;
+    if (V.behaviour && V.behaviour.hit) V.behaviour.hit(V, A, this);          // (walls drop stones)
     const w = weapon || A.weapon || A.weapons.long;
     if (!w) return 0;
     const cs = A.cs(w);
-    let raw = factor * attackBoni(A, cs.dmg) * (1 + ((w.bonus && (w.bonus[V.cls] || 0) + (w.bonus[V.name] || 0)) || 0) / 100);
+    if (w.projectile && active(V, 'storm', this.time)) return 0;     // blinding storm: no projectile damage (MIRAGE FO:5810)
+    const pierce = ap ?? cs.ap;
+    let raw = factor * attackBoni(A, cs.dmg, w) * (1 + ((w.bonus && (w.bonus[V.cls] || 0) + (w.bonus[V.name] || 0)) || 0) / 100);
+    if (A.grow != null) raw *= A.grow;                                 // a young animal (Animal.GetDmg)
     if (V.cls === 'BLDG' && A.st && A.st.bonus.BLDGDAMAGE > 0) {
       const t = Math.trunc(raw); raw *= 1 + A.st.bonus.BLDGDAMAGE * 0.01; if (Math.trunc(raw) === t) raw += 0.5;
     }
@@ -391,16 +479,16 @@ export const Combat = {
       const vm = V.kind === 'unit' ? this.data.defenceVs(V.name, V.owner, A.cls) : { rel: 1, abs: 0 };
       const vw = V.weapon || (V.weapons && V.weapons.long);
       const db = vw && vw.defBonus ? (vw.defBonus[A.cls] || 0) + (vw.defBonus[A.name] || 0) : 0;
-      pct = tempDef(V, Math.max(0, (vcs ? vcs.prot : 0) - cs.ap)) + db * vm.rel + (db ? vm.abs : 0);
-    } else pct = tempRangedDef(V, Math.max(0, (vcs ? vcs.rprot : 0) - cs.ap));
+      pct = tempDef(V, Math.max(0, (vcs ? vcs.prot : 0) - pierce)) + db * vm.rel + (db ? vm.abs : 0);
+    } else pct = tempRangedDef(V, Math.max(0, (vcs ? vcs.rprot : 0) - pierce));
     let dmg = raw - raw * clamp(pct * 0.01, 0, 0.99);
     // AttackFactor / DefenseFactor of computer players (CAiCheatMgr.UpdateFightFactors; docs/spec/ai.md §3)
     if (A.owner && A.owner.aiMods) dmg *= A.owner.aiMods.attack || 1;
     if (V.owner && V.owner.aiMods) dmg *= V.owner.aiMods.defense || 1;
     // the ice spearman freezes its victims for 2.5 s (SetIced)
     if (A.name === 'ninigi_icespearman' && V.kind === 'unit') this.trap(V, 2.5, 'iced');
-    const go = () => this.provideDmg(dmg, A, V, !!w.projectile, cs.poison, cs.poisonTicks, w);
-    if (hitDelay > 0) this.later(hitDelay, go); else go();
+    V.dmgCache = dmg;                                                 // (the damage cache a finishing move looks at)
+    this.later(hitDelay, 'hit', { dmg, A, V, proj: !!w.projectile, poison: cs.poison, ticks: cs.poisonTicks, w });
     return dmg;
   },
   // ProvideDmg (FO:4324): invulnerability, knockback, life drain, poison, then Damage()
@@ -408,6 +496,7 @@ export const Combat = {
     if (!V.alive) return;
     if (!isProj && A && !A.alive) return;
     if (this.invulnerable(V)) return;
+    if (this.hooks.damage && this.hooks.damage(dmg, A, V)) return;        // (the sequel's tranquilizers and electric weapons: game/sequel/runtime.js)
     V.lastAttacker = A; V.lastHit = this.time;
     if (A && A.owner) V.lastDamager = A.owner;
     if (V.attackers) V.attackers.add(A);
@@ -431,12 +520,16 @@ export const Combat = {
     if (V.parentGate && V.parentGate.alive) V = V.parentGate;      // a gate's wing passes all damage to the gate (B:2266)
     if (!V.alive) return;
     if (this.invulnerable(V, true)) return;
-    V.hp -= Math.max(Math.ceil(d), 1);
+    const loss = Math.max(Math.ceil(d), 1);
+    // a blow that would kill: a game mode may keep it alive at 1 hit point (the sequel's tranquilized creatures fall asleep)
+    if (V.hp - loss <= 0 && this.hooks.lethal && this.hooks.lethal(V, A)) { V.hp = 1; V.lastHit = this.time; return; }
+    V.hp -= loss;
     this.afterDamage(V, A);
   },
   // TakeDirectDmg / TakeDirectMeleeDmg (FO:4554): fixed damage reduced by (ranged) protection only
   takeDirectDmg(V, d, ap = 0, byPlayer = null, ranged = true, A = null) {
     if (!V.alive || V.inside || this.invulnerable(V)) return;
+    if (active(V, 'storm', this.time)) return;                       // blinding storm (MIRAGE FO:6464)
     const vcs = V.cs ? V.cs() : null;
     const p = ranged ? tempRangedDef(V, (vcs ? vcs.rprot : 0) - ap) : tempDef(V, (vcs ? vcs.prot : 0) - ap);
     if (byPlayer) V.lastDamager = byPlayer;
@@ -450,6 +543,11 @@ export const Combat = {
     if (A && A.alive) V.lastAttacker = A;
     if (V.owner) this.emit('attacked', { entity: V, by: A });
     if (V.hp <= 0) { this.kill(V, A); return; }
+    // buildings and ships at 50 % / 25 % hit points: an explosion (UpdateDestructionFlags FO:3047, once per stage)
+    if (V.kind === 'building' || V.cls === 'SHIP') {
+      const st = V.hp * 4 <= V.maxHp ? 2 : V.hp * 2 <= V.maxHp ? 1 : 0;
+      if (st !== (V.dmgFx || 0)) { const worse = st > (V.dmgFx || 0); V.dmgFx = st; if (worse) this.emit('damagestage', { entity: V, stage: st }); }   // (lower after repairs)
+    }
     if (V.kind === 'building') { if (A && A.alive && !isWall(V)) this.shout(V, A, true, false); return; }
     if (V.st && V.st.camo.has('entr') && this.digOut) this.digOut(V);
     if (V.name === 'ninigi_ninja') V.disgT = this.time + 10;
@@ -459,6 +557,8 @@ export const Combat = {
     const t = this.time;
     if (active(V, 'levelInvul', t) || active(V, 'doping', t)) return true;
     if (!damageOnly && active(V, 'invul', t)) return true;
+    if (active(V, 'peace', t)) return true;                          // ceasefire (MIRAGE FO:5744)
+    if (V.finishing) return true;                                    // during its finishing move
     return V.invulnT > 0;
   },
   // retaliation (OnDefend / AddEnemy(defend=true)): fight back unless busy with an order or passive
@@ -475,14 +575,17 @@ export const Combat = {
     this.engage(u, att, { defend: true, hold: t === 'hold' || u.stance === 0 });
   },
   // area damage (CAreaDamage FO:9431): enemies and neutral units within R; linear falloff from dmg to endDmg
+  //   opts.direct: fixed damage (TakeDirectDmg) instead of the attacker's weapon; opts.ap: its armour piercing
+  //   opts.size: size class of the blast - smaller characters and animals are thrown (InvokeAreaThrow)
+  //   opts.all: every owner's objects, the attacker's own too (MIRAGE DoAreaDamageForAllAgain: meteor, walking bomb)
   areaDamage(A, center, R, dmg, endDmg, opts = {}) {
     if (R <= 0) R = 1;
     const owner = A ? A.owner : opts.owner || null;
     const victims = [];
     const test = (V) => {
-      if (!V.alive || V.inside || V === A) return;
-      if (owner && V.owner && !owner.isEnemy(V.owner)) return;      // hostile players and ownerless objects only (FO:9443)
-      if (!owner && !V.owner) return;
+      if (!V.alive || V.inside || V === A || V === opts.skip) return;
+      if (!opts.all && owner && V.owner && !owner.isEnemy(V.owner)) return;      // hostile players and ownerless objects only (FO:9443)
+      if (!opts.all && !owner && !V.owner) return;
       const d = V.kind === 'building' ? Math.max(0, V.surfDist(center.x, center.z)) : Math.max(0, Math.hypot(V.pos.x - center.x, V.pos.z - center.z) - V.radius);
       if (d >= R) return;
       victims.push([V, d]);
@@ -494,12 +597,15 @@ export const Combat = {
       const f = (1 - e) * (R - d) / R + e;
       if (A && A.alive && !opts.direct) this.takeDmg(A, V, f, 0, opts.weapon);
       else this.takeDirectDmg(V, dmg * f, opts.ap || 0, owner, true, A);
-      if (opts.size > 0 && V.kind === 'unit' && (V.cls === 'CHTR' || V.cls === 'ANML')) {
-        const diff = opts.size - (V.stats.size || 0);
-        if (diff >= 3) this.knockback(V, center, SPLASH_DIST[Math.min(9, diff)] * (1 + Math.random() * 0.3), 0);
-      }
+      if (opts.size > 0) this.throwUnit(V, center, opts.size);
     }
     return victims.length;
+  },
+  // InvokeAreaThrow (FO:6117): a blast of size class `size` throws smaller characters and animals
+  throwUnit(V, center, size) {
+    if (V.kind !== 'unit' || (V.cls !== 'CHTR' && V.cls !== 'ANML') || V.flying || !(V.stats.size > 0)) return;
+    const diff = size - V.stats.size;
+    if (diff >= 3) this.knockback(V, center, SPLASH_DIST[Math.min(9, diff)] * (1 + Math.random() * 0.3), 0);
   },
   // Penetrate (FO:5866): cone weapons (flamethrowers, lances) hit every enemy in the cone
   penetrate(A, tgt, cs, angleDeg) {
@@ -533,20 +639,14 @@ export const Combat = {
     if (!P || P.next > t) return;
     P.left--; P.next += POISON_TICK;
     if (P.by && P.by.owner) V.lastDamager = P.by.owner;
-    this.damage(V, P.dmg, null);
+    this.damage(V, P.dmg * (active(V, 'noHeal', t) ? 2 : 1), null);     // blood infection doubles poison (MIRAGE FO:14174)
     if (P.left <= 0) { st.poison = st.poison2 ? { ...st.poison2, next: t + POISON_TICK } : null; st.poison2 = null; }
   },
   // short stun + push (hit_back / getting_up)
   knockback(V, from, dist, delay) {
-    if (!V.alive || V.kind !== 'unit' || V.inside) return;
+    if (!V.alive || V.kind !== 'unit' || V.inside || V.flying || V.onWall || V.wjump || V.climbing) return;     // (on a wall: FO:4383)
     const dx = V.pos.x - from.x, dz = V.pos.z - from.z, d = Math.hypot(dx, dz) || 1;
-    this.later(delay, () => {
-      if (!V.alive) return;
-      V.knock = { vx: dx / d * dist / 0.4, vz: dz / d * dist / 0.4, t: 0.4 };
-      this.trap(V, 1.2, 'knock');
-      const a = V.anim.pick('hit_back');
-      if (a) { V.busyAnim = true; V.anim.play(a, { loop: false, restart: true, onDone: () => { const g = V.anim.pick('getting_up'); if (g && V.alive) V.anim.play(g, { loop: false, restart: true, onDone: () => { V.busyAnim = false; } }); else V.busyAnim = false; } }); }
-    });
+    this.later(delay, 'knock', { V, vx: dx / d * dist / 0.4, vz: dz / d * dist / 0.4 });
   },
   // SetTrapped(seconds): the unit can't act
   trap(V, sec, why = 'trapped') {
@@ -572,7 +672,7 @@ export const Combat = {
   },
   towerUpdate(b, dt) {
     const w = b.weapons.long;
-    if (!w || !w.projectile || !b.owner || !b.built || b.dismantling) return;
+    if (!w || !w.projectile || !b.owner || !b.built || b.dismantling || active(b, 'peace', this.time) || (b.behaviour && b.behaviour.noTower)) return;
     const cs = b.cs(w);
     const R = cs.range + b.radius * 0.5;
     b.cool -= dt;
@@ -600,7 +700,10 @@ export const Combat = {
       if (b.turret.anim) b.turret.anim.play(b.turret.anim.pick(b.turret.attackAnim || 'attack_front', 'attack_front', 'gun_shoot') || 'attack_front', { loop: false, restart: true });
     }
     const sd = (w.anims[0] && w.anims[0].shootdelay) || 0;
-    for (let i = 0; i < shots; i++) this.launch(b, from, e, w, cs, i ? sd * (1 + 0.1 * i) : 0);
+    // a bunker's volley (CBunker.AttackEnemy, CArrow.SetXtraDelay): every arrow leaves after the projectile delay
+    // × (1 + 0.1 i), one after the other
+    const bunker = b.def.script === 'CBunker';
+    for (let i = 0; i < shots; i++) this.launch(b, from, e, w, cs, bunker ? sd * (1 + 0.1 * i) : 0);
   },
 
   // ------------------------------------------------------------------ death
@@ -612,15 +715,18 @@ export const Combat = {
     // skulls for the player who damaged it last (OnKill FO:3950); skull protector aura: none, Kleemann aura: +15 %
     const killer = e.lastDamager || (att && att.owner) || null;
     if (killer && killer !== e.owner && e.stats && e.stats.scalps && (e.owner || e.kind === 'unit')) {
-      let v = e.stats.scalps;
+      let v = this.scalpValue(e);
       if (e.st && e.st.aura.skullProtect) v = 0;
-      if (e.st && e.st.aura.kleemann) v *= 1.15;
-      killer.res.skulls += Math.round(v);
+      if (e.st && e.st.aura.kleemann) v *= e.st.aura.kleemann;
+      this.addScalps(killer, v);                                       // (Player.AddScalps: the scalps modifier)
       if (e.owner || e.cls === 'ANML') killer.kills++;
     }
+    if (e.item) this.dropItem(e);                                      // the item falls (FightingObj.Delete)
     this.entityFilters(e, false);
     if (e.onDeath) e.onDeath(att);
+    if (e.cls === 'ANML' && e.kind === 'unit' && this.addScare) this.addScare(e.pos.x, e.pos.z);      // Animal.OnKill
     if (e.kind === 'unit') this.unitDied(e, att);
+    if (e.driver && this.suitDestroyed && !e.silentDeath) this.suitDestroyed(e);   // (MIRAGE: Babbage's exo suit)
     else if (e.kind === 'building') this.buildingDestroyed(e, att);
     this.dead.push(e);
   },
@@ -640,14 +746,21 @@ export const Combat = {
     }
     e.path = []; e.task = { type: 'dead' };
     e.deadT = 0;
-    e.anim.play(e.anim.pick('dying', 'die_simple', 'hit_die_simple') || e.idleAnim, { loop: false, fade: 0.1 });
+    // (the victim of a finishing move plays its part of the move: systems/finishing.js)
+    if (e.finish && e.finish.anim) e.anim.play(e.finish.anim, { loop: false, restart: true, fade: 0.05 });
+    // (on a wall: "hit_rotate_s", CH:2310)
+    else e.anim.play((e.onWall && e.anim.pick('hit_rotate_s')) || e.anim.pick('dying', 'die_simple', 'hit_die_simple') || e.idleAnim, { loop: false, fade: 0.1 });
     e.attachTool(null);
-    // owned characters and animals leave a spirit that an Aje shaman can resurrect (not heroes, illusions, summons)
-    if (e.owner && (e.cls === 'CHTR' || e.cls === 'ANML') && !e.illusion && !e.autonomous && !e.def.unique && !e.silentDeath) {
+    e.wjump = null; e.climbing = false; if (e.wallH != null) { e.pos.y = e.wallH; e.wallH = null; }
+    // owned characters and animals leave a spirit that an Aje shaman can resurrect (not illusions, summons; heroes
+    // and the special eusmilus only on multiplayer levels - skirmish -, FightingObj.usl:5566-5571)
+    const hero = this.data.isA(e.name, 'CHero') || e.name === 'special_eusmilus';
+    if (e.owner && (e.cls === 'CHTR' || e.cls === 'ANML') && !e.illusion && !e.autonomous && !e.silentDeath && !e.finish && (!hero || this.rules.multiplayer)) {
       this.spirits.push({ kind: 'spirit', name: e.name, level: e.level, owner: e.owner, pos: e.pos.clone(), alive: true, radius: 1, until: this.time + 60 });
     }
-    // animals leave a carcass: wild kills can be eaten for 120 s (Resource.usl CDino_Food)
-    if (e.cls === 'ANML' && e.wild) {
+    // animals leave a carcass: wild kills can be eaten for 120 s (Resource.usl CDino_Food); every animal a finishing
+    // move kills does (FinishingMove.usl: <class>_food)
+    if (e.cls === 'ANML' && (e.wild || e.finish)) {
       const food = this.data.corpseFood(e.name);
       const n = this.addResource('corpse', 'food', e.pos.x, e.pos.z, food, { radius: Math.max(1.5, e.radius), rotT: 120, corpseOf: e, maxWorkers: 5, hunt: e.name });
       e.corpseNode = n;
@@ -656,3 +769,22 @@ export const Combat = {
   },
 };
 export { headingTo };
+
+// the delayed parts of combat (World.later, game/delayed.js)
+Object.assign(DELAYED, {
+  // the end of a threat or a victory animation (World.alarmUnit / victoryAnim)
+  animDone(W, { u, name }) { if (u.alive && u.anim.curName === name) { u.busyAnim = false; u.anim.play(u.idleAnim); } },
+  // a unit called for help joins the fight if it is still free
+  helpEngage(W, { o, enemy, defend }) { if (o.alive && (o.task.type === 'idle' || o.task.type === 'hold' || o.task.type === 'roam')) W.engage(o, enemy, { defend, hold: o.stance === 0 }); },
+  // the velociraptor hatched from a dino ammo egg leaves after 30 s
+  hatchlingGone(W, { u }) { if (u.alive) { u.silentDeath = true; W.kill(u, null); } },
+  // a hit landing after the attack animation's delay
+  hit(W, { dmg, A, V, proj, poison, ticks, w }) { W.provideDmg(dmg, A, V, proj, poison, ticks, w); },
+  knock(W, { V, vx, vz }) {
+    if (!V.alive) return;
+    V.knock = { vx, vz, t: 0.4 };
+    W.trap(V, 1.2, 'knock');
+    const a = V.anim.pick('hit_back');
+    if (a) { V.busyAnim = true; V.anim.play(a, { loop: false, restart: true, onDone: () => { const g = V.anim.pick('getting_up'); if (g && V.alive) V.anim.play(g, { loop: false, restart: true, onDone: () => { V.busyAnim = false; } }); else V.busyAnim = false; } }); }
+  },
+});

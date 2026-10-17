@@ -9,6 +9,8 @@
 //   type  "activate" / "deactivate" switches the filter on or off (e.g. the three Aje farm modes exclude each other)
 import { headingTo, AMPHIBIOUS } from '../entities.js';
 import { LocalTree } from '../techtree.js';
+import { active } from './effects.js';
+import { UPGRADE_HOOKS } from './moves_mirage.js';
 
 const MAX_QUEUE = 6;
 
@@ -19,7 +21,7 @@ export const Production = {
     const owner = producer && producer.rulesOwner ? producer.rulesOwner() : p;
     const why0 = this.data.check(owner, action, producer && producer.kind === 'unit' ? producer : producer);
     if (why0) return why0 === 'hidden' || why0 === 'disabled' ? 'req' : why0;
-    if (producer && producer.kind === 'building' && (!producer.built || producer.dismantling)) return 'req';
+    if (producer && producer.kind === 'building' && !producer.built) return 'req';
     if (action.kind === 'Upgrades') {
       const local = action.results.some((r) => r.cls === 'local');
       if (local ? producer.queue.some((q) => q.action.id === action.id) : (p.techs.has(action.id) || this.anyQueued(p, action.id))) return 'done';
@@ -39,6 +41,7 @@ export const Production = {
   unitStartLevel(action, p) { return Math.max(this.data.startLevel(action), this.data.minLevel(action.results[0].obj, p)); },
   queueAction(producer, action) {
     const p = producer.owner;
+    if (producer.st && active(producer, 'deaf', this.time)) return 'deaf';     // deafened (MIRAGE: no commands)
     // instant actions (Moves on buildings, e.g. buy_food / Open / Kill) are handled by the moves system
     if (action.kind === 'Moves') return this.useMove ? this.useMove(producer, action, null) : 'req';
     const why = this.canQueue(p, action, producer);
@@ -54,12 +57,15 @@ export const Production = {
     return null;
   },
   // duration of production / research; debug mode: instant. A computer player's actions are faster from difficulty 5
-  // on, except the first epoch upgrade (Action.usl:346-382, "AIHelp"; player.aiMods)
+  // on, except the first epoch upgrade (Action.usl:346-382, "AIHelp"; player.aiMods). The tribe's modifier
+  // /Modifications/<tribe>/Build/<type>/duration (or /<kind>/duration) shortens it (FightingObj.GetTechTreeActionModifier:
+  // Ada's chief bonus, ...)
   productionTime(action, p) {
     if (p && p.debug) return 0.05;
     const m = p && p.aiMods;
     const k = !m || action.id === 'age_2' ? 1 : action.kind === 'Upgrades' ? m.researchTime || 1 : m.buildTime || 1;
-    return Math.max(0.5, (action.time || 1) * k);
+    const tm = p && p.tt ? p.tt.num(`/Modifications/${p.tribe}/${action.kind}${action.kind === 'Build' ? '/' + action.type : ''}/duration`, 1) : 1;
+    return Math.max(0.5, (action.time || 1) * k * tm);
   },
   // pyramid slots per level: the game's, plus the extra slots of a computer player at difficulty 7-9
   // (RequirementsMgr.usl:213-241)
@@ -74,6 +80,7 @@ export const Production = {
     const item = producer.queue[i];
     if (!item) return;
     producer.queue.splice(i, 1);
+    if (item.buildDown) { this.buildDownFilter(producer, false); return; }
     const p = producer.owner;
     p.refund(item.action.cost);
     if (item.level) { p.queuedAtLevel[item.level - 1]--; p.queuedUnits--; }
@@ -81,8 +88,14 @@ export const Production = {
   anyQueued(p, id) { for (const e of [...this.buildings, ...this.units]) if (e.alive && e.owner === p && e.queue && e.queue.some((q) => q.action.id === id)) return true; return false; },
   anyQueuedObj(p, obj) { for (const e of [...this.buildings, ...this.units]) if (e.alive && e.owner === p && e.queue && e.queue.some((q) => q.action.results[0] && q.action.results[0].obj === obj)) return true; return false; },
   productionUpdate(e, dt) {
-    if (!e.queue.length || (e.kind === 'building' && (!e.built || e.dismantling))) return;
+    if (!e.queue.length || (e.kind === 'building' && !e.built)) return;
     const item = e.queue[0];
+    if (item.buildDown) {
+      item.t = Math.min(item.total, item.t + dt);
+      e.onWork(this.time);
+      if (item.t >= item.total) this.buildDownDone(e, item);
+      return;
+    }
     // a unit can't come out while the population is full; it waits at 100 %
     item.t = Math.min(item.total, item.t + dt);
     if (e.kind === 'building') e.onWork(this.time);
@@ -117,8 +130,9 @@ export const Production = {
     if (!u) return;
     if (e.kind === 'building') e.spawnAnim();
     this.emit('trained', { unit: u, producer: e });
-    // trade carts start trading right away (between their home and the farthest other market)
-    if (/_cart$|trade_dino/.test(name) && this.startTrade(u, null)) return;
+    // a trade cart's home is the market it came out of (TransportObj.usl: the CTheLite event sets m_xHome); it
+    // trades when it is sent to another market (the Dock order)
+    if (e.kind === 'building' && this.isTradeBuilding(e)) u.tradeHome = e;
     if (hull && hull[1]) {
       const then = e.rally ? { type: 'move', x: e.rally[0], z: e.rally[1] } : null;
       this.order([u], { type: 'move', x: hull[1].x, z: hull[1].z, then });
@@ -126,15 +140,15 @@ export const Production = {
       u.path = [[hull[1].x, hull[1].z]]; u.goal = [hull[1].x, hull[1].z];
       return;
     }
+    // the rally point (CTheLite): a worker sent to a resource or a building does what it means there (NextJob); one
+    // sent to open ground looks for work around the point when it arrives (rallyJob)
     if (e.rally) {
       const rt = e.rallyTarget;
-      if (rt && rt.kind === 'res' && u.isWorker) this.startGather(u, rt);
-      else if (rt && rt.kind === 'building' && u.isWorker && this.isFarm(rt)) this.startGather(u, rt);
-      else this.order([u], { type: 'move', x: e.rally[0], z: e.rally[1] });
+      if (rt && u.isWorker && this.nextJob(u, rt)) return;
+      this.order([u], { type: 'move', x: e.rally[0], z: e.rally[1], then: u.isWorker ? { type: 'rallyJob', x: e.rally[0], z: e.rally[1] } : null });
     } else if (e.kind === 'building') {
       const [ex, ez] = e.exitPoint(tgt[0], tgt[1], nv);
       this.order([u], { type: 'move', x: ex, z: ez });
-      // workers at the rally point start on resources nearby (tree 5 m, stone 3 m, food 10 m)
     }
   },
   // an upgrade finished: switch its filters (player-wide or on this building only)
@@ -150,6 +164,7 @@ export const Production = {
     }
     if (!a.results.length) p.tt.enable(a.path.replace(/^\/Actions\//, ''));
     if (!local) p.techs.add(a.id);
+    if (UPGRADE_HOOKS[a.id]) UPGRADE_HOOKS[a.id](this, e, a);
     this.emit('upgrade', { player: p, action: a, local, entity: e });
   },
   // enable / disable a filter on one object only (its own tree follows the owner's tree)
@@ -203,10 +218,13 @@ export const Production = {
     this.levelFilters(u, nl, true);
     u.task = ['attack', 'move', 'gather', 'build', 'heal'].includes(task.type) ? task : { type: 'idle' };
     if (nl > ol) {
-      // full heal, invulnerable during the level-up animation (2.5 s for characters, 1.5 s otherwise)
-      u.st.t.levelInvul = this.time + (u.cls === 'CHTR' ? 2.5 : 1.5);
-      u.busyAnim = true;
-      u.anim.play(u.anim.pick('level_up', 'cheer') || u.idleAnim, { loop: false, onDone: () => { u.busyAnim = false; } });
+      // full heal; the level-up animation and invulnerable while it plays (2.5 s for characters, 1.5 s otherwise) - only
+      // with a "level_up" animation, not in a transport or trapped (DoLevelUpAnim: character.usl:948, FO:3532)
+      if (!u.inside && !active(u, 'trapped', this.time) && u.anim.has('level_up')) {
+        u.st.t.levelInvul = this.time + (u.cls === 'CHTR' ? 2.5 : 1.5);
+        u.busyAnim = true;
+        u.anim.play('level_up', { loop: false, onDone: () => { u.busyAnim = false; } });
+      }
       this.emit('levelup', { unit: u });
     }
   },

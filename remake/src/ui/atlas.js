@@ -41,11 +41,17 @@ export async function preloadAtlasImages() {
   })));
 }
 
+// the card name the tech tree gives a class (its "description" text key without the leading underscore: the Dragon
+// Clan's small tower has the card ninigi_defense_tower, its main building ninigi_fireplace_1 ...); set by main.js
+let cardName = () => null;
+export function setCardNames(fn) { cardName = fn; }
 // unit/building portrait icon name for an object (atlas keys follow the tech tree names)
 export function iconFor(name) {
   if (!name) return null;
   if (entry(name)) return name;
   const base = name.replace(/_s\d$/, '').replace(/_\d$/, '');
   if (entry(base)) return base;
+  const card = cardName(name);
+  if (card && entry(card)) return card;
   return null;
 }

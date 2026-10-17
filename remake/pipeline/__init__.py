@@ -8,7 +8,12 @@ it builds on ran again, or its output is missing (fingerprints in build.json, se
     pipeline.build(data_dir, out_dir, progress=lambda stage, frac: ..., log=print)   # what is out of date
     pipeline.build(data_dir, out_dir, force=True)                                    # everything again
     pipeline.build(data_dir, out_dir, steps=['ui', 'menu'])                          # exactly these steps
+    pipeline.build(data_dir, out_dir, mod='MIRAGE')       # a mod configuration (its own output folder)
     pipeline.status(data_dir, out_dir)   -> {'ready': bool, 'reason': ..., 'todo': [steps that would run]}
+
+A build is for one configuration: the official game (mod '', Base + BoosterPack1) or a mod with everything it
+requires (pwexport/mods.py). Every step reads the game through paths.game(), so files, model archives, textures
+and scripts all come from that configuration's folders.
 
 Steps (each module has run(log, progress) and a command line for running it alone):
     rules     build_data.py      tech tree + scripts -> techtree.json, gamedata.json
@@ -35,14 +40,16 @@ ASSET_VERSION = '2026.10.4'
 # name, module, share of the progress bar, steps it builds on, game folders / files it reads (below Data/<mod>/),
 # outputs (below the output folder) that must exist
 STEPS = [
-    ('rules', 'build_data', 0.02, [], ['Scripts/Server', 'Scripts/Game/misc', '../locale'], ['techtree.json', 'gamedata.json']),
+    # (the texts: every folder of the language packs, Data/Info/Locale_<LANG>.info - the official add-on's always)
+    ('rules', 'build_data', 0.02, [], ['Scripts/Server', 'Scripts/Game/misc', 'Scripts/Game/sequencer', '../locale/*/Texts', 'locale/*/Texts',
+                                       '../BoosterPack3/locale/*/Texts', '../Info'], ['techtree.json', 'gamedata.json', 'help.json']),
     ('models', 'convert_models', 0.45, [], ['GSF', 'Texture'], ['_conv/stamps.json']),
-    ('assets', 'build_assets', 0.25, ['rules', 'models'], ['GSF'], ['assets/manifest.json', 'assets/models']),
-    ('ui', 'build_ui', 0.05, [], ['UI/hud', 'UI/All_def.txt'], ['assets/ui/atlas.json']),
+    ('assets', 'build_assets', 0.25, ['rules', 'models'], ['GSF', 'Maps'], ['assets/manifest.json', 'assets/models']),
+    ('ui', 'build_ui', 0.05, [], ['UI/hud', 'UI/All_def.txt', 'Texture/Effects'], ['assets/ui/atlas.json']),
     ('menu', 'build_menu', 0.03, [], ['UI/menue'], ['assets/ui/menu']),
     ('cursors', 'build_cursors', 0.01, [], ['Cursors'], ['assets/ui/cur']),
     ('terrain', 'build_terrain', 0.15, [], ['Texture/Scape'], ['assets/terrain']),
-    ('sounds', 'build_sounds', 0.04, ['assets'], ['Scripts/Server/init', 'Scripts/Game/misc'], ['assets/sounds.json']),
+    ('sounds', 'build_sounds', 0.04, ['assets'], ['Scripts/Server/init', 'Scripts/Game/misc', 'Audio/MusicMgr.txt', 'Audio/MusicTracks.txt', 'Audio/AtmoTemplates'], ['assets/sounds.json']),
     # the computer player's tables (docs/COMPUTER_PLAYER.md): the AI scripts and settings, and the server scripts with
     # the difficulty handicaps
     ('ai', 'build_ai', 0.01, [], ['Scripts/Ai', 'Scripts/Server/settings/Techtree/_AI_ObjectData.txt', 'Scripts/Server/misc',
@@ -50,37 +57,47 @@ STEPS = [
      ['ai.json']),
     # forest blocks of the original maps (docs/MAP_FORMAT.md): the engine's tree layouts and the tree kinds per setting
     ('forest', 'build_forest', 0.01, [], ['Scripts/Server/classes/vegetation'], ['forest.json']),
+    # the sequel campaign's own models and cards, made in Blender and kept built in art/sequel/built (docs/SEQUEL.md
+    # "Models"): after "assets", "ui" and "terrain", whose manifest, card atlas and ground brushes it extends
+    ('sequel', 'sequel_assets', 0.01, ['assets', 'ui', 'terrain'], [], ['assets/models/sq_rift.glb', 'assets/ui/sq_cards.jpg']),
 ]
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
-def _inputs(data_dir, rels):
-    """the paths Data/<mod>/<rel> of every mod folder (missing ones count as missing in the hash)"""
-    from pwexport.install import Install, _ci_join
-    game = Install(data_dir)
+def _inputs(data_dir, rels, mod=''):
+    """the paths Data/<mod>/<rel> of every folder of the configuration (missing ones count as missing in the hash)"""
+    from pwexport.install import _ci_join
+    game = paths.install(data_dir, mod)
     out = []
-    for m in game.model_mods:
+    for m in game.mods:
         for rel in rels:
             base = data_dir if rel.startswith('../') else os.path.join(data_dir, m)
-            p = _ci_join(base, rel[3:] if rel.startswith('../') else rel)
-            if p:
-                out.append(p)
+            rel = rel[3:] if rel.startswith('../') else rel
+            head, star, tail = rel.partition('/*/')         # 'locale/*/Texts': the Texts folder of every language
+            if star:
+                d = _ci_join(base, head)
+                ps = [_ci_join(os.path.join(d, x), tail) for x in sorted(os.listdir(d))] if d and os.path.isdir(d) else []
+            else:
+                ps = [_ci_join(base, rel)]
+            for p in ps:
+                if p and p not in out:
+                    out.append(p)
     return out
 
 
-def fingerprints(data_dir, max_age=0):
+def fingerprints(data_dir, max_age=0, mod=''):
     """{step: {'code', 'files', 'fp'}} as the installation and the toolkit are now"""
     fps = {}
-    for name, mod, _, needs, rels, _ in STEPS:
-        code = stamps.code_hash(os.path.join(HERE, mod + '.py'))
-        files = stamps.tree_hash(data_dir, _inputs(data_dir, rels), max_age=max_age)
+    for name, module, _, needs, rels, _ in STEPS:
+        code = stamps.code_hash(os.path.join(HERE, module + '.py'))
+        files = stamps.tree_hash(data_dir, _inputs(data_dir, rels, mod), max_age=max_age)
         fps[name] = {'code': code, 'files': files, 'fp': stamps.combine(code, files, *[fps[n]['fp'] for n in needs])}
     return fps
 
 
-def _todo(data_dir, out_dir, built, max_age=0):
+def _todo(data_dir, out_dir, built, max_age=0, mod=''):
     """the steps that would run: fingerprint changed, output missing, or a step they build on is in the list"""
-    now = fingerprints(data_dir, max_age)
+    now = fingerprints(data_dir, max_age, mod)
     old = (built or {}).get('fingerprints') or {}
     todo = []
     for name, _, _, needs, _, outs in STEPS:
@@ -90,17 +107,17 @@ def _todo(data_dir, out_dir, built, max_age=0):
     return todo, now
 
 
-def status(data_dir, out_dir):
+def status(data_dir, out_dir, mod=''):
     f = os.path.join(out_dir, 'build.json')
     try:
         with open(f, encoding='utf-8') as fh:
             b = json.load(fh)
     except (OSError, ValueError):
         return {'ready': False, 'reason': 'not built', 'todo': [s[0] for s in STEPS]}
-    if b.get('version') != ASSET_VERSION:
+    if b.get('version') != ASSET_VERSION or (b.get('mod') or '') != mod:
         return {'ready': False, 'reason': 'toolkit updated', 'built': b, 'todo': [s[0] for s in STEPS]}
     try:
-        todo, _ = _todo(data_dir, out_dir, b, max_age=20)
+        todo, _ = _todo(data_dir, out_dir, b, max_age=20, mod=mod)
     except (OSError, ValueError) as e:
         return {'ready': False, 'reason': str(e)}
     if b.get('ok') is not True:
@@ -112,11 +129,12 @@ def status(data_dir, out_dir):
     return {'ready': True, 'built': b, 'todo': []}
 
 
-def build(data_dir, out_dir, progress=None, log=None, steps=None, force=False, keep_conv=True):
-    """run the steps that are out of date (force: all of them; steps: exactly those). progress(stage, fraction 0..1),
-    log(*args). Returns the build record (also out/build.json): ok, steps {name: seconds}, skipped, todo."""
+def build(data_dir, out_dir, progress=None, log=None, steps=None, force=False, keep_conv=True, mod=''):
+    """run the steps that are out of date (force: all of them; steps: exactly those) for the configuration `mod`.
+    progress(stage, fraction 0..1), log(*args). Returns the build record (also out/build.json): ok, steps {name:
+    seconds}, skipped, todo."""
     import importlib
-    paths.configure(data_dir, out_dir)
+    paths.configure(data_dir, out_dir, mod=mod)
     os.makedirs(out_dir, exist_ok=True)
     lines = []
 
@@ -132,20 +150,20 @@ def build(data_dir, out_dir, progress=None, log=None, steps=None, force=False, k
             old = json.load(fh)
     except (OSError, ValueError):
         old = {}
-    if old.get('version') != ASSET_VERSION:
+    if old.get('version') != ASSET_VERSION or (old.get('mod') or '') != mod:
         old = {}
-    rec = {'version': ASSET_VERSION, 'started': time.strftime('%Y-%m-%d %H:%M:%S'), 'data': data_dir, 'ok': False,
+    rec = {'version': ASSET_VERSION, 'mod': mod, 'started': time.strftime('%Y-%m-%d %H:%M:%S'), 'data': data_dir, 'ok': False,
            'steps': {}, 'skipped': [], 'fingerprints': dict(old.get('fingerprints') or {})}
     try:
-        todo, now = _todo(data_dir, out_dir, old)
+        todo, now = _todo(data_dir, out_dir, old, mod=mod)
         run = [s[0] for s in STEPS] if force else [n for n in todo] if not steps else list(steps)
-        for name, mod, share, needs, _, _ in STEPS:
+        for name, module, share, needs, _, _ in STEPS:
             if name not in run:
                 done += share
                 if not steps:
                     rec['skipped'].append(name)
                 continue
-            m = importlib.import_module('.' + mod, __name__)
+            m = importlib.import_module('.' + module, __name__)
             t = time.time()
             if progress:
                 progress(name, done)
@@ -168,7 +186,7 @@ def build(data_dir, out_dir, progress=None, log=None, steps=None, force=False, k
     finally:
         rec['seconds'] = round(time.time() - t0, 1)
         try:
-            rec['todo'] = _todo(data_dir, out_dir, rec)[0]
+            rec['todo'] = _todo(data_dir, out_dir, rec, mod=mod)[0]
         except Exception:                                 # noqa: BLE001
             rec['todo'] = []
         if rec['ok'] and rec['todo'] and not steps:

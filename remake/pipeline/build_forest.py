@@ -23,8 +23,7 @@ except ImportError:
 
 def build():
     from pwexport import forest, ula
-    from pwexport.install import Install
-    inst = Install(paths.DATA)
+    inst = paths.game()
     pat = forest.patterns(inst)
     settings = {}
     for s in ula.SETTINGS:

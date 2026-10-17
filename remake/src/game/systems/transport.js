@@ -4,6 +4,8 @@
 // Reference: docs/spec/units.md section 4 (TransportObj.usl, BoardTransport.usl, CBunker in Building.usl).
 //   transport class 1 (land) carries characters only; class 2 (ships, hovercraft, turtle) also animals and vehicles.
 //   Passengers can't be hit. When a land transport dies they get out; on a sinking ship they die.
+import { active } from './effects.js';
+
 const OPEN = new Set(['hu_chariot', 'hu_rhino_transporter', 'hu_triceratops', 'aje_triceratops_archer', 'aje_brachiosaurus',
   'aje_stegosaurus', 'ninigi_saltasaurus_archer', 'seas_triceratops_transporter']);
 
@@ -15,6 +17,7 @@ export const Transport = {
   isOpenTransport(t) { return OPEN.has(t.name); },
   canBoard(u, t) {
     if (!u.alive || !t.alive || u === t || u.owner !== t.owner || u.inside || u.passengers && u.passengers.length) return false;
+    if (u.flying || (t.st && active(t, 'cursed', this.time))) return false;   // (MIRAGE: jetpack flight; the monk's curse, TransportObj.usl:1313)
     const cap = this.capacity(t);
     if (!cap || (t.passengers || []).length >= cap) return false;
     if (t.kind === 'building') return t.built && u.cls === 'CHTR';
@@ -73,12 +76,14 @@ export const Transport = {
     u.path = []; u.vel.set(0, 0, 0);
     u.obj.visible = false;
     this.uHash.remove(u);
+    if (u.item) this.rideCup(u, true);                     // (the ride cup: the transport's hit points, systems/items.js)
     this.emit('boarded', { unit: u, transport: t });
   },
   leaveTransport(u, x, z) {
     const t = u.inside;
     if (!t) return;
     if (t.passengers) t.passengers = t.passengers.filter((p) => p !== u);
+    if (u.item) this.rideCup(u, false);
     u.inside = null;
     if (x === undefined) { const [ex, ez] = t.kind === 'building' ? t.exitPoint(t.pos.x + 5, t.pos.z + 5) : [t.pos.x + (Math.random() - 0.5) * 6, t.pos.z + (Math.random() - 0.5) * 6]; x = ex; z = ez; }
     if (!this.nav.isFree(x, z)) { const c = this.nav.nearestFree(this.nav.idx(x, z), 8); [x, z] = this.nav.center(c); }
@@ -91,14 +96,30 @@ export const Transport = {
     // ships unload onto the shore within 30 m; on a sinking ship whoever can't reach the shore dies (Ship.usl:248)
     const shore = t.naval ? this.shorePoint(t, 30) : null;
     if (t.naval && !shore && !dying) { this.emit('msg', { player: t.owner, text: 'Too far from the shore to unload' }); return; }
+    // a siege tower docked at a wall: out on the wall's far side (CLeaveSiegeTower, systems/siege.js)
+    const far = t.docked && this.siegeExitPoint ? this.siegeExitPoint(t) : null;
     list.forEach((u, i) => {
       if (t.naval && !shore) { this.leaveTransport(u); u.silentDeath = true; this.kill(u, null); return; }
+      if (far) { const a = (i / Math.max(1, list.length)) * Math.PI * 2; this.leaveTransport(u, far[0] + Math.cos(a) * 1.5, far[1] + Math.sin(a) * 1.5); return; }
       const a = (i / Math.max(1, list.length)) * Math.PI * 2;
       const r = t.naval ? 1.5 + (i % 3) * 1.2 : (t.radius || 2) + 2;
       const [cx, cz] = shore || [t.pos.x, t.pos.z];
       this.leaveTransport(u, cx + Math.cos(a) * r, cz + Math.sin(a) * r);
     });
     t.passengers = [];
+  },
+  // one passenger out (the passengers' menu: CommandBar.usl SLOT flyout, "/Unboard|<slot>|<guid>"); ships only at
+  // the shore, like unloadAll
+  unloadOne(t, u) {
+    if (!t.passengers || !t.passengers.includes(u)) return false;
+    if (t.kind === 'building') { this.leaveTransport(u); return true; }
+    const far = t.docked && this.siegeExitPoint ? this.siegeExitPoint(t) : null;
+    if (far) { this.leaveTransport(u, far[0], far[1]); return true; }
+    const shore = t.naval ? this.shorePoint(t, 30) : null;
+    if (t.naval && !shore) { this.emit('msg', { player: t.owner, text: 'Too far from the shore to unload' }); return false; }
+    const [cx, cz] = shore || [t.pos.x, t.pos.z], a = Math.random() * Math.PI * 2, r = t.naval ? 1.5 : (t.radius || 2) + 2;
+    this.leaveTransport(u, cx + Math.cos(a) * r, cz + Math.sin(a) * r);
+    return true;
   },
   // passengers of open transports shoot with their long-range weapon from the animal's back
   passengerUpdate(u, dt) {

@@ -1,10 +1,12 @@
 import * as THREE from 'three';
 import { applyFow, fowUniforms } from './terrain.js';
+import { Particles } from './particles.js';
+import { mapQuat } from '../game/maps/frame.js';
+import { mirroredGeometry } from './assets.js';
 
 // Static props (trees, rocks, bushes, stone deposits) drawn with InstancedMesh.
 // Each frame the camera moves, visible instances are packed to the front of the instance buffers
 // (one draw call per model part, only visible instances are processed).
-const R0 = new THREE.Matrix4().makeRotationX(-Math.PI / 2);   // model space is Z-up; glTF root rotates to Y-up
 
 export const holeUniforms = {
   uHoles: { value: Array.from({ length: 16 }, () => new THREE.Vector4()) },
@@ -55,24 +57,27 @@ export class PropField {
         const mat = o.material;
         applyFow(mat);
         if (opts.holes) applyHoles(mat);
-        parts.push({ geo: o.geometry, mat, matrix: o.matrixWorld.clone() });
+        // the instance matrices include the part's mirroring model matrix: triangles reversed (assets.js)
+        parts.push({ geo: o.matrixWorld.determinant() < 0 ? mirroredGeometry(o.geometry) : o.geometry, mat, matrix: o.matrixWorld.clone() });
       }
     });
     const box = new THREE.Box3().setFromObject(tpl.scene);
     const sphere = box.getBoundingSphere(new THREE.Sphere());
-    const k = { name, parts, inst: [], meshes: [], cap: 0, sphere, opts };
+    // particle emitters (waterfall spray ...): sprayed by engine/particles.js for every instance
+    const emits = Particles.nodes(tpl.scene).length > 0;
+    const k = { name, parts, inst: [], meshes: [], cap: 0, sphere, opts, tplRoot: emits ? tpl.scene : null };
     this.kinds.set(name, k);
     return k;
   }
   // returns instance handle
-  // q (optional): the stored map quaternion of an original map object (x, y, z, w; z up). The engine applies it as
-  // its conjugate (Direct3D row vectors); axes map like positions (x, y, z) -> (x, z, -y). Tilted plateaus and cliffs
-  // need it; everything else only turns by rotY.
+  // q (optional): the stored map quaternion of an original map object (x, y, z, w; z up; game/maps/frame.js mapQuat).
+  // Tilted plateaus and cliffs need it; everything else only turns by rotY.
   add(name, x, y, z, rotY, scale, q = null) {
     const k = this.kinds.get(name);
-    const quat = q ? new THREE.Quaternion(-q[0], -q[2], q[1], q[3]).normalize() : new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rotY);
+    const quat = q ? new THREE.Quaternion(...mapQuat(q)) : new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rotY);
     const m = new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), quat, new THREE.Vector3(scale, scale, scale));
     const inst = { m, sphere: new THREE.Sphere(new THREE.Vector3(x, y + k.sphere.center.y * scale, z), k.sphere.radius * scale + 4), alive: true };
+    if (k.tplRoot && this.particles) inst.emit = this.particles.addStatic(k.tplRoot, m);
     k.inst.push(inst);
     this.dirty = true;
     return { kind: k, inst };
@@ -80,6 +85,7 @@ export class PropField {
   remove(h) {
     if (!h) return;
     h.inst.alive = false;
+    if (this.particles) this.particles.removeStatic(h.inst.emit);
     this.dirty = true;
   }
   build() {
@@ -309,8 +315,8 @@ export function treeSprites(extras, x, y, z, rotY, scale, opts = {}) {
     const detail = lm ? !(parseInt(lm[1], 16) & 4) : false;   // not drawn at the original's LOD level 2 -> near-only layer
     const aspect = f.uv ? (f.uv[2] - f.uv[0]) / Math.max(1e-3, f.uv[3] - f.uv[1]) : 1;
     for (let i = 0; i < p.length; i += 3) {
-      // Z-up model coords -> Y-up (x, z, -y), then yaw + scale
-      const lx = p[i], ly = p[i + 2], lz = -p[i + 1];
+      // Z-up model coords -> Y-up (-x, z, -y) (the models' root mirrors x, game/maps/frame.js), then yaw + scale
+      const lx = -p[i], ly = p[i + 2], lz = -p[i + 1];
       // ground cover (flowers, reeds, grass of the landscape objects): upright stalks standing on the ground,
       // the stored size is far too large for them
       const ground = opts.ground && ly < 0.5;
@@ -359,8 +365,12 @@ varying vec3 vW;
 #include <fog_pars_fragment>
 void main() {
   vec4 t = texture2D(map, vUv);
+#ifdef GLOW
+  vec3 col = t.rgb;                 // a glow (GSF material flag 0x4): added to what is behind it, not lit
+#else
   if (t.a < 0.5) discard;
   vec3 col = t.rgb * light;
+#endif
   if (fowOn > 0.5) {
     float fv = texture2D(fowTex, (vW.xz - fowScale.xy) * fowScale.zw).r;
     col *= smoothstep(0.0, 0.45, fv) * mix(0.55, 1.0, smoothstep(0.45, 0.9, fv));
@@ -371,8 +381,9 @@ void main() {
 }`;
 export const spriteLight = new THREE.Vector3(1, 1, 1);
 let quadGeo = null;
-// f: a root extras.foliage entry; map: the texture of the billboard's material
-export function modelSprites(f, map) {
+// f: a root extras.foliage entry; map: the texture of the billboard's material; glow: the material adds its picture
+// (GSF material flag 0x4 - the halos of lamps at night)
+export function modelSprites(f, map, glow = false) {
   if (!quadGeo) quadGeo = new THREE.PlaneGeometry(1, 1);
   const n = f.pts.length / 3;
   const geo = new THREE.InstancedBufferGeometry();
@@ -393,7 +404,8 @@ export function modelSprites(f, map) {
     uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
       map: { value: map }, light: { value: spriteLight }, uvRect: { value: new THREE.Vector4(u0, v0, u1, v1) },
       size: { value: new THREE.Vector2(h * aspect, h) } }]),
-    vertexShader: '#include <fog_pars_vertex>\n' + LSPRITE_VS, fragmentShader: LSPRITE_FS, fog: true, side: THREE.DoubleSide,
+    vertexShader: '#include <fog_pars_vertex>\n' + LSPRITE_VS, fragmentShader: LSPRITE_FS, fog: !glow, side: THREE.DoubleSide,
+    ...(glow ? { defines: { GLOW: 1 }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending } : {}),
   });
   mat.uniforms.map.value = map;
   mat.uniforms.light.value = spriteLight;

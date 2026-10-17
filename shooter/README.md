@@ -100,6 +100,46 @@ It snows from the pass upwards.
 | ![Before the palisade](../docs/screenshots/27_shooter_frost.png) | ![On the war mammoth, before the gate of the pass](../docs/screenshots/28_shooter_mammoth.png) |
 | ![The gunship over the cape](../docs/screenshots/29_shooter_gunship.png) | ![The Triceratops titan in the fortress](../docs/screenshots/30_shooter_titan.png) |
 
+### Dragon Fire
+
+The second map **of the game's own making** (`maps/dragon.js`), and the fourth enemy: the **Dragon Clan**. Their
+island is an arsenal - powder, rockets and the beasts that carry them - and they fight with it:
+
+* **Smoke towers** keep a bank of smoke standing round them. What the Clan has inside - the fire cannons on the
+  dike, the gate of the town - cannot be seen, your troops find no target there and the marker does not point
+  there: bring the tower down first.
+* **Rocket towers**: the watchtowers with a launcher on top (the others have archers). The launcher turns to you.
+* **Mine fields** lie on the roads and between the rice paddies (little striped cones round a flag). Step near one
+  and it hisses, then goes up. **Shoot it first** and it goes up at once - under the Clan's own men if they stand
+  there, and it sets off the next one if that lies close.
+* **Gatlings**: marksmen with hand gatlings, and the Parasaurolophus with a gatling on its back, fire long bursts.
+* **Mortar men, fire cannons, rocket ramps** lob their shot over whatever stands between; the guns turn to you.
+* **Flame trikes** burn what is in front of them while they drive - get out of the cone, or behind them.
+* **Ninjas** come in packs out of the bamboo: very fast, a throwing star while they close.
+* Also: spearmen, archers, samurai, sumo, warrior monks, Dilophosaurs that spit, riders on sabre-tooths and on
+  Baryonyx, and corsairs, rocket boats and water turrets in the bays (the boats sail up to the shore you stand on).
+
+The way, 22 objectives:
+
+* **The beach** - clear it, pull down the towers, sink the corsair in the bay, break through the line of stakes.
+* **The rice terraces** - mined paddies on three levels; silence the fire cannons on the upper dike and hold it.
+* **The bamboo forest** - burn out the nests of the Dilophosaurs, break the ninjas' ambush, take the palisade of
+  the town.
+* **The town** - burn the dojo, the weapon maker, the engineers' workshop and the tea house; the warlord rides out
+  on the greatest Baryonyx of the island.
+* **The harbour** - sink the fleet and burn the harbour.
+* **The volcano** - back through the town and up the stairs under the rocket ramps (ash instead of jungle from
+  here on, lava down the flanks): blow up the three ramps.
+* **The temple court** - its towers, the **Seismosaurus titan** (a rocket launcher on its back, a gatling on either
+  flank), the temple of the dragon, and a last stand at the dragon gate.
+
+Checkpoints: when the gate of the town is down, and when the fleet is sunk.
+
+| | |
+|---|---|
+| ![The rice terraces behind the stakes](../docs/screenshots/31_shooter_dragon.png) | ![The town under the volcano](../docs/screenshots/32_shooter_dragon_town.png) |
+| ![The fleet at the quay](../docs/screenshots/33_shooter_dragon_fleet.png) | ![The Seismosaurus titan](../docs/screenshots/34_shooter_dragon_titan.png) |
+
 ### In all of them
 
 **Music.** The game's fight songs, shuffled: those of the enemy's tribe and of the SEAS while you fight, others for
@@ -151,6 +191,10 @@ at 1 with a second to get away ("last stand").
 
 Every hit shows the damage it did as a number over the enemy (white; yellow for a head shot, orange for fire,
 large for a heavy blow; a burst on one enemy adds up to one number). "Damage numbers" in the settings switches them off.
+
+"Models" in the settings (only there when HD versions exist, see [docs/HD_MODELS.md](../docs/HD_MODELS.md)) loads the
+HD versions of the Gunner, the Executioner MKII and the gun turret instead of the originals: "HD" (the same models
+with more detail and 4x textures) or "HD remodelled" (rebuilt in Blender); the mission starts again with them.
 
 Bullets carry about 100 units (minigun 85) and a rocket goes off by itself after 130 - towers cannot be picked off
 from beyond their own reach.

@@ -156,6 +156,7 @@ class Enemy {
     const G = this.sw.g, d = this.def, fx = G.fx, sw = this.sw;
     if (d.structure) {
       this.alive = false; this.state = 'dead'; this.t = 0.05; sw.alive--; sw.structs--; sw.hopDirty = true;
+      if (d.mine) { this.mineBlast(); this.actor.obj.visible = false; G.onKill(this, info); return; }
       // a living thing among the structures (the transport turtles): it dies and goes under
       if (d.sink) { this.t = 4; this.burn = 0; this.vel.set(0, 0, 0); this.anim.play(this.anim.pick(d.sink, 'dying'), { loop: false, restart: true, fade: 0.1 }); G.fx.dust(v1.copy(this.pos).setY(G.level.water + 0.5), d.radius, 8, [0.8, 0.9, 1, 0.5]); G.onKill(this, info); return; }
       const p = v1.copy(this.pos).setY(this.pos.y + d.height * 0.4);
@@ -212,6 +213,8 @@ class Enemy {
     this.stagger = Math.max(0, this.stagger - d.staggerAt * 0.6 * dt);
     this.cool -= dt; this.shootCool -= dt; this.t -= dt;
     if (this.state === 'dead') return this.stepDead(dt);
+    // (the rest of a burst: ranged.burst shots, burstGap apart)
+    if (this.burstN > 0 && (this.burstT -= dt) <= 0) { this.burstN--; this.burstT = d.ranged.burstGap || 0.12; this.release(true); }
     if (d.structure) {
       if (this.burn > 0) {
         this.burn -= dt; G.hud.number(this, Math.min(this.hp, this.burnDps * dt), 'fire'); this.hp -= this.burnDps * dt;
@@ -226,10 +229,17 @@ class Enemy {
         const T = this.target;
         if (T && !T.dead && this.shootCool <= 0) {
           const dist = Math.hypot(T.pos.x - this.pos.x, T.pos.z - this.pos.z);
-          if (dist < R.range && (!R.min || dist > R.min) && this.los()) { this.shootCool = R.every * rnd(0.8, 1.25); if (R.clip && this.anim.has(R.clip)) this.anim.play(R.clip, { loop: false, restart: true, fade: 0.1, onDone: () => { if (d.idle) this.anim.play(d.idle); } }); this.ride('ride_attack_front', false); this.rideT = 1.5; this.release(); }
+          // (ranged.indirect: lobbed over whatever stands between - rocket ramps, mortars, fire cannons)
+          if (dist < R.range && (!R.min || dist > R.min) && (R.indirect || this.los())) { this.shootCool = R.every * rnd(0.8, 1.25); if (R.clip && this.anim.has(R.clip)) this.anim.play(R.clip, { loop: false, restart: true, fade: 0.1, onDone: () => { if (d.idle) this.anim.play(d.idle); } }); if (this.actor.addon) this.actor.addon.fire(); this.ride('ride_attack_front', false); this.rideT = 1.5; this.release(); }
           else this.shootCool = 0.4;
         }
       }
+      // (turns: a gun that is trained on what it shoots at - radians a second)
+      if (d.turns && this.alive && this.target && !this.target.dead) { const w = yawTo(this.target.pos.x - this.pos.x, this.target.pos.z - this.pos.z); let dy = w - this.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); this.yaw += Math.max(-d.turns * dt, Math.min(d.turns * dt, dy)); }
+      // (what is built on it and can turn follows the target: addon.aims)
+      if (this.alive && this.actor.addon && this.actor.addon.aim && this.target && !this.target.dead) this.actor.addon.aim(this.target.pos, dt);
+      if (d.smoke && this.alive) this.smokeStep(dt);
+      if (d.mine && this.alive) this.mineStep(dt);
       if (d.sail && this.alive) this.sail(dt);
       return;
     }
@@ -253,6 +263,8 @@ class Enemy {
     const dist = Math.hypot(dx, dz);
     const reach = d.attack.range + T.def.radius;
     let mvx = 0, mvz = 0, face = null;
+    if (this.actor.addon && this.actor.addon.aim && !T.dead) this.actor.addon.aim(T.pos, dt);
+    if (d.breath && this.state !== 'dazed' && this.state !== 'down' && this.state !== 'burning' && !T.dead) this.breathe(dt, T, dist);
 
     switch (this.state) {
       case 'chase': {
@@ -490,6 +502,60 @@ class Enemy {
     this.anim.play(clip, { loop: false, restart: true, ts, fade: 0.08, cut: true });
     this.ride('ride_attack_front', false); this.rideT = B.time;
   }
+  // A smoke tower (structure with smoke: {radius, height, rate}): it keeps a bank of smoke standing round itself.
+  // What the Clan has inside it is hidden (Enemies.smokeScreen marks it `smoked` twice a second): the player's
+  // troops do not find it as a target, and the objective's marker does not point at it - until the tower is down.
+  smokeStep(dt) {
+    const G = this.sw.g, S = this.def.smoke, cam = G.engine.camera.position;
+    if (Math.hypot(cam.x - this.pos.x, cam.z - this.pos.z) > 320) return;
+    this.smokeAcc = (this.smokeAcc || 0) + S.rate * dt;
+    while (this.smokeAcc >= 1) {
+      this.smokeAcc -= 1;
+      const a = Math.random() * 6.283, r = Math.sqrt(Math.random()) * S.radius, x = this.pos.x + Math.cos(a) * r, z = this.pos.z + Math.sin(a) * r;
+      G.fx.screen(x, G.level.height(x, z) + rnd(1, S.height), z, S.size || 10);
+    }
+  }
+  // A mine field (structure with mine: {trigger, fuse, radius, damage, knock}): whoever of the player's side steps
+  // within `trigger` sets it off - a hiss, `fuse` seconds, then it goes up. Shot at, it goes up at once: on the
+  // Dragon Clan's own men too, and on the next field if that lies near.
+  mineStep(dt) {
+    const G = this.sw.g, M = this.def.mine, P = G.player;
+    if (this.fuse > 0) {
+      if (Math.random() < dt * 30) G.fx.sparks(v1.copy(this.pos).setY(this.pos.y + 0.6), 2, 6, [1, 0.8, 0.3, 1]);
+      if ((this.fuse -= dt) <= 0) this.die({ kind: 'mine' }, v2.set(0, 0, 0));
+      return;
+    }
+    if ((this.mineT = (this.mineT || 0) - dt) > 0) return;
+    this.mineT = 0.12;
+    const near = (!P.dead && !P.ride && Math.hypot(P.pos.x - this.pos.x, P.pos.z - this.pos.z) < M.trigger && Math.abs(P.pos.y - this.pos.y) < 4) || (G.allies && G.allies.inRadius(this.pos, M.trigger).length > 0);
+    if (near) { this.fuse = M.fuse; G.sfx('error', 60, this.pos, 1.6); G.fx.ring(v1.copy(this.pos).setY(this.pos.y + 0.3), M.trigger, [1, 0.5, 0.2, 0.8]); }
+  }
+  mineBlast() {
+    const G = this.sw.g, M = this.def.mine, P = G.player, k = this.sw.damageScale || 1;
+    const at = this.pos.clone().setY(this.pos.y + 0.8);
+    G.fx.explosion(at, M.radius * 1.1); G.fx.dust(at, M.radius, 14); G.fx.shake(0.4); G.sfx('explode', 95, at, 0.9 + Math.random() * 0.2);
+    const pd = Math.hypot(P.pos.x - at.x, P.pos.z - at.z);
+    if (pd < M.radius && Math.abs(P.pos.y - this.pos.y) < 6 && !P.dead) { P.hurt(M.damage * k * (1 - 0.5 * pd / M.radius), at); P.shove((P.pos.x - at.x) / (pd || 1), (P.pos.z - at.z) / (pd || 1), M.knock); }
+    if (G.allies) for (const a of G.allies.inRadius(at, M.radius)) a.hurt(M.damage * k * 0.7, at);
+    for (const e of this.sw.inRadius(at, M.radius)) if (e !== this && e.alive) e.damage(M.damage * 3, { kind: 'explosion', from: at, knock: M.knock });
+  }
+  // What breathes fire (breath: {range, arc, dps, link, forward}): the flame-thrower trike. No state of its own -
+  // while somebody of the player's side is in front of it and near enough, it burns.
+  breathe(dt, T, dist) {
+    const G = this.sw.g, B = this.def.breath, P = G.player;
+    let dy = yawTo(T.pos.x - this.pos.x, T.pos.z - this.pos.z) - this.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+    if (dist > B.range || Math.abs(dy) > B.arc || Math.abs(T.pos.y - this.pos.y) > 8) return;
+    const fx = -Math.sin(this.yaw), fz = -Math.cos(this.yaw);
+    const from = this.actor.linkPos(B.link || 'Proj', v1, this.def.height * 0.6);
+    if (!this.actor.links[B.link || 'Proj']) from.set(this.pos.x + fx * (B.forward || this.def.radius), this.pos.y + this.def.height * 0.55, this.pos.z + fz * (B.forward || this.def.radius));
+    for (let k = 0; k < 2; k++) G.fx.flame(from, v2.set(fx * 26 + rnd(-4, 4), rnd(-1, 3), fz * 26 + rnd(-4, 4)), 1.5);
+    if ((this.breathT = (this.breathT || 0) - dt) > 0) return;
+    this.breathT = 0.25;
+    G.sfx('flame', 45, from, 0.9 + Math.random() * 0.2);
+    const hit = (o) => { const ox = o.pos.x - this.pos.x, oz = o.pos.z - this.pos.z, od = Math.hypot(ox, oz); if (od > B.range + 1 || od < 0.01) return; let a = yawTo(ox, oz) - this.yaw; a = Math.atan2(Math.sin(a), Math.cos(a)); if (Math.abs(a) < B.arc) o.hurt(B.dps * 0.25 * (this.sw.damageScale || 1), this.pos); };
+    if (!P.dead) hit(P);
+    if (G.allies) for (const a of G.allies.inRadius(this.pos, B.range)) hit(a);
+  }
   // A ship (structure with sail: {speed, keep, wake, depth, turn, clip}): it makes for whoever it shoots at - the
   // player if nobody else - until it lies `keep` off, over water at least `depth` deep, along the shore where the
   // straight way is land.
@@ -530,8 +596,10 @@ class Enemy {
     if (this.actor.addon) { this.actor.addon.fire(); if (this.anim.has(d.idle)) this.anim.play(d.idle); }      // the catapult on its back shoots, the animal stands
     else this.anim.play(this.anim.pick(R.clip, 'all_slingshot'), { loop: false, restart: true, fade: 0.1, cut: true });
   }
-  release() {
+  release(again) {
     const G = this.sw.g, d = this.def, R = d.ranged, P = this.target || G.player, PL = G.player;
+    if (R.burst && !again) { this.burstN = R.burst - 1; this.burstT = R.burstGap || 0.12; }
+    if (R.sound) G.sfx(R.sound, R.volume || 50, this.pos, 0.95 + Math.random() * 0.1);
     const from = this.actor.addon ? this.actor.addon.muzzle(new THREE.Vector3()) : this.actor.linkPos(R.link || 'HndR', new THREE.Vector3(), d.height * 0.8);
     // lead the target a little, lob it in an arc
     const tgt = new THREE.Vector3(P.pos.x, P.pos.y + P.def.height * 0.6, P.pos.z);
@@ -686,11 +754,24 @@ export class Enemies {
     }
     this.big = 0;
     // the things that stand in the way of everybody on foot (tents, towers)
+    if ((this.smokeT = (this.smokeT || 0) - dt) <= 0) { this.smokeT = 0.5; this.smokeScreen(); }
     this.solids = this.list.filter((e) => e.alive && e.def.structure && (e.def.solid || e.def.wall));
     for (const e of this.list) if (e.alive && e.nav === this.navBig && !e.def.structure) this.big++;
     for (let i = this.list.length - 1; i >= 0; i--) this.list[i].step(dt);
   }
   // Structures that are a wall across the way (def.wall = {half, thick}: the gates): a line, not a circle.
+  // who stands in the smoke of a living smoke tower (not the towers themselves)
+  smokeScreen() {
+    const towers = this.list.filter((e) => e.alive && e.def.smoke);
+    if (!towers.length && !this.anySmoked) return;
+    this.anySmoked = towers.length > 0;
+    for (const e of this.list) {
+      if (!e.alive) continue;
+      let s = false;
+      if (!e.def.smoke) for (const t of towers) if (Math.hypot(e.pos.x - t.pos.x, e.pos.z - t.pos.z) < t.def.smoke.radius) { s = true; break; }
+      e.smoked = s;
+    }
+  }
   // pushes p out of structure o (r = the body's radius); true when it touched
   pushFrom(o, p, r) {
     const W = o.def.wall;

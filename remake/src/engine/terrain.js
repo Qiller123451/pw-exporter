@@ -55,6 +55,44 @@ export class HeightField {
   }
 }
 
+// the terrain mesh (buildTerrain) after the height samples i0..i1, j0..j1 of hf changed (game/ground.js): heights and
+// normals of those vertices and a margin of one, uploaded as one band of rows
+export function refreshTerrain(mesh, hf, r) {
+  const geo = mesh.geometry, pos = geo.attributes.position, nrm = geo.attributes.normal, n = hf.n, H = hf.h, e = hf.cell;
+  const i0 = Math.max(0, r.i0 - 1), i1 = Math.min(n - 1, r.i1 + 1), j0 = Math.max(0, r.j0 - 1), j1 = Math.min(n - 1, r.j1 + 1);
+  for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+    const k = j * n + i;
+    pos.setY(k, H[k]);
+    const dx = (H[j * n + Math.min(n - 1, i + 1)] - H[j * n + Math.max(0, i - 1)]) / (2 * e);
+    const dz = (H[Math.min(n - 1, j + 1) * n + i] - H[Math.max(0, j - 1) * n + i]) / (2 * e);
+    const l = Math.hypot(dx, 1, dz);
+    nrm.setXYZ(k, -dx / l, 1 / l, -dz / l);
+  }
+  for (const a of [pos, nrm]) {
+    if (a.addUpdateRange) { a.clearUpdateRanges(); a.addUpdateRange(j0 * n * 3, (j1 - j0 + 1) * n * 3); }
+    a.needsUpdate = true;
+  }
+}
+
+// the ground materials of the terrain mesh again (buildTerrain's weights) for the vertices around world x0..x1, z0..z1
+// (a building's ground brush painted the material grid: game/ground.js brushCells)
+export function refreshSplat(mesh, hf, weightsFn, x0, z0, x1, z1) {
+  const geo = mesh.geometry, pos = geo.attributes.position, s0 = geo.attributes.splat, s1 = geo.attributes.splat2, n = hf.n, e = hf.cell, half = hf.size / 2;
+  const i0 = Math.max(0, Math.floor((x0 + half) / e)), i1 = Math.min(n - 1, Math.ceil((x1 + half) / e));
+  const j0 = Math.max(0, Math.floor((z0 + half) / e)), j1 = Math.min(n - 1, Math.ceil((z1 + half) / e));
+  if (i1 < i0 || j1 < j0) return;
+  for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+    const k = j * n + i, w = weightsFn(pos.getX(k), pos.getZ(k));
+    s0.setXYZW(k, w[0], w[1], w[2], w[3]);
+    if (s1) s1.setXYZW(k, w[4], w[5], w[6], w[7]);
+  }
+  for (const a of [s0, s1]) {
+    if (!a) continue;
+    if (a.addUpdateRange) { a.clearUpdateRanges(); a.addUpdateRange(j0 * n * 4, (j1 - j0 + 1) * n * 4); }
+    a.needsUpdate = true;
+  }
+}
+
 // ---------------------------------------------------------------- fog of war shading hook
 export const fowUniforms = {
   fowTex: { value: null },
@@ -216,6 +254,7 @@ export class FogOfWar {
     if (this.revealAll) d.fill(255);
     else for (let i = 0; i < d.length; i++) d[i] = this.vis[i] ? 255 : (this.explored[i] ? 115 : 0);
     this.tex.needsUpdate = true;
+    this.version = (this.version || 0) + 1;          // (the minimap repaints its cells when it changes)
   }
   visible(x, z) {
     if (this.revealAll) return true;

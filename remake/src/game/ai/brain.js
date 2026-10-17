@@ -17,6 +17,13 @@ import { Economy } from './economy.js';
 import { Army } from './army.js';
 import { Fight } from './attack.js';
 import { Defense } from './defense.js';
+import { ItemsAI } from './items.js';
+import { WallsAI } from './walls.js';
+import { OutpostsAI } from './outposts.js';
+import { TradeAI } from './trade.js';
+import { GameTypesAI } from './gametypes.js';
+import { ChatAI } from './chat.js';
+import { NavalAI } from './naval.js';
 
 const rnd = (n) => Math.floor(Math.random() * n);
 const urlParam = (k) => { try { return new URLSearchParams(location.search).get(k); } catch (e) { return null; } };
@@ -40,7 +47,9 @@ export class TribeAI {
       const ud = pick(urlParam('aid'));
       o = { difficulty: ud != null && ud !== '' ? +ud : typeof b === 'number' ? b : MENU_LEVELS[b] ?? MENU_LEVELS.normal,
         behaviour: pick(urlParam('aib')) || ['Dodo', 'Giraffe', 'Schnecke'][rnd(3)], multimap: true,
-        mapOptions: { harbour: !!this.W.waterNav, watermap: false, walls: false, markplace_outpost: false, warpgate: !!(this.W.rules && this.W.rules.warpgate), hunt_animals: true } };
+        // the map's Root/AIOptions (maps/source.js aiOptions); a random map: harbours where there is water
+        mapOptions: { harbour: !!this.W.waterNav, watermap: !!this.W.waterNav, walls: false, markplace_outpost: false, hunt_animals: true,
+          ...((G.mapSource && G.mapSource.aiOptions) || {}), warpgate: !!(this.W.rules && this.W.rules.warpgate) } };
     }
     this.multimap = !!o.multimap;
     this.mapOptions = { walls: false, markplace_outpost: false, harbour: false, warpgate: false, hunt_animals: false, watermap: false, ...(o.mapOptions || {}) };
@@ -63,6 +72,7 @@ export class TribeAI {
     this.letter = 'G'; this.tactic = 1; this.village = null; this.personality = 'Giraffe';
     this.economyOff = false; this.kindergarten = false; this.paused = true;
     this.setDifficulty(o.difficulty ?? 5);
+    this.gameTypeInit();                       // Defender / Domination (ai/gametypes.js)
     this.setBehaviour(o.behaviour || 'Mikrobe');
   }
   // legacy fields of the old AI (tests/sim.js)
@@ -82,13 +92,17 @@ export class TribeAI {
       build: Math.max(1, W) * TICK,
       collect: 0.6,
       fight: (W + r7) * TICK,
-      strat: () => (W + 20 + rnd(20)) * TICK,
+      strat: (W + 20) * TICK,                     // + rnd(20) ticks (stratWait)
       mod: (5 + r7) * TICK,
       atk: Math.min(5, (W + 2) * TICK),          // the goal thinks every W + r ticks; orders are refreshed at most every 5 s
       defense: Math.min(4, (W + r7) * TICK),
       guard: (10 + r7) * TICK,
       kinder: DATA.kindergartenWait(this.cls),
       moves: 1.5,
+      walls: (W + 50 + r7) * TICK,                // the village wall goal (VW:91-95)
+      outposts: (W + 25 + r7) * TICK,             // the outpost goals (BO:77)
+      trade: (50 + r7) * TICK,                    // the market places (MP:76)
+      area: (W + r7) * TICK,                      // the area module: units left on another land (AM:140)
     };
     const u = lv.unitLimit || { levels: [0, 0, 0, 0, 0], total: 0 };
     const old = this.p.aiMods || {};
@@ -99,14 +113,18 @@ export class TribeAI {
     if (this.W.recomputeCaps) this.W.recomputeCaps(this.p);
     const now = this.W.time;
     for (const k in this.wait) if (this.next[k] === undefined) this.next[k] = now + 0.5 + Math.random() * 2;
-    this.next.strat = Math.max(this.next.strat, now + this.wait.strat());
+    this.next.strat = Math.max(this.next.strat, now + this.stratWait());
   }
 
   // ------------------------------------------------------------------ behaviours (CM:285-552, §2)
   // AIBV: setBehaviour('Dodo' | 'Giraffe' | 'Schnecke' | 'Turtle' | 'FightOnly' | 'Mikrobe' | 'Singleplayer_L3_1' ...)
   // or a module command: setBehaviour('upgrade_walls 1', 'DFNS')
+  // the strategist's wait: (W + 20 + rnd(20)) ticks
+  stratWait() { return this.wait.strat + rnd(20) * TICK; }
   setBehaviour(name, module = 'CTRL') {
     if (module && module !== 'CTRL') return this.command(module, name);
+    // the defender of a Defender game is always a Schnecke (CM:292)
+    if (this.gameType === 'Defender' && this.isDefender && name !== 'Mikrobe') name = 'Schnecke';
     const cfg = DATA.behaviour(name);
     if (!cfg) return false;
     this.behaviour = name;
@@ -118,6 +136,7 @@ export class TribeAI {
     this.personality = cfg.personality || name;       // Dodo | Giraffe | Schnecke | Turtle (fight factors, pest patrol)
     const n = 1 + rnd(cfg.variants || 1);
     const sub = String(cfg.subStrategy || 'G1').replace('{n}', n);
+    this.sub = sub;                                    // (also names its army's AiPBPreset file: game/pointbuy.js)
     const fill = (s) => String(s).replace('{sub}', sub).replace('{n}', n);
     const P = cfg.params || {};
     // defaults of a module that gets no command, then the behaviour's commands
@@ -168,7 +187,7 @@ export class TribeAI {
       case 'HighDefenseMode': P.highDefense = v === 'true'; return true;
       case 'CancelAttacksInDefense': P.cancelAttacksRadius = num; return true;
       case 'deactivate_towers': P.upgrade_towers = 0; P.noTowers = true; return true;
-      case 'deactivate_walls': P.upgrade_walls = 0; return true;
+      case 'deactivate_walls': P.upgrade_walls = 0; P.noWalls = true; return true;      // (AIAssistDef_0: EnableWallplacer(false), CM:526)
       case 'deactivate_unit_defence': P.noDefence = true; return true;
       case 'village_wall': P.villageWall = t.slice(1).join(' '); return true;       // stored: the AI builds no walls (COMPUTER_PLAYER.md)
     }
@@ -176,8 +195,8 @@ export class TribeAI {
   }
   // AICM {player_id, module, command}
   callModule(module, command) { return this.command(module, command); }
-  // script positions are map coordinates (x east, y north); the game's are x = mapX - W/2, z = H/2 - mapY
-  mapToGame(mx, my) { const s = this.W.size || 0; return { x: mx - s / 2, z: s / 2 - my }; }
+  // script positions are map coordinates (x east, y south); the game's are x = mapX - W/2, z = mapY - H/2
+  mapToGame(mx, my) { const s = this.W.size || 0; return { x: mx - s / 2, z: my - s / 2 }; }
 
   // ------------------------------------------------------------------ AILU / AIRG
   // externally locked units are never pooled, allocated or given orders by the AI
@@ -215,7 +234,7 @@ export class TribeAI {
     for (const u of W.units) {
       if (!u.alive || u.owner !== p || u.autonomous || u.illusion) continue;
       S.units.push(u); inc(u.name);
-      if (this.locked.has(u)) continue;
+      if (this.locked.has(u) || (this.crew && this.crew.has(u))) continue;       // (an outpost's crew: ai/outposts.js)
       if (u.naval) { if (!u.stationary) S.fleet.push(u); continue; }
       if (u.isWorker) { S.workers.push(u); if (u.task.type === 'idle' && !u.inside) S.idle.push(u); continue; }
       if (u.def.unique) S.heroes.push(u);
@@ -255,7 +274,8 @@ export class TribeAI {
     const S = this.S || this.census(), M = this.mapOptions;
     return { tribe: this.p.tribe, letter: (this.village || this.letter + '1')[0], age: S.age, d: this.d, cls: this.cls, multimap: this.multimap, levelName: this.levelName, player: this.p.id,
       tactic: this.tactic, harbour: !!M.harbour && !!this.W.waterNav, watermap: !!M.watermap && !!this.W.waterNav, warpgate: !!M.warpgate,
-      ownWarpgate: S.blds.some((b) => b.def.script === 'CWarpGate'), has: (c) => (S.count.get(c) || 0) > 0 };
+      ownWarpgate: S.blds.some((b) => b.def.script === 'CWarpGate'), has: (c) => (S.count.get(c) || 0) > 0,
+      defenderGame: this.gameType === 'Defender', defender: !!this.isDefender };
   }
 
   // ------------------------------------------------------------------ the control think (CM:556-613, CH)
@@ -313,11 +333,16 @@ export class TribeAI {
     }
     if (now >= N.defense) { N.defense = now + Wt.defense; if (cs().base) this.defenseThink(S); }
     if (now >= N.guard) { N.guard = now + Wt.guard; if (cs().base) this.guardThink(S); }
+    if (now >= (N.walls || 0) && Wt.walls) { N.walls = now + Wt.walls; if (cs().base) this.wallsThink(S); }
+    if (now >= (N.outposts || 0) && Wt.outposts && !this.economyOff) { N.outposts = now + Wt.outposts; if (cs().base) this.outpostsThink(S); }
+    if (now >= (N.trade || 0) && Wt.trade && !this.economyOff) { N.trade = now + Wt.trade; if (cs().base) this.tradeThink(S); }
+    if (now >= (N.area || 0) && Wt.area && this.W.waterNav) { N.area = now + Wt.area; if (cs().base) this.strandedThink(S); }
     if (now >= N.mod) { N.mod = now + Wt.mod; if (cs().base) this.armyThink(S); }
-    if (now >= N.fight) { N.fight = now + Wt.fight; if (cs().base) this.xtraThink(S); }
-    if (now >= N.strat) { N.strat = now + Wt.strat(); if (cs().base) this.strategyThink(S); }
+    if (now >= N.fight) { N.fight = now + Wt.fight; if (cs().base) { this.xtraThink(S); this.timerThink(S); } }
+    if (now >= N.strat) { N.strat = now + this.stratWait(); if (cs().base) this.strategyThink(S); }
     if (now >= N.kinder) { N.kinder = now + Math.max(2, Wt.kinder); if (cs().base) this.kindergartenThink(S); }
     if (now >= N.moves) { N.moves = now + Wt.moves; this.movesThink(cs()); }
+    if (this.getItem && now >= (N.item || 0)) { N.item = now + (30 + 1 + rnd(this.W.players.length + 1)) * TICK; this.getItemThink(cs()); }
   }
 }
-Object.assign(TribeAI.prototype, Economy, Army, Fight, Defense);
+Object.assign(TribeAI.prototype, Economy, Army, Fight, Defense, ItemsAI, WallsAI, OutpostsAI, TradeAI, ChatAI, NavalAI, GameTypesAI);

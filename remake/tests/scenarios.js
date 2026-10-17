@@ -184,7 +184,19 @@ window.runScenarios = () => {
     if (!aje) { out.push('skip builddown (no Aje player)'); return; }
     aje.res.wood = 0; aje.caps.wood = 5000;
     const b = W.placeBuilding('aje_tent', aje, X, Z, 0, true);
-    W.startBuildDown(b);
+    const bd = W.data.actions(aje).find((a) => a.id === 'BuildDown' && a.kind === 'Moves');
+    // BuildDown is a queue item (CBuildDownBuilding): it waits behind the production queued before it
+    const work = W.data.actions(aje).find((a) => a.kind === 'Build' && a.results[0] && a.results[0].obj === 'aje_worker');
+    aje.res.food = 500;
+    const q0 = work ? W.queueAction(b, work) : 'no action';
+    W.useMove(b, bd, null);
+    check('BuildDown is queued behind the worker', b.queue.length === 2 && b.queue[1].buildDown && !b.dismantling, { q0, q: b.queue.map((q) => q.action.id) });
+    W.useMove(b, bd, null);
+    check('only once', b.queue.filter((q) => q.buildDown).length === 1);
+    W.cancelQueue(b, 1);
+    check('a click on it in the queue cancels it', b.queue.length === 1 && !b.queue[0].buildDown);
+    W.cancelQueue(b, 0);
+    W.useMove(b, bd, null);
     run(30);
     check('tent dismantled and paid back', !b.alive && aje.res.wood > 0, { wood: aje.res.wood });
   });

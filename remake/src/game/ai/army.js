@@ -8,14 +8,6 @@ const RESERVED = [6, 5, 3, 1, 0];           // pyramid slots per level the stand
 const COSTS = ['food', 'wood', 'stone', 'skulls'];
 
 export const Army = {
-  // A class of the tables the remake cannot field yet -> what the AI trains instead. The velociraptor handler's
-  // raptors (CVelociraptorHandler / CKamikazeVelociraptor) are not in the game yet, and the handler alone is
-  // harmless: the Aje train the spearman of their rodeo in his place. Remove when the raptors exist.
-  fieldable(cls) {
-    if (this.D.script(cls) !== 'CVelociraptorHandler') return cls;
-    const alt = cls.replace('velociraptor_handler', 'spearman');
-    return this.D.exists(alt) ? alt : cls;
-  },
   // the unit mix of a tribe without a Units.txt: what its buildings can train in this epoch, grouped by the level a
   // unit starts at; units of the current epoch weigh double
   derivedMix(S) {
@@ -91,10 +83,9 @@ export const Army = {
       for (const g of groups) {
         let cls = null, flag = null, n = 0;
         for (const u of g.units) {
-          const uc = this.fieldable(u.cls);
-          n += S.pool.reduce((c, x) => c + (x.name === uc && x.level <= lv ? 1 : 0), 0);
+          n += S.pool.reduce((c, x) => c + (x.name === u.cls && x.level <= lv ? 1 : 0), 0);
           if (u.npc && !lords.has(u.npc)) continue;
-          cls = uc; flag = u.objFlag || null;
+          cls = u.cls; flag = u.objFlag || null;
         }
         if (!cls) continue;
         cand.push({ cls, flag, n, w: g.weight || 1 });
@@ -138,7 +129,7 @@ export const Army = {
       for (const g of groups) {
         const u = g.units.filter((x) => !x.npc)[0];
         if (!u) continue;
-        const T = this.trainable(S, this.fieldable(u.cls));
+        const T = this.trainable(S, u.cls);
         if (!T || !T.producer || T.producer.queue.length) continue;
         const c = T.action.cost;
         if (['food', 'wood', 'stone', 'skulls'].some((r) => (c[r] || 0) > 0 && p.res[r] - c[r] < (R[r] || 0))) continue;

@@ -192,6 +192,7 @@ class Ally {
     for (const e of G.enemies.list) {
       if (!e.alive || e.locked) continue;
       const dx = e.pos.x - this.pos.x, dz = e.pos.z - this.pos.z, dist = Math.hypot(dx, dz);
+      if (e.smoked && dist > 14) continue;                     // hidden in the smoke of a smoke tower
       if (dist > W.range || (W.min && dist < W.min) || Math.abs(e.pos.y - this.pos.y) > 25) continue;
       // living things first, the one already aimed at a little preferred
       // (the siege machines go for the towers first)

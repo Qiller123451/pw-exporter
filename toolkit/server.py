@@ -2,11 +2,16 @@
 API under /api/) and the remake (under /remake/, see toolkit/remake.py). Listens on 127.0.0.1 only.
 
     GET  /                          the launcher (toolkit/web)
-    GET  /api/toolkit/state         installation, exporter loading progress, remake build state
+    GET  /api/toolkit/state         installation, exporter loading progress, remake build state (official game)
+    GET  /api/toolkit/remake/configs        the configurations the remake can run: official game + mods
+    GET  /api/toolkit/remake/state?mod=ID   build state of one configuration
     POST /api/toolkit/remake/build  build the remake's game data from the installation (runs in the background;
-                                    only what is out of date, {"force": true} everything)
+                                    only what is out of date, {"force": true} everything, {"mod": "MIRAGE"} a mod's)
+    GET  /api/toolkit/data[?size=1] where the toolkit's data lies (cache + remake game data; toolkit/datadir.py)
+    POST /api/toolkit/data          {"path"}: move it there (in the background)
     GET  /exporter/                 the Model & Map Exporter (pwexport/web; its API: pwexport/app.py)
-    GET  /remake/...                the remake
+    GET  /remake/...                the remake (official game)
+    GET  /remake/mod/<id>/...       the remake with a mod configuration's data (toolkit/remake.py)
 """
 import json
 import os
@@ -16,7 +21,7 @@ import time
 import traceback
 import webbrowser
 from http.server import ThreadingHTTPServer
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -25,12 +30,13 @@ if ROOT not in sys.path:
 
 from pwexport import app as exporter        # noqa: E402
 from . import VERSION                        # noqa: E402
+from .datadir import DataFolder              # noqa: E402
 from .remake import Remake                   # noqa: E402
 
 WEB = os.path.join(HERE, 'web')
 
 
-def make_handler(app, remake):
+def make_handler(app, remake, data):
     Base = exporter.make_handler(app)
 
     class H(Base):
@@ -44,10 +50,17 @@ def make_handler(app, remake):
             return self.send_file(f)
 
         def do_GET(self):
-            p = unquote(urlparse(self.path).path)
+            u = urlparse(self.path)
+            p = unquote(u.path)
             try:
                 if p == '/api/toolkit/state':
                     return self.send_json(self.toolkit_state())
+                if p == '/api/toolkit/data':
+                    return self.send_json(data.state(size=bool(parse_qs(u.query).get('size'))))
+                if p == '/api/toolkit/remake/configs':
+                    return self.send_json(remake.configs())
+                if p == '/api/toolkit/remake/state':
+                    return self.send_json(remake.state((parse_qs(u.query).get('mod') or [''])[0]))
                 if p == '/' or p == '/index.html' or p.startswith('/launcher/'):
                     return self.static(WEB, p[len('/launcher/'):] if p.startswith('/launcher/') else 'index.html')
                 if p == '/exporter':
@@ -56,11 +69,17 @@ def make_handler(app, remake):
                     return self.static(exporter.WEB, p[len('/exporter/'):])
                 if p == '/remake':
                     return self.redirect('/remake/')
+                if p.startswith('/remake/mod/') and p.count('/') == 3:
+                    return self.redirect(p + '/')
                 if p.startswith('/remake/'):
-                    rel = p[len('/remake/'):]
+                    rel, mod = p[len('/remake/'):], ''
+                    if rel.startswith('mod/'):
+                        mod, _, rel = rel[len('mod/'):].partition('/')
+                        if not remake.inst(mod):
+                            return self.send_error(404)
                     if rel == 'maps/index.json':
-                        return self.send_json(remake.maps_index())
-                    f = remake.resolve(rel)
+                        return self.send_json(remake.maps_index(mod))
+                    f = remake.resolve(rel, mod)
                     if not f:
                         return self.send_error(404)
                     return self.send_file(f, cache=rel.startswith(('assets/', 'maps/')))
@@ -73,7 +92,14 @@ def make_handler(app, remake):
             p = urlparse(self.path).path
             if p == '/api/toolkit/remake/build':
                 try:
-                    return self.send_json({'ok': remake.build(force=bool(self.body().get('force')))})
+                    b = self.body()
+                    return self.send_json({'ok': remake.build(force=bool(b.get('force')), mod=b.get('mod') or '')})
+                except Exception as e:                   # noqa: BLE001
+                    return self.send_json({'ok': False, 'error': str(e)}, 500)
+            if p == '/api/toolkit/data':
+                try:
+                    ok, why = data.move(self.body().get('path'))
+                    return self.send_json({'ok': ok, 'error': why})
                 except Exception as e:                   # noqa: BLE001
                     return self.send_json({'ok': False, 'error': str(e)}, 500)
             return super().do_POST()
@@ -88,6 +114,7 @@ def make_handler(app, remake):
             st['toolkit'] = VERSION
             st['remake'] = remake.state() if app.install else {'ready': False, 'reason': 'no installation'}
             st['install_path'] = app.install.root if app.install else app.settings.get('install')
+            st['data'] = data.state()
             return st
     return H
 
@@ -96,10 +123,12 @@ def serve(port=0, open_browser=True):
     app = exporter.App()
     app.launcher = True
     remake = Remake(app)
+    data = DataFolder(app, remake)
+    remake.paused = data.busy
     srv = None
     for p in ([port] if port else list(range(8420, 8440)) + [0]):
         try:
-            srv = ThreadingHTTPServer(('127.0.0.1', p), make_handler(app, remake))
+            srv = ThreadingHTTPServer(('127.0.0.1', p), make_handler(app, remake, data))
             break
         except OSError:
             continue

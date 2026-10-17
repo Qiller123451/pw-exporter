@@ -112,8 +112,12 @@ exporter loads that mod (EXPORTER.md, "Mods"): a small interpreter runs the obje
 what it links.
 
 - **What it follows.** `OnInit(false)` through the class chain (`super` calls, the class's own procedures), with the
-  object's class name known (`GetClassName()`, `sClass == "..."`), loops over literal arrays, class constants,
-  member variables set by setters (`SetTurretLink("we")`, then `SetTurret("seas_turret")`).
+  object's class name known (`GetClassName()`, `sClass == "..."`), loops over literal arrays, class constants, the
+  constructor's literal member values, member variables set by setters (`SetTurretLink("we")`, then
+  `SetTurret("seas_turret")`); an object handle the script has not made yet is invalid (`!m_xTurret.IsValid()`).
+  A building then runs `SetReady` (it is shown finished, `m_bBuildingReady` true) - of what that attaches only the
+  turrets and the parts put on build-ups count, not what a finished building links to itself otherwise (cranes,
+  nests). MIRAGE's machine gun nest, small and shore cannon and great cannon put their guns on there.
 - **What it records.** `AddObj`, `AddObjFlex`, `AddObjCaptain`, MIRAGE's `AddObjCustomized`, `AddObjWithParent`,
   `AddCustWithParent`, `AddCustDelayedObj(Anim)`, `AddObjWithOffset`, `AddObjCaptainCust`, and
   `<object>^.LinkAction / FlexLinkAction(parent, link, ...)`: the created object's class (-> its gfx from the class
@@ -129,8 +133,9 @@ what it links.
 - **Weapons** come from the tech tree as in the table; the level flag of mounts is added on `flag` and shown when
   the model has that link.
 - **Self-check.** `python -m pwexport.modparts <game folder>` runs the reader on the base game and compares its
-  build-ups, turrets, wagons and riders with the table: 179 of 185 objects come out the same. The 6 others: a turret
-  on an upgrade model of `hu_large_tower`, the second seat of `aje_brachiosaurus`, the nested cannon of
-  `seas_hq_big_cannon`, and three parts the scripts create that the table leaves out (harbour crane of the carrier,
-  the rocket ramp's bird). `python -m pwexport.modparts <game folder> MIRAGE` lists what it finds for a mod.
+  build-ups, turrets, wagons and riders with the table: 180 of 185 objects come out the same. The 5 others: a turret
+  on an upgrade model of `hu_large_tower` (the scripts give it on the tower itself), the second seat of
+  `aje_brachiosaurus`, the nested cannon of `seas_hq_big_cannon`, and parts the scripts create that the table leaves
+  out (the rocket ramp's bird, the harbour crane of `seas_carrier_fake`). `python -m pwexport.modparts <game folder>
+  MIRAGE` lists what it finds for a mod.
 - **Not seen:** `SetLinkGFX` parts (construction cranes, tools and goods in a hand), anything a task script does.

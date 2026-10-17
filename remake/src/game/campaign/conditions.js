@@ -29,6 +29,12 @@ class Cond {
   player(key = 'player_id') { return this.E.C.player(toInt(this.p[key])); }
   named() { const n = this.p.obj_name; return n != null && n !== '' && n !== 'NA'; }
   regional(prefix = '') { const r = this.p[prefix + 'rgn_guid']; return !!r && !this.E.C.regions.get(r).world; }
+  // the query asks for the human player's objects of a class that the tribe the mission is played with has nothing
+  // of (campaign/tribes.js missing(): no age-2 archer carrier for the Dragon Clan): such a condition is met
+  missingClass(prefix = '') {
+    const C = this.E.C, cls = this.p[prefix + 'obj_class'], owner = this.p[prefix + 'obj_owner'];
+    return !!C.swap && !!cls && cls !== 'NA' && owner != null && owner !== '' && toInt(owner) === C.humanSlot && C.swap.missing(cls);
+  }
 }
 // an unknown type: never true (§ task 3)
 class NONE extends Cond {}
@@ -117,7 +123,7 @@ class REGN extends Cond {
       if (members.length && res.length) { const set = new Set(res); s = members.every((m) => set.has(m)); } else s = compare(res.length, this.count, this.vars);
     } else {
       res = this.sel();
-      s = compare(res.length, this.count, this.vars);
+      s = this.missingClass() || compare(res.length, this.count, this.vars);
     }
     this.result = res;
     // the original evaluates on every push of the region; here: when the result set changed
@@ -219,7 +225,7 @@ class ITEM extends Cond {
     this.E.sub('item', this);
     this.state = 0;
     // already carried: true for the evaluation that ends the enabling (engine.listen), then 0 again
-    for (const rec of this.sel()) if ((rec.items || []).some((c) => this.match(c))) { this.state = 1; this.pulseOnEnable = true; this.inv(); return; }
+    for (const rec of this.sel()) if (rec.entity && rec.entity.item && this.match(rec.entity.item.item.cls)) { this.state = 1; this.pulseOnEnable = true; this.inv(); return; }
   }
   onDisabled() { this.E.unsub('item', this); }
   pulse() { this.state = 1; this.inv(); this.state = 0; }
@@ -227,7 +233,12 @@ class ITEM extends Cond {
 }
 // CF:2983-3149: finished objects of `class` and `owner` in the query's region; optionally written to a variable
 class BLDG extends Cond {
-  init() { this.value = String(this.p.value == null ? '' : this.p.value); this.cls = String(this.p.class || '').toLowerCase(); this.owner = toInt(this.p.owner); this.n = -1; }
+  init() {
+    this.value = String(this.p.value == null ? '' : this.p.value); this.cls = String(this.p.class || '').toLowerCase(); this.owner = toInt(this.p.owner); this.n = -1;
+    // played with another tribe that has nothing of this role (no houses for the Dragon Clan): met at once (tribes.js)
+    const C = this.E.C;
+    this.met = !!C.swap && this.owner === C.humanSlot && C.swap.missing(this.cls);
+  }
   onEnabled() { const E = this.E; E.sub('objects', this); if (this.value.includes('$(')) E.sub('vars', this); this.startPoll(1, 1); this.check(true); }
   onDisabled() { const E = this.E; E.unsub('objects', this); E.unsub('vars', this); this.stopPoll(); }
   onObjects() { this.check(false); }
@@ -237,7 +248,7 @@ class BLDG extends Cond {
     const C = this.E.C, R = C.objects, region = C.regions.get(this.p.rgn_guid);
     let n = 0;
     for (const r of R.all) {
-      if (!r.alive || !r.entity || r.lc !== this.cls || r.slot !== this.owner) continue;
+      if (!r.alive || !r.entity || r.slot !== this.owner || !R.classIs(r, this.cls)) continue;
       const e = r.entity;
       if (e.kind === 'building' && !e.built) continue;         // CurTask != "BuildUpB"
       if (!R.inRegion(r, region)) continue;
@@ -247,7 +258,7 @@ class BLDG extends Cond {
   }
   check(force) {
     const n = this.count(), E = this.E;
-    const s = compare(n, this.value, this.vars) ? 1 : 0;
+    const s = this.met || compare(n, this.value, this.vars) ? 1 : 0;
     const changed = n !== this.n || s !== this.state;
     this.n = n; this.state = s;
     if (changed && this.p.variable) { const V = E.C.variables; if (V.get(this.p.variable) !== String(n)) { V.set(this.p.variable, String(n)); E.varsChanged(); } }
@@ -314,7 +325,7 @@ class UNTT extends Cond {
   onEnabled() {
     const k = this.kind = String(this.p.condition_type || '').toUpperCase();
     this.state = 0;
-    if (k === 'TRMO') this.E.sub('boarded', this);
+    if (k === 'TRMO') { this.E.sub('boarded', this); if (this.missingClass()) this.pulse(); }
     else if (k === 'CAME' || k === 'USEL') { this.cam = null; this.startPoll(0.3, 0.3); }
     else this.E.unknown('condition', 'UNTT ' + k);
   }
@@ -392,7 +403,9 @@ class TECH extends Cond {
   poll() {
     const p = this.player('player'), W = this.E.W;
     if (!p || !W.hasFilter) return;
-    this.change(W.hasFilter(p, String(this.p.filter || '').replace(/^\//, '')));
+    // with another tribe chosen the player's filters are the chosen tribe's (tribes.js); nothing of that role: met
+    const f = this.E.C.filterFor(p, String(this.p.filter || ''));
+    this.change(f === null || W.hasFilter(p, f.replace(/^\//, '')));
   }
 }
 // CF:1701-2026: "the player is defeated": when it loses an object and has nothing left that counts in the unit
@@ -457,7 +470,7 @@ export const CONDITION_STATUS = {
   DEAD: ['implemented', 'at the moment of death / deletion; true for an empty query at the first check after enabling'],
   DYIN: ['implemented', 'same moment as DEAD (the remake has no separate "corpse gone" event)'],
   OBJP: ['implemented', 'polled 4 × per second: hitpoints (percent with attrib_max), level, GateState, CurTask'],
-  ITEM: ['approximated', 'items are taken by walking up to an ItemSpawn object (engine.js items); no inventory'],
+  ITEM: ['implemented', 'the taker\'s inventory (systems/items.js)'],
   BLDG: ['implemented', ''],
   SGHT: ['approximated', 'sight range of the A objects, polled every 2 s, the fog of war is ignored'],
   ISFG: ['implemented', 'on the world\'s "attacked" event (a hit), not on the order'],
