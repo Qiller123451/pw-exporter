@@ -4,12 +4,18 @@
 // walk into Valhalla and through its guardians to the final fight.
 //   python3 tests/evaljs.py tests/campaign_play_08.js "&campaign=8"         (node tests/campaign_play_mock.mjs 8: the trigger chain alone)
 // Cheats (campaign_bot.js): the player's units are healed, enemies near the player's fighters are worn down, a
-// unit that makes no progress for 60 s is teleported (all counted and reported).
+// unit that makes no progress for 60 s is teleported (all counted and reported). Before the fights at and behind
+// Valhalla's gate (undead killers: 600 damage a blow) the skulls collected so far buy the heroes levels, as a
+// player's would, and Kleemann stays back.
 const P1 = C.players[1], P2 = C.players[2], P3 = C.players[3];
 const T = (prefix) => E.triggers.find((t) => t.name.startsWith(prefix));
 const firedP = (prefix) => { const t = T(prefix); return !!t && t.fired > 0; };
 const v = (n) => +C.variables.get(n) || 0;
 const party = () => fighters();
+// (after the gathering Kleemann stays behind the fighters: if he dies the mission is lost - L02c / X01)
+const kleemann = () => W.units.find((u) => u.alive && u.name === 'schliemann_s0' && u.owner === me);
+const guard = () => fighters().filter((u) => u.name !== 'schliemann_s0');
+const keepBack = (x, z) => { const k = kleemann(); if (k && Math.hypot(k.pos.x - C.toGame(x, z)[0], k.pos.z - C.toGame(x, z)[1]) > 6) W.order([k], { type: 'move', x: C.toGame(x, z)[0], z: C.toGame(x, z)[1] }); };
 const grp = (name) => { const g = R.group(name); return g ? g.list().map((r) => r.entity).filter((e) => e && e.alive) : []; };
 const inGroup = (name) => { const s = new Set(grp(name)); return (e) => s.has(e); };
 const stone = (k, at) => [
@@ -24,11 +30,16 @@ const steps = [
   ['all three crystals: sequence sc_2585, the undead march out of Valhalla (quest "Counting the Undead")', () => {}, () => quest('L08MQ03').accomplished && quest('L08MQ04').visible && grp('undead01').length > 0, 40],
   ['the four undead groups are destroyed', () => { hunt(party(), (e) => ['undead01', 'undead02', 'undead03', 'undead04'].some((g) => grp(g).includes(e)), 'all'); }, () => v('undead_defeated') === 1, 1500],
   ['heroes and Kleemann gather before the gate: sequence sc_3004, the base is left behind', () => go(party(), 441, 418), () => firedP('G03#occupy_playerbase') && quest('L08MQ05').visible, 500],
-  ['the undead behind the gate are beaten: sequence sc_3005, Kleemann walks off', () => { hunt(party(), inGroup('undead05'), 'all') || go(party(), 730, 330); }, () => firedP('S05#sc_3005') && ui.seq.some((s) => /^sc_3005/.test(s)), 900],
-  ['the guardians of Valhalla are beaten (sequence sc_3009)', () => { hunt(party(), (e) => e.owner === P3 && inRegion(e, 'showdown'), 'all') || go(party(), 791, 265); }, () => firedP('Gg05a#init_schliemann'), 900],
+  ['the undead behind the gate are beaten: sequence sc_3005, Kleemann walks off', () => { promote(); keepBack(590, 325); hunt(guard(), inGroup('undead05'), 'all') || go(guard(), 730, 330); }, () => firedP('S05#sc_3005') && ui.seq.some((s) => /^sc_3005/.test(s)), 900],
+  ['the guardians of Valhalla are beaten (sequence sc_3009)', () => { promote(); hunt(party(), (e) => e.owner === P3 && inRegion(e, 'showdown'), 'all') || go(party(), 791, 265); }, () => firedP('Gg05a#init_schliemann'), 900],
   ['Kleemann, turned into an undead, is defeated: the final sequence sc_3012 wins the mission', () => { hunt(party(), (e) => e.name === 'schliemann_zombie', 'all') || go(party(), 791, 265); }, () => G.over, 600],
 ];
+// (the heroes' deaths, for a failed run: when, who, by whom, where)
+const deaths = [];
+const kill0 = W.kill.bind(W);
+W.kill = (e, by) => { if (e && e.owner === me && e.def && e.def.unique) deaths.push([Math.round(W.time), e.name, Math.round(e.hp), by && by.name, Math.round(e.pos.x), Math.round(e.pos.z)]); return kill0(e, by); };
 const far = runSteps(steps);
+if (failedAt != null) info('deaths of heroes: ' + JSON.stringify(deaths));
 if (far >= 4) ok(E.inactive.size < 7 && D.list('order_0').some((r) => r.nodeActive), 'ACND activated one of the three "capture order" folders: ' + D.list('order_0').filter((r) => r.nodeActive).map((r) => r.name).join(', '));
 if (far >= 9) ok(questState('L08MQ03') === 'done' && v('keystones') === 3, 'three crystals counted, quest "Opening the Gate II" accomplished');
 if (far >= 13) ok(G.over && G.endInfo && G.endInfo.won === true && questState('L08MQ06') === 'done' && questState('L08MQ05') === 'done' && questState('L08MQ02') === 'done', 'SQNZ quit: the mission is won; escort, journey and revelations accomplished');

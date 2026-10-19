@@ -255,6 +255,7 @@ export const Naval = {
     const p = u.prey;
     if (p && p.alive && Math.hypot(p.pos.x - u.pos.x, p.pos.z - u.pos.z) < (p.radius || 2) + u.radius + 0.5) {
       this.flatBlast(u, u.pos, TORPEDO_TURTLE.blast[0], TORPEDO_TURTLE.blast[1]);
+      this.emit('camshake', { cls: 'CVehicleExplosion', pos: u.pos.clone() });      // (Ship.usl:1540 Explode: server event 15)
       u.silentDeath = true; this.kill(u, null);
       return true;
     }
@@ -263,26 +264,48 @@ export const Naval = {
     return true;
   },
 
-  // minelayer / corsair: build a water mine / water turret at a point in the water (PlaceWaterMine.usl)
-  layWaterThing(u, action, x, z) {
+  // minelayer / corsair: build a water mine / water turret at a point in the water (PlaceWaterMine.usl).
+  // queue: after the ones it has been given already (shift; the computer player's mine belts)
+  layWaterThing(u, action, x, z, queue = false, queued = false) {
     const name = action.results[0] && action.results[0].obj;
     if (!name || !u.alive) return 'req';
     const why = this.data.check(u.rulesOwner(), action, u);
     if (why) return why === 'hidden' || why === 'disabled' ? 'req' : why;
-    if (!u.owner.canAfford(action.cost)) return 'cost';
+    if (!queued && !u.owner.canAfford(action.cost)) return 'cost';      // (a queued one pays when it is there)
     const w = this.placeWaterThing(u, name, x, z);
     if (w) return w;
+    if (queue && u.task.type === 'lay') {
+      const t = u.task;
+      if ([t, ...t.next].some((q) => Math.hypot(q.x - x, q.z - z) < MINE_SPACING)) return 'place';
+      t.next.push({ action, name, x, z });
+      return null;
+    }
     this.releaseTask(u);
-    u.task = { type: 'lay', action, name, x, z, phase: 'go', user: true };
+    u.task = { type: 'lay', action, name, x, z, phase: 'go', user: true, next: [] };
     u.setPath(x, z);
     return null;
+  },
+  // the next of the queued ones, or idle
+  layNext(u) {
+    const q = u.task.next || [];
+    u.task = { type: 'idle' };
+    while (q.length) {
+      const n = q.shift();
+      if (this.layWaterThing(u, n.action, n.x, n.z, false, true)) continue;
+      u.task.next = q;
+      return;
+    }
   },
   layUpdate(u, dt) {
     const t = u.task;
     if (t.phase === 'go') {
-      if (Math.hypot(t.x - u.pos.x, t.z - u.pos.z) > u.radius + 4 && u.path.length) { u.moveAnim(u.steer(dt, u.runSpeed)); return; }
+      const d = Math.hypot(t.x - u.pos.x, t.z - u.pos.z);
+      if (d > u.radius + 4 && u.path.length) { u.moveAnim(u.steer(dt, u.runSpeed)); return; }
       u.path = []; u.vel.set(0, 0, 0);
-      if (this.placeWaterThing(u, t.name, t.x, t.z) || !u.owner.canAfford(t.action.cost)) { u.task = { type: 'idle' }; return; }
+      // (a path that ended short of the spot: it is not laid out of reach)
+      if (d > u.radius + 10 || this.placeWaterThing(u, t.name, t.x, t.z)) { this.layNext(u); return; }
+      // not enough wood and stone: it waits there for them a minute, then goes on to the next
+      if (!u.owner.canAfford(t.action.cost)) { if ((t.waitT = (t.waitT || 0) + dt) > 60) this.layNext(u); return; }
       u.owner.pay(t.action.cost);
       t.phase = 'build'; t.left = Math.max(0.5, t.action.time || 5);
       return;
@@ -291,7 +314,7 @@ export const Naval = {
     if (t.left > 0) return;
     const m = this.spawnUnit(t.name, u.owner, t.x, t.z, 1, u.heading, { stationary: true });
     if (m) { m.stance = /mine/.test(t.name) ? 3 : 0; this.emit('trained', { unit: m, producer: u }); }
-    u.task = { type: 'idle' };
+    this.layNext(u);
   },
 
   // ------------------------------------------------------------------ per-unit hook (called from World.unitUpdate)

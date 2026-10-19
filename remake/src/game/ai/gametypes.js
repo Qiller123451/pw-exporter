@@ -15,6 +15,9 @@
 //     every fight think [bug]: here only an enemy holder, one such attack at a time.
 const d2 = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 const TYPE = { deathmatch: 'Deathmatch', domination: 'KingOfTheHill', defender: 'Defender' };
+// the towers SearchForDisturbance looks for (DA:788-798)
+const TOWERS = new Set(['hu_small_tower', 'hu_large_tower', 'aje_small_tower', 'aje_medium_tower', 'aje_tesla_tower', 'ninigi_small_tower',
+  'ninigi_large_tower', 'ninigi_telescope_tower', 'ninigi_smoke_tower', 'seas_turret_tower']);
 
 export const GameTypesAI = {
   gameTypeInit() {
@@ -28,20 +31,32 @@ export const GameTypesAI = {
     const list = (G && G.flags) || [];
     return at ? list.slice().sort((a, b) => d2(a, at) - d2(b, at)) : list.slice();
   },
-  // what stands around a flag (SearchForDisturbance, DA:703-812): hostile wild animals within 90 m; else enemies
-  // within 60 m (Dodo always, Giraffe from epoch 3, Schnecke from epoch 5); else enemy towers within 60 m
+  // SearchForDisturbance (DA:703-812): what stands around a spot (a flag, a pest patrol's place). Hostile wild animals
+  // within 90 m, sorted from the start location -> "suicide" on them, unless the first is an allosaurus and the
+  // epoch is 3 or lower (then nothing, found false - the list stays as the original leaves it); else enemies within
+  // 60 m (Dodo always, Giraffe from epoch 3, Schnecke from epoch 5) -> "blitz"; else the enemy towers of the
+  // script's list within 60 m -> "blitz" in epochs 1 and 2, "towersiege" later. {found, type, list, pos (their
+  // centre), wild}. (Nests are no objects in the remake: the original's NEST entries are left out.)
   disturbance(S, at) {
-    const W = this.W, out = [];
-    W.uHash.query(at.x, at.z, 90, (u) => { if (u.alive && u.wild && !u.naval && u.def.aggressive > 0 && d2(u.pos, at) < 90) out.push(u); });
-    if (out.length) return { list: out, wild: true };
-    const L = this.letter, age = S.age;
+    const W = this.W, from = this.start || S.home || at, age = S.age;
+    const centre = (l) => ({ x: l.reduce((n, e) => n + e.pos.x, 0) / l.length, z: l.reduce((n, e) => n + e.pos.z, 0) / l.length });
+    const wild = [];
+    W.uHash.query(at.x, at.z, 90, (u) => { if (u.alive && u.wild && !u.naval && u.def.aggressive > 0 && d2(u.pos, at) < 90) wild.push(u); });
+    if (wild.length) {
+      wild.sort((a, b) => d2(a.pos, from) - d2(b.pos, from));
+      if (/_allosaurus/.test(wild[0].name) && age <= 3) return { found: false, list: wild, wild: true };
+      return { found: true, type: 'suicide', list: wild, pos: centre(wild), wild: true };
+    }
+    const out = [], L = this.letter;
     if (L === 'D' || (L === 'G' && age >= 3) || (L === 'S' && age >= 5)) {
       const q = (e) => { if (e.alive && !e.inside && e.owner && this.p.isEnemy(e.owner) && d2(e.pos, at) < 60) out.push(e); };
       W.uHash.query(at.x, at.z, 60, q); W.bHash.query(at.x, at.z, 70, q);
-      if (out.length) return { list: out, wild: false };
+      if (out.length) return { found: true, type: 'blitz', list: out, pos: centre(out), wild: false };
     }
-    W.bHash.query(at.x, at.z, 70, (b) => { if (b.alive && b.owner && this.p.isEnemy(b.owner) && b.def.wallKind === 'tower' && d2(b.pos, at) < 60) out.push(b); });
-    return { list: out, wild: false };
+    W.bHash.query(at.x, at.z, 70, (b) => { if (b.alive && b.owner && this.p.isEnemy(b.owner) && TOWERS.has(b.name) && d2(b.pos, at) < 60) out.push(b); });
+    if (!out.length) return { found: false, list: out, wild: false };
+    out.sort((a, b) => d2(a.pos, from) - d2(b.pos, from));
+    return { found: true, type: age <= 2 ? 'blitz' : 'towersiege', list: out, pos: centre(out), wild: false };
   },
   kothThink(S) {
     const flags = this.kothFlags(S);

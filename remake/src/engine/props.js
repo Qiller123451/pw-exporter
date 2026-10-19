@@ -300,6 +300,19 @@ export class FoliageField {
 // Clan barrels and paper lanterns, flowers, fruit; at the full size a barrel would stand 6.8 m tall).
 export const SPRITE_SCALE = 0.25;
 
+// the texture of a sprite layer (assets/tex/<file>), shared
+const spriteTex = new Map();
+export function spriteTexture(uri) {
+  const file = String(uri || '').split('/').pop();
+  if (spriteTex.has(file)) return spriteTex.get(file);
+  const t = new THREE.TextureLoader().load('assets/tex/' + file);
+  t.flipY = false;
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  spriteTex.set(file, t);
+  return t;
+}
+
 // Convert glTF-root extras.foliage of a tree template into world sprites for one placed instance.
 export function treeSprites(extras, x, y, z, rotY, scale, opts = {}) {
   const out = new Map();   // tex uri -> sprites

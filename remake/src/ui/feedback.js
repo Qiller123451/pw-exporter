@@ -97,6 +97,7 @@ export class Feedback {
         case 'delivered':
           if (e.unit.owner === me && A && G.input.onScreen(e.unit)) A.playFirst([`ui_${e.unit.name}_delivered`]);
           break;
+        case 'spawnfx': if (vis(e.unit.pos)) gfx.spawned(e.unit); break;      // a mission's unit leaves its building (CTheLite)
         case 'trained':
           if (vis(e.unit.pos)) gfx.spawned(e.unit);
           if (e.unit.owner === me && A) A.play('FX_CTecFX_CharacterSpawnFX', e.unit.pos) || A.play('Confirmping_Build_Character_Fx');
@@ -160,7 +161,6 @@ export class Feedback {
             for (let i = 0; i < 4; i++) fx.explosion(en.pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * en.radius, en.ht * 0.3, (Math.random() - 0.5) * en.radius)), 1.5);
             fx.dust(en.pos.clone(), en.radius * 2);
             A && A.play(en.owner && en.owner.tribe === 'Aje' ? 'FX_CAje_Tent_Dem_Fx' : 'FX_CBigBuildingExplosion', en.pos);
-            if (G.input.onScreen(en)) G.rtscam.shake = 1.2;
           }
           if (en.owner === me) G.hud.message(`${G.data.text(en.name).name} destroyed`, 'bad');
           break;
@@ -203,13 +203,15 @@ export class Feedback {
           break;
         }
         case 'boarded': if (e.unit.owner === me && A) A.playFirst(['ui_board', 'ui_click']); break;
-        case 'treefall': if (vis(e.node.pos)) { if (!gfx.treeFell(e.node)) fx.dust(e.node.pos.clone(), 3); A && A.play('FX_CLandScapeHit', e.node.pos); } break;
+        case 'treefall': if (G.logs) G.logs.fell(e.node); break;
+        case 'timbergone': if (G.logs) G.logs.gone(e.node); break;
         case 'damagestage': if (vis(e.entity.pos)) gfx.damaged(e.entity); break;
         // the MIRAGE moves (game/systems/moves_mirage.js): sounds, effect models on units / at points / flying, blasts
         case 'sfx': if (vis(e.pos) && A) A.play(e.name, e.pos); break;
         case 'fx': if (e.until > W.time) gfx.m.attach(e.entity, e.gfx, e.until - W.time, { key: e.key + ':' + e.entity.id, link: e.link, offset: e.offset || 0 }); else gfx.m.stop(e.key + ':' + e.entity.id); break;
         case 'fxAt': if (vis(e.pos)) gfx.m.at(e.gfx, e.pos, e.until - W.time, { loop: !!e.loop, rot: e.yaw }); break;
         case 'fxFly': if (vis(e.to)) gfx.m.fly(e.gfx, e.from, e.to, e.T); break;
+        case 'camshake': gfx.camShake(e.cls, e.pos); break;
         case 'blast': if (vis(e.pos)) { if (!gfx.blast(e.pos)) fx.explosion(e.pos, 1.5); A && A.play('FX_CBigBuildingExplosion', e.pos); } break;
       }
     }

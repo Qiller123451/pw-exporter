@@ -6,7 +6,7 @@
 //   * The GetItem goal (goals/AiGoalGetItem.usl, thinks every 30 + iType ticks): one runner (hu_warrior,
 //     aje_spearman, ninigi_archer, seas_warrior with nothing in its hands) from the pool - else the army
 //     "FindItem_1" (one runner) is trained - is sent to pick it up; an enemy (unit, building, hostile wild animal)
-//     within 60 m of the item stops it; one that carries the item walks back to the start location (done within
+//     within 60 m of the item stops it (from epoch 3 with a pest patrol to there, ai/attack.js requestPest); one that carries the item walks back to the start location (done within
 //     30 m); 15 checks with empty hands while idle: it gives up and walks back; after 30 checks the order again.
 //   * Every attacking squad on a skirmish map: its first unit with empty hands picks up a free item within 30 m of
 //     it (tasks/AiTaskAttackObject.usl:1056, 1496-1526).
@@ -53,7 +53,7 @@ export const ItemsAI = {
       // falls through
       case 'running':
         if (!it.alive || (it.item.carrier && it.item.carrier !== g.unit)) return end();
-        if (this.itemDanger(it.pos, 60)) return end();
+        { const d = this.itemDanger(it.pos, 60); if (d) { if (S.age >= 3) this.requestPest(d); return end(); } }
         W.order([g.unit], { type: 'pickup', target: it, auto: true });
         g.phase = 'checking'; g.n = 0; g.steps = 0;
         return;
@@ -76,15 +76,21 @@ export const ItemsAI = {
     g.home = this.start || S.home;
     this.W.order([g.unit], { type: 'move', x: g.home.x, z: g.home.z, auto: true });
   },
-  // an enemy unit or building, or a hostile wild animal, within r of p (GetItem.CheckForEnemy)
+  // GetItem.CheckForEnemy (GetItem:283-321): enemy units and buildings and the wild animals within r of p, the
+  // nearest to the start location first; when one of them is an enemy or a hostile animal, the position of that
+  // first one (from epoch 3 the goal asks for a pest patrol there), else null
   itemDanger(p, r) {
-    const W = this.W;
+    const W = this.W, from = this.start || p, list = [];
+    let evil = false;
     for (const e of W.units) {
       if (!e.alive || e.inside || Math.hypot(e.pos.x - p.x, e.pos.z - p.z) > r) continue;
-      if (this.isEnemyEntity(e) || (e.wild && e.def && e.def.aggressive === 1)) return true;
+      if (this.isEnemyEntity(e)) { list.push(e); evil = true; } else if (e.wild) { list.push(e); if (e.def && e.def.aggressive === 1) evil = true; }
     }
-    for (const b of W.buildings) if (this.isEnemyEntity(b) && Math.hypot(b.pos.x - p.x, b.pos.z - p.z) <= r) return true;
-    return false;
+    for (const b of W.buildings) if (this.isEnemyEntity(b) && Math.hypot(b.pos.x - p.x, b.pos.z - p.z) <= r) { list.push(b); evil = true; }
+    if (!evil) return null;
+    const d = (e) => Math.hypot(e.pos.x - from.x, e.pos.z - from.z);
+    const first = list.reduce((a, b) => (d(b) < d(a) ? b : a));
+    return { x: first.pos.x, z: first.pos.z };
   },
   // AiTaskAttackObject: a squad picks up what lies on its way (skirmish maps)
   squadPickup(us) {

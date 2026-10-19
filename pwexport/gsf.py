@@ -56,7 +56,7 @@ try:
 except ImportError:  # textures are optional
     Image = None
 
-VERSION = '2026.10.14'     # bump when the output changes (invalidates cached conversions)
+VERSION = '2026.10.19'     # bump when the output changes (invalidates cached conversions)
 NULL = 0x80000000
 
 _SPHERE_B64 = "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"
@@ -284,7 +284,8 @@ def decode_vertices(r, off, n, stride, bbox, ext_uv=False):
         v = ((hi // 4 % 4) * 256 + raw[:, 7]) / 1024.0
         uv = np.stack([u, 1.0 - v], 1)
     else:
-        uv = np.stack([raw[:, 6] / 256.0, 1.0 - raw[:, 7] / 256.0], 1)
+        # (PWClient.exe 0x7369e7-0x736a14: byte / 255, v = 1 - byte / 255)
+        uv = np.stack([raw[:, 6] / 255.0, 1.0 - raw[:, 7] / 255.0], 1)
     out = dict(pos=p, nrm=nrm, uv=uv)
     if stride >= 16:
         out['bidx'] = raw[:, 8:12].astype(np.int32)
@@ -310,12 +311,15 @@ def parse_mesh(r, c):
              matrix=np.array(r.fs(c + 12, 16), dtype=np.float64).reshape(4, 4), skel=0)
     o = c + 80
     if skinned:
+        # the chunk-table index of the skeleton (or of the cloth chunk the mesh hangs on - BoosterPack1's floating
+        # corpses and barrels, sl_pirate_outpost's ship_chain), not a skeleton number
         m['skel'] = r.u32(o); o += 4
     if simple:
         m['cbidx'] = list(r.d[o:o + 4]); m['cbw'] = list(r.d[o + 4:o + 8]); o += 8
-    # 8 bytes: u32 8, u32 baked-light parameters. Vertices of 9 / 17 bytes carry one more byte: the baked ambient
-    # light when those parameters are set, else the high bits of "extended" texture coordinates.
-    ext_uv = kind == 'mesh' and r.u32(o + 4) == 0
+    # 8 bytes: u32 8, u32 baked-light parameters. Vertices of 9 / 17 bytes carry one more byte, exactly when the mesh
+    # flags (+76) have 0x08 (extended UV: the high bits of the texture coordinates) or 0x10 (baked ambient light, which
+    # always comes with NormalLight parameters) - true for every archive of the game
+    ext_uv = kind == 'mesh' and bool(r.u32(c + 76) & 0x08)
     o += 8 if kind == 'mesh' else 36
     m['bbox'] = r.fs(o, 6); o += 24
     nsub = r.u32(o); subp = r.ptr(o + 4); matp = r.ptr(o + 12); nmat = r.u32(o + 16)
@@ -353,6 +357,8 @@ def parse_billboard(r, c):
     b['cell'], b['grid'] = a[1], (1 << min(a[3], 6), 1 << min(a[2], 6))     # (columns, rows)
     b['uv'] = sprite_uv(b['cell'], b['grid'])
     b['size'] = r.f32(c + 88)
+    if b['skinned']:
+        b['skel'] = r.u32(c + 104)                    # chunk-table index of the skeleton
     o = c + 108 if b['skinned'] else c + 104
     bbox = r.fs(o, 6)
     nv, vp, stride = r.u32(o + 24), r.ptr(o + 28), r.u32(o + 32)
@@ -492,11 +498,19 @@ def parse_anim(r, c):
         a['speed'] = round(float(spd), 4) if 0 < spd < 100 else None
     except Exception:
         a['speed'] = None
-    if gp and nf:
-        stride = {0: 10, 1: 13, 2: 4}.get(rootkind, 10)
-        fr = fill_invalid(np.array(r.fs(gp, stride * nf)).reshape(nf, stride), 4)
-        a['root'] = dict(q=fr[:, 0:4], t=fr[:, 4:7] if stride >= 7 else None,
-                         s=fr[:, 10:13] if stride == 13 else None)
+    # the root track is a track node like the others (+24 bone, +25 format, +26 children, +27 flags): flag 0x01 =
+    # constant (ONE key of 4 floats, a rotation, whatever the format), 0x02 = no keys. 14 root tracks of the game are
+    # constant (all_characters and others); reading nf keys of the format's size there ran into the next data.
+    rflags = r.u8(c + 27)
+    if gp and nf and not rflags & 2:
+        if rflags & 1:
+            fr = fill_invalid(np.tile(np.array(r.fs(gp, 4)), (nf, 1)), 4)
+            a['root'] = dict(q=fr, t=None, s=None)
+        else:
+            stride = {0: 10, 1: 13, 2: 4, 3: 5, 4: 8}.get(rootkind, 10)
+            fr = fill_invalid(np.array(r.fs(gp, stride * nf)).reshape(nf, stride), 4)
+            a['root'] = dict(q=fr[:, 0:4], t=fr[:, 4:7] if rootkind in (0, 1) else None,
+                             s=fr[:, 10:13] if rootkind == 1 else (fr[:, 5:8] if rootkind == 4 else None))
 
     def walk(tp, n, depth=0):
         if depth > 64:
@@ -508,17 +522,19 @@ def parse_anim(r, c):
             dp = r.ptr(e + 4)
             if dp and typ in (2, 3, 4):
                 stride = {2: 4, 3: 5, 4: 8}[typ]
-                if at & 0x1000000:
-                    # constant track: one key only (high flag byte 0x01). Reading nf keys here used to run into
-                    # the next tracks' data and bent necks/fingers into impossible poses.
-                    fr = np.tile(np.array(r.fs(dp, stride)), (nf, 1))
+                constant = bool(at & 0x1000000)
+                if constant:
+                    # constant track: ONE key (high flag byte 0x01), and it is only a rotation (16 bytes) whatever
+                    # the format. Reading nf keys here used to run into the next tracks' data and bent necks/fingers
+                    # into impossible poses.
+                    fr = np.tile(np.array(r.fs(dp, 4)), (nf, 1))
                 else:
                     fr = np.array(r.fs(dp, stride * nf)).reshape(nf, stride)
                 fr = fill_invalid(fr, 4)
                 tr = dict(bone=at & 0xFF, q=fr[:, 0:4])
-                if typ in (3, 4):
+                if typ in (3, 4) and not constant:
                     tr['dx'] = fr[:, 4]
-                if typ == 4:
+                if typ == 4 and not constant:
                     tr['s'] = fr[:, 5:8]
                 a['tracks'].append(tr)
             np_ = r.ptr(e + 8)
@@ -971,6 +987,18 @@ def export_model(r, h, model, mats, names, texfinder, out_path, fps=25.0, all_lo
         rigs.append(dict(skin=len(g.j['skins']) - 1, node_of=node_of, sk=sk, chunk=skel_chunk[si],
                          world_bind=[np.linalg.inv(m) for m in ibm]))
 
+    # skinned chunks name their skeleton by its index in the model's chunk table (skeletons come first, so for the
+    # game's models it equals the skeleton's number - except where the index points at a cloth chunk)
+    rig_by_chunk = {x['chunk']: x for x in rigs}
+
+    def rig_for(index, what):
+        rig = rig_by_chunk.get(index)
+        if rig is None and 0 <= index < len(model['chunks']) and model['chunks'][index] is not None:
+            t_ = r.u32(model['chunks'][index])
+            if t_ in MESH_TYPES and MESH_TYPES[t_][0] == 'cloth':
+                log('   %s hangs on cloth chunk %d (moved by the cloth simulation): exported static' % (what, index))
+        return rig
+
     # ---------------------------------------------------------------- materials
     mat_cache = {}
 
@@ -1030,7 +1058,7 @@ def export_model(r, h, model, mats, names, texfinder, out_path, fps=25.0, all_lo
             continue
         if not all_parts and not default_visible(model['fourcc'], me['attr'], model_ctx):
             continue
-        rig = rigs[me['skel']] if me['skinned'] and me['skel'] < len(rigs) else None
+        rig = rig_for(me['skel'], 'mesh chunk %d' % ci) if me['skinned'] else None
         M = me['matrix'].T  # row-major D3D -> column
         prims = []
         for s in me['subs']:
@@ -1135,7 +1163,7 @@ def export_model(r, h, model, mats, names, texfinder, out_path, fps=25.0, all_lo
         attrs = dict(POSITION=g.accessor(P, 5126, 'VEC3', 34962, minmax=True),
                      NORMAL=g.accessor(N, 5126, 'VEC3', 34962),
                      TEXCOORD_0=g.accessor(UV, 5126, 'VEC2', 34962))
-        rig = rigs[0] if (b['skinned'] and rigs) else None
+        rig = (rig_by_chunk.get(b.get('skel', -1)) or (rigs[0] if rigs else None)) if b['skinned'] else None
         if rig is not None:
             nb = len(rig['sk']['dfs'])
             per = len(P) // max(1, len(b['pos']))
@@ -1204,8 +1232,8 @@ def export_model(r, h, model, mats, names, texfinder, out_path, fps=25.0, all_lo
         q = qnorm(qconj(L['quat']))
         Mw = np.eye(4); Mw[:3, :3] = qmat(q); Mw[:3, 3] = L['pos']
         parent = root
-        if t == 0x8000000B and L['skel'] < len(rigs):
-            rig = rigs[L['skel']]
+        rig = rig_for(L['skel'], 'link ' + L['name']) if t == 0x8000000B else None
+        if rig is not None:
             k = int(np.argmax(L['bw']))
             bi = L['bidx'][k]
             if bi != 255 and bi < len(rig['sk']['dfs']):
@@ -1242,8 +1270,8 @@ def export_model(r, h, model, mats, names, texfinder, out_path, fps=25.0, all_lo
         q = qnorm(qconj(P['quat']))
         Mw = np.eye(4); Mw[:3, :3] = qmat(q); Mw[:3, 3] = P['pos']
         parent = root
-        if P['skinned'] and P['skel'] < len(rigs):
-            rig = rigs[P['skel']]
+        rig = rig_for(P['skel'], 'emitter %d' % ci) if P['skinned'] else None
+        if rig is not None:
             bi = P['bidx'][int(np.argmax(P['bw']))]
             if bi != 255 and bi < len(rig['sk']['dfs']):
                 parent = rig['node_of'][rig['sk']['dfs'][bi]]
@@ -1370,7 +1398,8 @@ def export_model(r, h, model, mats, names, texfinder, out_path, fps=25.0, all_lo
                 chan(rig['node_of'][b0], 'rotation', times, pad(q), 'VEC4')
                 if a['root']['t'] is not None:
                     chan(rig['node_of'][b0], 'translation', times, pad(a['root']['t'] + np.array(bones[b0]['pos'])), 'VEC3')
-                if a['root']['s'] is not None and np.abs(a['root']['s']).min() > 1e-6:
+                if a['root']['s'] is not None:
+                    # zero scale is kept: the game shrinks bones to 0 to hide parts (cole_s0 react_dilo_fm_0)
                     chan(rig['node_of'][b0], 'scale', times, pad(-np.abs(a['root']['s']) if bones[b0].get('mirror') else a['root']['s']), 'VEC3')
                 done.add(hb)
             for tr in a['tracks']:
@@ -1392,7 +1421,7 @@ def export_model(r, h, model, mats, names, texfinder, out_path, fps=25.0, all_lo
                     tp = np.tile(np.array(b['pos']), (nf, 1))
                     tp[:, 0] += tr['dx']
                     chan(node, 'translation', times, pad(-tp if mir else tp), 'VEC3')
-                if 's' in tr and np.abs(tr['s']).min() > 1e-6:
+                if 's' in tr:      # also when it reaches 0: bones shrunk to 0 hide parts (13 tracks of the game)
                     chan(node, 'scale', times, pad(-np.abs(tr['s']) if mir else tr['s']), 'VEC3')
             # hold rest pose on bones without a track, so actions don't leak into each other
             for k, bi in enumerate(dfs):

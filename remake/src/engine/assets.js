@@ -239,6 +239,9 @@ export function loadModel(name, opts = {}) {
       scene.traverse((o) => {
         if (o.userData.isFoliageMesh) { fol.push(o); return; }
         if (!o.isMesh) return;
+        // a gate's leaves modelled standing open (render flag 14, without 16): only the level editor shows them; the
+        // game hides flag 14 and shows 16, the leaves its open / close clips move (Building.usl:2390-2391)
+        if (opts.gate && o.userData.attr !== undefined && ((o.userData.attr >>> 14) & 1) && !((o.userData.attr >>> 16) & 1)) { fol.push(o); return; }
         if (o.userData.attr !== undefined) {
           let h = helperPart(o.userData.attr, fourcc, [].concat(o.material).some((m) => m.userData && m.userData.glow));
           // flag-less low-poly hulls (whole-object pick/collision volumes)
@@ -373,13 +376,30 @@ export async function loadTexture(url, srgb = true) {
 // clips, seas_warrior with livingstone's): the bones have the same names but other rest offsets (a bulkier body).
 // Position tracks are moved by (own rest offset - source rest offset), so every bone keeps its own length and only
 // the motion is taken over - the engine's shared animation sets work that way. Without it the mesh is stretched
-// onto the source skeleton.
+// onto the source skeleton. A rig that is the source's scaled as a whole gets its motion scaled instead.
 function retarget(clips, srcScene, dstScene) {
   const rest = (root) => { const m = new Map(); root.traverse((o) => { if (o.name) m.set(o.name, o.position); }); return m; };
   const a = rest(srcScene), b = rest(dstScene);
   const delta = new Map();
   for (const [n, pb] of b) { const pa = a.get(n); if (pa && pa.distanceToSquared(pb) > 1e-8) delta.set(n, [pb.x - pa.x, pb.y - pa.y, pb.z - pa.z]); }
   if (!delta.size) return clips;
+  // the same rig scaled as a whole (seas_endboss_gate = seas_gate x 1.25): the motion scales with it
+  let s = null;
+  for (const [n, pb] of b) {
+    const pa = a.get(n);
+    if (!pa || pa.lengthSq() < 1e-6) continue;
+    const f = pb.length() / pa.length();
+    if (s === null) s = f;
+    if (Math.abs(f - s) > 0.01 * s || pa.clone().multiplyScalar(f).distanceTo(pb) > 0.01 * pb.length() + 1e-4) { s = null; break; }
+  }
+  if (s !== null && Math.abs(s - 1) > 0.02) {
+    return clips.map((c) => new THREE.AnimationClip(c.name, c.duration, c.tracks.map((tr) => {
+      if (!tr.name.endsWith('.position')) return tr;
+      const v = tr.values.slice();
+      for (let i = 0; i < v.length; i++) v[i] *= s;
+      return new tr.constructor(tr.name, tr.times, v, tr.getInterpolation());
+    })));
+  }
   return clips.map((c) => {
     let changed = false;
     const tracks = c.tracks.map((tr) => {

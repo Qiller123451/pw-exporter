@@ -65,7 +65,11 @@ check('a gate on a N-S run turns 90 degrees', pgN.ok && Math.abs(pgN.rot - Math.
 // 5. own units walk through the open gate (north -> south), not through the wall
 const [nx, nz] = T(2, -2), [sx, sz] = T(2, 2);
 const path = W.nav.find(nx, nz, sx, sz, 0.7, 30000, me);
-check('a path through the gate', !!path && path.length > 0 && path.length < 6, path && path.length);
+// (through the gate itself, not round the end of the wall line: it crosses the line within the gate's tile)
+const [gx5, gz5] = T(2, 0), P = (path || []).map((p) => (Array.isArray(p) ? p : [p.x, p.z]));
+let thru = false;
+for (let i = 0; i < P.length; i++) { const [ax, az] = i ? P[i - 1] : [nx, nz], [bx, bz] = P[i]; if ((az - gz5) * (bz - gz5) <= 0 && az !== bz) { const x = ax + (bx - ax) * (gz5 - az) / (bz - az); if (Math.abs(x - gx5) < 4) thru = true; } }
+check('a path through the gate', !!path && path.length > 0 && path.length < 6 && thru, path && { n: path.length, thru });
 // 6. a tower on a wall piece is a joint
 if (towerA) {
   const [tx, tz] = T(4, 2);

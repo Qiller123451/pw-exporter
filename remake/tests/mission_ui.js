@@ -180,7 +180,9 @@ M.playDialog(null, () => ends.push('null')); G.step(1, 0.05);
 check('unknown scene ends at once', ends[ends.length - 1] === 'null' && !M.scene);
 
 // ---------------------------------------------------------------- cutscenes
-const sq = Object.values(D.sequences).find((s) => s.id === 'sc_1050') || Object.values(D.sequences).find((s) => s.lines && s.lines.length >= 4);
+// (the subtitle mode of a sequence without its timeline; the timeline itself: tests/cutscene.js, cutscene_all.js)
+const sq0 = Object.values(D.sequences).find((s) => s.id === 'sc_1050') || Object.values(D.sequences).find((s) => s.lines && s.lines.length >= 4);
+const sq = sq0 && { ...sq0, play: null };
 check('sequence data of mission 1', !!sq && sq.lines.length >= 4, sq && sq.id);
 const sEnds = [];
 M.playSequence(sq, { camera: null, snapBack: true }, () => sEnds.push('m1'));

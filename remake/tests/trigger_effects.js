@@ -11,8 +11,10 @@ G.step(3, 0.1);
 const f = [...E.fxObjs.values()][0];
 check('the effect stands at the spot', !!f && f.obj.parent === W.scene && Math.hypot(f.obj.position.x - u.pos.x, f.obj.position.z - u.pos.z) < 0.1);
 G.rtscam.x = u.pos.x; G.rtscam.z = u.pos.z; G.rtscam.dist = 30; G.rtscam.update(0.016); G.drawNow(0.05);
-for (let i = 0; i < 30; i++) { G.particles.update(0.1, G.camera, G.rtscam.target, 1); await new Promise((r) => setTimeout(r, 80)); }
-check('and sprays', G.particles.drawn > 0, G.particles.drawn);
+// (fx_stina_convert: a burst - flag 0x80 - every 4 s, each particle lives 2 s: look over the whole time)
+let most = 0;
+for (let i = 0; i < 30; i++) { G.particles.update(0.1, G.camera, G.rtscam.target, 1); most = Math.max(most, G.particles.drawn || 0); await new Promise((r) => setTimeout(r, 80)); }
+check('and sprays', most > 0, most);
 G.step(60, 0.1);
 check('it goes after its time', E.fxObjs.size === 0 && E.effects.length === 0 && !f.obj.parent);
 return out.join('\n');

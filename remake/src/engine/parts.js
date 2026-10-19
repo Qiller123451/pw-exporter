@@ -55,6 +55,8 @@ export function animalMask(opts) {
   const show = (b) => { hide &= ~(1 << b); };
   if (opts.owned) { show(VIS.SADDLE); show(VIS.PARTYCOL); }
   if (opts.armor) show(VIS.ARMOR);
+  for (const b of opts.gear || []) show(b);                  // helmet, armour, armoured saddle, standard (compose.js GEAR)
+  if (opts.noSaddle) hide |= 1 << VIS.SADDLE;
   if (opts.misc === false) hide |= 1 << VIS.MISC;
   const hr = opts.hp == null ? 1 : opts.hp;
   for (const [b, t] of WOUNDS) if (hr <= t) show(b);

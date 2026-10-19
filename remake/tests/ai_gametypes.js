@@ -35,7 +35,9 @@ if (W.rules.mode === 'domination') {
   // the attack is over: who stands at the flag stays
   const a = B.attacks.find((x) => x.koth);
   if (a) {
-    const near = S.pool.slice(0, 2);
+    // (two units of no other attack - one of those would walk on to its own target)
+    const near = S.pool.filter((u) => !B.attacks.some((x) => x !== a && x.units.has(u))).slice(0, 2);
+    W.order(near, { type: 'stop' });
     for (const u of near) { u.pos.x = a.pos.x + 3; u.pos.z = a.pos.z + 3; }
     a.add(near);
     a.end('done');

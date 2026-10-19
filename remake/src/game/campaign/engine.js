@@ -13,6 +13,7 @@
 //
 // The engine never throws into the game loop: every action and every condition callback is guarded; what went
 // wrong is collected in G.campaign.errors ([trigger, node type, message]) and G.campaign.warnings.
+import { SeqActors } from './sequence.js';
 import { valueString, toInt, compare, compileExpression, filePart } from './trigutil.js';
 import { CONDITIONS, CONDITION_STATUS } from './conditions.js';
 import { ACTIONS, ACTION_STATUS, prescanActions } from './actions.js';
@@ -458,11 +459,15 @@ export class TriggerEngine {
     // disable_fow: the area named by the action is shown for the sequence
     let reveal = null;
     if (o.fow && o.fowPos && !o.fowPos.zero && W && W.revealArea) reveal = W.revealArea(C.human, o.fowPos.x, o.fowPos.z, o.fowRadius || 30, 0);
+    // its actors (game/campaign/sequence.js): bound now; at the end they stay where the scene leaves them
+    let actors = null;
+    if (seq && seq.play) try { actors = new SeqActors(C, seq.play); } catch (e) { this.error(o.trigger, 'SQNZ', e); }
     let done = false;
     const end = () => {
       if (done) return;
       done = true;
       this.seqRunning = null;
+      if (actors) try { actors.finish(!!o.snapActors); } catch (e) { this.error(o.trigger, 'SQNZ', e); }
       if (reveal) W.hideArea(reveal);
       // camera: back where it was (the UI's part, snapBack) or to camera_data (Game.usl:1835-1853)
       const cam = this.G && this.G.rtscam;
@@ -472,7 +477,7 @@ export class TriggerEngine {
       this.push('sequence', 'onSequence', this.lastSequence);
       if (o.quit) this.win();
     };
-    const opts = { camera: o.camera && !o.camera.zero ? { x: o.camera.x, z: o.camera.z } : null, snapBack: !!o.snapBack, title: seq && seq.id ? seq.id : filePart(o.path) };
+    const opts = { camera: o.camera && !o.camera.zero ? { x: o.camera.x, z: o.camera.z } : null, snapBack: !!o.snapBack, title: '', actors };
     // a sequence without a file ends at once (§6.8)
     if (!M || !M.playSequence || !seq || seq.file === false) { end(); return; }
     this.guard(o.trigger, 'SQNZ', () => M.playSequence(seq || null, opts, () => this.guard(o.trigger, 'SQNZ', end)));
@@ -526,7 +531,9 @@ export class TriggerEngine {
 
   // ------------------------------------------------------------------------------------------- waypoints (WYPT, §5.3)
   // mode 0: once (the end sends OBJ_WYPT -> WAYR conditions), 1: circle, 2: back and forth. The walk is an
-  // attack-move for fighters (a patrol fights what it meets and then goes on), a plain move for everything else.
+  // attack-move for fighters (a patrol fights what it meets and then goes on: FightingObj m_bAggressionWalk), a plain
+  // move for everything else and for a "straight walk" (FightingObj.usl:2414: it only switches the aggression walk
+  // off; the path is the same).
   startPatrol(u, pts, mode, speed, straight) {
     if (!u || !u.alive || u.kind !== 'unit' || !pts.length) return;
     const p = { u, pts, mode, speed, straight, i: 0, dir: 1, tries: 0, wait: 0 };
@@ -534,9 +541,10 @@ export class TriggerEngine {
     this.patrolGo(p);
   }
   patrolGo(p) {
-    const u = p.u, [x, z] = p.pts[p.i];
-    const fight = !u.cannotFight && u.stance !== 3 && u.stance !== -1 && !!u.owner;
+    const u = p.u, [x, z, mz] = p.pts[p.i];
+    const fight = !p.straight && !u.cannotFight && u.stance !== 3 && u.stance !== -1 && !!u.owner;
     if (u.inside && this.W.leaveTransport) this.W.leaveTransport(u);
+    if (u.zeppelin) { this.W.order([u], { type: 'move', x, z, auto: true, alt: mz, flySpeed: p.speed }); if (u.task) u.task.patrol = p; p.task = u.task; return; }
     this.W.order([u], { type: fight ? 'attackmove' : 'move', x, z, auto: p.speed < 3, slow: p.speed < 3 });
     if (u.task) u.task.patrol = p;
     p.task = u.task;

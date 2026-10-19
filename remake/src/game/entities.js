@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { AnimCtl } from './anim.js';
+import { ANIM_FX } from './animfx.js';
 import { cloneModel, toLinkFrame } from '../engine/assets.js';
 import { applyFow } from '../engine/terrain.js';
 import { applyState } from '../engine/parts.js';
@@ -99,6 +100,7 @@ export class Unit extends Entity {
     const up = !initial && level > this.level;
     const ratio = initial ? 1 : this.hp / this.maxHp;
     this.level = level;
+    this.weapon = null;                            // (the new level's weapon in hand: hu_axe_a -> hu_axe_b)
     this.readRules();
     this.hp = initial || up ? this.maxHp : Math.max(1, ratio * this.maxHp);   // a level up heals fully
     this.buildModel();
@@ -144,6 +146,7 @@ export class Unit extends Entity {
     if (!W.template(this.gfx, true) && W.standIns && W.standIns.get(this.name.toLowerCase())) this.gfx = W.standIns.get(this.name.toLowerCase());   // no model in the game data: the mission's stand-in
     const tpl = this.tpl = W.template(this.gfx);
     if (this.obj) { W.scene.remove(this.obj); this.anim && this.anim.dispose(); }
+    this._links = null;                            // (the links of the new model: weapons went onto the old one's)
     if (this.comp) this.comp.dispose();
     const g = new THREE.Group();
     const m = cloneModel(tpl, this.party);
@@ -152,8 +155,14 @@ export class Unit extends Entity {
     this.obj = g;
     this.anim = new AnimCtl(m, tpl.clips);
     // animation sound events (footsteps, weapon swings, roars) from the GSF sound table
-    const snd = (tpl.info && tpl.info.sounds) || W.templateInfo(tpl.info && tpl.info.anims)?.sounds;
-    if (snd) this.anim.setEvents(snd, (ev) => W.animSound(this, ev));
+    let snd = (tpl.info && tpl.info.sounds) || W.templateInfo(tpl.info && tpl.info.anims)?.sounds;
+    // and the effect events of its animations (camera shakes: game/animfx.js), merged into the same timeline
+    const fxs = ANIM_FX[String((tpl.info && tpl.info.anims) || this.gfx).toLowerCase()];
+    if (fxs) {
+      snd = { ...(snd || {}) };
+      for (const clip in fxs) snd[clip] = [...(snd[clip] || []), ...fxs[clip].map(([f, cls]) => [f / 25, '!fx', cls])];
+    }
+    if (snd) this.anim.setEvents(snd, (ev) => (ev[1] === '!fx' ? W.emit('camshake', { cls: ev[2], pos: this.pos.clone() }) : W.animSound(this, ev)));
     // collision radius from the template size
     if (!tpl.radius) {
       const box = new THREE.Box3().setFromObject(tpl.scene);
@@ -181,8 +190,12 @@ export class Unit extends Entity {
     if (this.wild) { this.walkAnim = this.anim.pick(wn(1), 'walk_1', this.walkAnim); this.speed = speedsTpl.walk_1 || 1.5; this.animSpeed = speedsTpl[wn(1)] || this.speed; }
     this.idleAnim = this.anim.pick(this.def.standanim, 'standanim', 'idle_0', 'stand');
     this.anim.play(this.idleAnim);
-    // weapon parts on hand links
-    this.attachWeapon(this.weapons.long);
+    // weapon parts on hand links - on the new model: the old one's weapon, tool and load went with it (a level up,
+    // a model upgrade kept the same weapon object and left the new model empty-handed)
+    this.heldWeapon = null; this.weaponObjs = []; this.toolObj = null; this.carryObj = null;
+    this.attachWeapon(this.weapon && this.weapons.all.includes(this.weapon) ? this.weapon : this.weapons.long);
+    if (this.toolGfx) { const t = this.toolGfx; this.toolGfx = null; this.attachTool(t, this.toolLink || 'HndR'); }
+    if (this.carry) this.setCarry(this.carry.res, this.carry.amount, this.carry.look);
     W.scene.add(g);
     this.syncObj();
     // build-ups, captain, collector wagon, render mask (saddle / party colour / armour / wounds)
@@ -210,7 +223,7 @@ export class Unit extends Entity {
   attachTool(gfx, linkName = 'HndR') {
     if (this.toolObj && this.toolGfx === gfx) return;
     if (this.toolObj) { this.toolObj.removeFromParent(); this.toolObj = null; }
-    this.toolGfx = gfx;
+    this.toolGfx = gfx; this.toolLink = linkName;
     if (!gfx) { if (this.weaponObjs && !this.carryObj) for (const o of this.weaponObjs) o.visible = true; return; }
     const link = this.findLink(linkName);
     const tpl = this.world.template(gfx, true);
@@ -324,6 +337,8 @@ export class Unit extends Entity {
   }
   steer(dt, speed, arrive = 0.8) {
     if (!this.path.length) { this.vel.set(0, 0, 0); return 0; }
+    // set up to shoot (the log cannon): it gets up before it moves (compose.js holdMove)
+    if (this.deploy && this.deploy.state !== 'walk' && this.comp && this.comp.holdMove(this.world.time)) { this.vel.set(0, 0, 0); return 0; }
     let [tx, tz] = this.path[0];
     let dx = tx - this.pos.x, dz = tz - this.pos.z, d = Math.hypot(dx, dz);
     const last = this.path.length === 1;

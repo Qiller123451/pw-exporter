@@ -101,7 +101,29 @@ export class RTSCamera {
     this.x = 0; this.z = 0; this.yaw = 0;
     this.dist = 70; this.tDist = 70;
     this.min = 25; this.max = 150;
-    this.shake = 0;
+    this.shakes = [];          // camera shakes (addShake)
+    this.shakeOn = false;
+  }
+  // a camera shake (GameCameraModule.usl ShakeCameraTheGundlachStyle): duration s, strength, fade-out % of the
+  // duration, the event's position, its range (60). Dropped beyond the range from the point the camera looks at; full
+  // strength within 15 m, then less down to nothing at 60 m.
+  addShake(dur, strength, fade, pos, range = 60) {
+    const c = this.target;
+    const d = c && pos ? Math.hypot(pos.x - c.x, (pos.y ?? c.y) - c.y, pos.z - c.z) : 0;
+    if (d > range) return;
+    const f = d < 15 ? 1 : Math.max(0, 1 - (d - 15) / 45);
+    if (f > 0 && dur > 0) this.shakes.push({ t: 0, dur, s: strength * f, fade: Math.min(100, Math.max(1, fade)) / 100 });
+  }
+  // the shakes' strength now (full until the last fade-out share of their time, then down to 0), and their ageing
+  shakeStrength(dt) {
+    let S = 0;
+    for (const k of this.shakes) {
+      k.t += dt;
+      const q = Math.min(1, k.t / k.dur);
+      S += q < 1 - k.fade ? k.s : k.s * Math.max(0, (1 - q) / k.fade);
+    }
+    if (this.shakes.length) this.shakes = this.shakes.filter((k) => k.t < k.dur);
+    return S;
   }
   pan(dx, dz) {
     const s = Math.sin(this.yaw), c = Math.cos(this.yaw);
@@ -118,12 +140,17 @@ export class RTSCamera {
     const h = this.heightAt(this.x, this.z);
     const s = Math.sin(this.yaw), c = Math.cos(this.yaw);
     this.camera.position.set(this.x + s * Math.cos(pitch) * this.dist, h + Math.sin(pitch) * this.dist, this.z + c * Math.cos(pitch) * this.dist);
-    if (this.shake > 0) {
-      const k = this.shake;
-      this.camera.position.x += (Math.random() - 0.5) * k; this.camera.position.y += (Math.random() - 0.5) * k;
-      this.shake = Math.max(0, this.shake - dt * 2);
+    // shaking: every other frame the eye and the point it looks at move together by a random step - up and down by
+    // up to 0.03 m per strength, sideways half of that - and back the next frame (GameCameraModule.usl:714-749)
+    const S = this.shakes.length ? this.shakeStrength(dt) : 0;
+    let ox = 0, oy = 0, oz = 0;
+    this.shakeOn = !this.shakeOn;
+    if (S > 0 && this.shakeOn) {
+      const a = 0.03 * S, r = () => Math.random() * 2 - 1;
+      ox = r() * a / 2; oz = r() * a / 2; oy = r() * a;
+      this.camera.position.x += ox; this.camera.position.y += oy; this.camera.position.z += oz;
     }
-    this.camera.lookAt(this.x, h, this.z);
+    this.camera.lookAt(this.x + ox, h + oy, this.z + oz);
     this.camera.updateMatrixWorld();
     this.target = new THREE.Vector3(this.x, h, this.z);
   }

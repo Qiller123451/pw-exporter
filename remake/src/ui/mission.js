@@ -38,6 +38,7 @@
 //
 // Originals: Game/UI/QuestWindow.usl (QW), NewsTicker.usl (NT), DialogScene.usl (DS), TimerWnd.usl (TW),
 // MiniMap2.usl (MM), IngameScreen.usl (IS), Server/classes/misc/QuestionMark.usl; behaviour: docs/spec/triggers.md §5.2, §6.
+import { Cutscene } from './cutscene.js';
 import * as THREE from 'three';
 import { UIA, spriteCss, iconFor, entry } from './atlas.js';
 import { buttonTip, textTip } from './tooltip.js';
@@ -146,7 +147,7 @@ export class MissionUI {
     // cutscene: letterbox bars + subtitles; takes every click (the player has no input, Game.usl:1812-1858)
     this.cineEl = el('div', 'cine hidden', document.body, '<div class="cbar ctop"><span class="ctitle"></span></div>' +
       '<div class="cbar cbot"><div class="csub"><div class="cpor"></div><div class="cline"><b class="cname"></b><span class="ctext"></span></div></div>' +
-      '<div class="chint">Click or Space: continue &nbsp;·&nbsp; Esc: skip</div></div>');
+      '<div class="chint"><span class="chint-next">Click or Space: continue &nbsp;·&nbsp; </span>Esc: skip</div></div>');
     for (const e of ['mousedown', 'mouseup', 'click', 'contextmenu', 'wheel', 'dblclick']) this.cineEl.addEventListener(e, (ev) => { ev.stopPropagation(); if (e === 'contextmenu') ev.preventDefault(); });
     this.cineEl.addEventListener('click', () => this.next());
     // the story films (hs_*.bik of the original, converted to WebM by the toolkit: pwexport/video.py)
@@ -556,9 +557,11 @@ export class MissionUI {
     while (!this.cine && this.seqs.length) {
       const q = this.seqs[0], lines = (q.seq && q.seq.lines || []).filter((l) => l && l.text);
       const films = q.noFilm ? [] : (q.seq && q.seq.videos) || [];
-      if (this.manual || (!lines.length && !films.length) || !this.dom) { this.seqs.shift(); this.log.push(['sequenceEnd', q.seq && q.seq.id]); if (q.onEnd) q.onEnd(); continue; }
+      const play = q.seq && q.seq.play && q.seq.play.end > 0 && !films.length ? q.seq.play : null;
+      if (this.manual || (!lines.length && !films.length && !play) || !this.dom) { this.seqs.shift(); this.log.push(['sequenceEnd', q.seq && q.seq.id]); if (q.onEnd) q.onEnd(); continue; }
       if (G.menuOpen || G.over) return;            // not under an open menu
       if (films.length) { this.playFilms(q, films, lines); return; }
+      if (play) { this.playTimeline(q); return; }
       const cam = G.rtscam, to = q.opts.camera && Number.isFinite(q.opts.camera.x) ? q.opts.camera : null;
       this.cine = { ...q, q, lines, frames: lines, i: -1, t: 0, len: 0, sound: null, wasPaused: !!G.paused,
         cam: cam ? { x0: cam.x, z0: cam.z, x1: to ? to.x : cam.x, z1: to ? to.z : cam.z, t: to ? 0 : CAM_EASE } : null };
@@ -574,6 +577,26 @@ export class MissionUI {
       this.duck(true);
       this.nextLine();
     }
+  }
+  // the cutscene's own timeline (ui/cutscene.js): cameras, actors, speech, subtitles, fades
+  playTimeline(q) {
+    const G = this.G;
+    this.cine = { ...q, q, player: new Cutscene(G, this, q), wasPaused: !!G.paused, cam: null, lines: [], i: -1, t: 0, len: 0 };
+    G.setPaused(true);
+    document.body.classList.add('cine');
+    if (G.hud) { G.hud.hideTip(); if (G.hud.closeFlyout && G.hud.menu) G.hud.toggleMenu(G.hud.menu); }
+    if (G.input) { G.input.keys = {}; if (G.input.mode && G.input.setMode) G.input.setMode(null); }
+    if (G.updateFow) G.updateFow();
+    this.cineEl.querySelector('.ctitle').textContent = '';
+    this.cineEl.querySelector('.chint-next').style.display = 'none';      // (a timeline runs by itself)
+    this.cineEl.querySelector('.ctext').textContent = '';
+    this.cineEl.querySelector('.cname').textContent = '';
+    this.cineEl.classList.remove('hidden');
+    this.cineEl.offsetHeight;
+    this.cineEl.classList.add('on');
+    this.duck(true);
+    this.log.push(['timeline', q.seq.id]);
+    try { this.cine.player.start(); } catch (e) { console.warn('cutscene', q.seq.id, e); this.endCine(); }
   }
   nextLine() {
     const c = this.cine;
@@ -662,13 +685,14 @@ export class MissionUI {
     return null;
   }
   // cutscene: the next line (click, Space) / the end of the scene (Esc)
-  next() { if (this.cine && !this.cine.film) { this.sound('ui_click'); this.nextLine(); } }
+  next() { if (this.cine && !this.cine.film && !this.cine.player) { this.sound('ui_click'); this.nextLine(); } }
   skip() { if (this.cine) this.endCine(); }
   endCine() {
     const G = this.G, c = this.cine;
     if (!c) return;
     this.stopVoice(c);
     if (c.film) this.stopFilm();
+    if (c.player) { c.player.stop(); this.cineEl.querySelector('.chint-next').style.display = ''; }
     this.cine = null;
     const i = this.seqs.indexOf(c.q); if (i >= 0) this.seqs.splice(i, 1);
     // G:1835-1853: the camera returns to where it was (snap_cam_back) or stays at the scene's place
@@ -684,6 +708,7 @@ export class MissionUI {
   updateCine(dt) {
     const G = this.G, c = this.cine;
     if (!c || G.menuOpen || c.film) return;
+    if (c.player) { try { c.player.update(Math.min(dt, 0.1)); } catch (e) { console.warn('cutscene', e); c.player.done = true; } if (c.player.done) this.endCine(); return; }
     if (c.cam && G.rtscam && c.cam.t < CAM_EASE) {
       c.cam.t = Math.min(CAM_EASE, c.cam.t + dt);
       const k = c.cam.t / CAM_EASE, e = k * k * (3 - 2 * k);

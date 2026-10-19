@@ -1,8 +1,31 @@
 import * as THREE from 'three';
 import { cloneModel, toLinkFrame } from '../engine/assets.js';
 import { applyFow } from '../engine/terrain.js';
-import { animalMask, applyMask, applyState, woundStage } from '../engine/parts.js';
+import { animalMask, applyMask, applyState, woundStage, VIS } from '../engine/parts.js';
+
 import { AnimCtl } from './anim.js';
+
+// the gear an invention shows on a tamed animal: class -> [[invention, render flags, hides the plain saddle]]
+// (Base Animal.usl UpdateGfxFlags: allosaurus / brachiosaurus / stegosaurus / kentrosaurus armour; the mammoth's and
+// rhino's armour with the armoured saddle instead of the saddle; animal blades = the helmet of mammoth, boar and rhino;
+// the megaloceros' drums and the rhino's pennant)
+const GEAR = {
+  aje_allosaurus: [['aje_allosaurus_armor', [VIS.ARMOR]]],
+  aje_brachiosaurus: [['aje_brachiosaurus_armor', [VIS.ARMOR]]],
+  aje_stegosaurus: [['aje_stegosaurus_armor', [VIS.ARMOR]]],
+  hu_kentrosaurus: [['hu_kentrosaurus_armor', [VIS.ARMOR]]],
+  hu_mammoth: [['animal_blades', [VIS.HELMET]], ['hu_mammoth_armor', [VIS.ARMOR, VIS.ARMORSADDLE], true]],
+  hu_wild_boar: [['animal_blades', [VIS.HELMET]]],
+  hu_scout: [['drums', [VIS.HELMET]]],
+  hu_rhino: [['pennant', [VIS.STANDARTE]], ['animal_blades', [VIS.HELMET]], ['hu_rhino_armor', [VIS.ARMOR, VIS.ARMORSADDLE], true]],
+};
+// units that set up on the spot to shoot (BuildUpBase.usl CBuildUpWeapon SwitchToAttackMode / SwitchToWalkMode,
+// Animal.usl CMammoth): the log cannon mammoth lies down ("rest", held) while its support frame lowers ("build_down"
+// of the bottom part, 1.5 s busy), the gun on top turns to the target and plays "attack_front" once a shot; to move
+// again it gets up (rest backwards) and the frame rises ("build_up", 1 s busy)
+const DEPLOY = {
+  hu_mammoth_log_cannon: { rest: 'rest', frame: 'hu_mammoth_log_cannon_buildup_bottom', gun: 'hu_mammoth_log_cannon_buildup_top', down: 1.5, up: 1.0 },
+};
 
 // Multi-part objects as the original scripts assemble them, driven by the datamined table
 // ModelExporter/pwexport/data/composites.json (normalized by pwexport/composites.py into gamedata.json "composites"):
@@ -144,10 +167,22 @@ export class Composite {
         p.idle = s.anim || 'ride_idle_0';
         p.attack = s.attack_anim || (p.idle === 'ride_idle_0' ? 'ride_attack_front' : null);
       }
-      if (p.anim) {
+      const dep = DEPLOY[u.name];
+      if (dep && p.anim && (gfx === dep.frame || gfx === dep.gun)) {
+        // the frame and the gun hold a pose (first frame: folded up, gun at rest) - their clips are no idle loops
+        p.dep = gfx === dep.frame ? 'frame' : 'gun';
+        this.hold(p, p.dep === 'frame' ? 'build_down' : 'attack_front', u.deploy && u.deploy.state !== 'walk' && p.dep === 'frame');
+      } else if (p.anim) {
         const a = p.anim.pick(s.anim, s.kind === 'rider' ? 'ride_idle_0' : null, s.kind === 'rider' ? 'balista_stand' : null, 'standanim');
         if (a && s.kind !== 'turret') p.anim.play(a);
       }
+    }
+    this.dep = DEPLOY[u.name] || null;
+    if (this.dep && !u.deploy) u.deploy = { state: 'walk', until: 0 };
+    if (this.dep && u.deploy.state !== 'walk') {          // (a new model while set up: lying again)
+      const a = u.anim.play(this.dep.rest, { loop: false, restart: true, fade: 0 });
+      if (a) a.time = a.getClip().duration;
+      u.busyAnim = true;
     }
     // the passengers' seats: the build-up's Dri links in their order, but those its own parts (the captain) take
     const bu = this.parts.find((p) => p.spec.kind === 'buildup');
@@ -227,13 +262,17 @@ export class Composite {
     const fourcc = u.tpl.fourcc;
     if (fourcc !== 'Anim' && fourcc !== 'Vehi') return;
     const p = u.owner;
-    const armor = !!(p && /^aje_(allosaurus|stegosaurus|brachiosaurus)$/.test(u.name) && p.tt && p.tt.invented(u.name + '_armor'));
     const hr = u.alive ? u.hp / u.maxHp : 1;
     const wild = this.wild(), owned = !!p && !wild;
-    const key = (owned ? 1 : 0) + '|' + armor + '|' + woundStage(hr);
+    // the gear inventions show on the animal (Animal.usl UpdateGfxFlags of each class)
+    const gear = [];
+    let noSaddle = false;
+    const rule = owned && p.tt ? GEAR[u.name] : null;
+    if (rule) for (const [inv, bits, saddleOff] of rule) if (p.tt.invented(inv)) { gear.push(...bits); if (saddleOff) noSaddle = true; }
+    const key = (owned ? 1 : 0) + '|' + gear.join(',') + '|' + woundStage(hr);
     if (key === this.maskKey && !force) return;
     this.maskKey = key;
-    applyMask(u.model, animalMask({ owned, armor, hp: hr, misc: this.miscShown(wild) }));
+    applyMask(u.model, animalMask({ owned, gear, noSaddle, hp: hr, misc: this.miscShown(wild) }));
     if (owned && !u.partyTinted) {
       u.partyTinted = true;
       const col = new THREE.Color(p.color);
@@ -256,6 +295,59 @@ export class Composite {
     if (/^C(Ankylosaurus|Brachiosaurus|Parasaurolophus)$/.test((u.def && u.def.script) || '')) return this.parts.some((p) => /catapult|gatling/.test(p.spec.gfx));
     return true;
   }
+  // a part's clip held at its first or last frame
+  hold(p, clip, end) {
+    const a = p.anim && p.anim.play(clip, { loop: false, restart: true, fade: 0 });
+    if (!a) return;
+    a.time = end ? a.getClip().duration : 0;
+    a.paused = !end;
+  }
+  part(kind) { return this.parts.find((p) => p.dep === kind) || null; }
+  // set up to shoot: false while it is still setting up (the unit waits); the state lives on the unit (saved games)
+  deployReady(time) {
+    const u = this.u, d = u.deploy;
+    if (!this.dep || !d) return true;
+    if (d.state === 'attack') return true;
+    if (d.state === 'down') { if (time < d.until) return false; d.state = 'attack'; return true; }
+    d.state = 'down'; d.until = time + this.dep.down;
+    u.busyAnim = true;
+    u.anim.play(this.dep.rest, { loop: false, restart: true, fade: 0.15 });
+    const f = this.part('frame');
+    if (f) { const a = f.anim.play('build_down', { loop: false, restart: true, fade: 0 }); if (a) a.paused = false; }
+    return false;
+  }
+  // before it moves: get up again; true while it is still getting up
+  holdMove(time) {
+    const u = this.u, d = u.deploy;
+    if (!this.dep || !d || d.state === 'walk') return false;
+    if (d.state === 'up') {
+      if (time < d.until) return true;
+      d.state = 'walk'; u.busyAnim = false;
+      return false;
+    }
+    d.state = 'up'; d.until = time + this.dep.up;
+    u.busyAnim = true;
+    const a = u.anim.play(this.dep.rest, { loop: false, restart: true, fade: 0.1 });
+    if (a) { const len = a.getClip().duration; a.timeScale = -len / Math.max(0.5, this.dep.up); a.time = len; }
+    const f = this.part('frame');
+    if (f) { const b = f.anim.play('build_up', { loop: false, restart: true, fade: 0 }); if (b) b.paused = false; }
+    const g = this.part('gun');
+    if (g) g.obj.rotation.z = 0;                              // (ResetRotation)
+    return true;
+  }
+  // set up: the gun turns to the target (CanRotate); returns its error
+  aimGun(x, z, dt) {
+    const g = this.part('gun');
+    if (!g) return 0;
+    const u = this.u, p = new THREE.Vector3(); g.obj.getWorldPosition(p);
+    const want = Math.atan2(-(x - p.x), -(z - p.z)) - u.heading;
+    const cur = -g.obj.rotation.z;
+    let diff = want - cur; diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+    g.obj.rotation.z = -(cur + Math.sign(diff) * Math.min(Math.abs(diff), 1.5 * dt));
+    return Math.abs(diff) - Math.min(Math.abs(diff), 1.5 * dt);
+  }
+  // a shot: the gun's recoil clip once
+  fired() { const g = this.part('gun'); if (g) { const a = g.anim.play('attack_front', { loop: false, restart: true, fade: 0 }); if (a) a.paused = false; } }
   // turn the turrets towards a world point (relative to the carrier's heading); returns the first turret's error
   aim(x, z, dt) {
     if (!this.turrets.length) return 0;
@@ -273,6 +365,9 @@ export class Composite {
     return first;
   }
   update(dt, attacking) {
+    // got up again: free to move and idle (compose.js DEPLOY)
+    const d = this.dep && this.u.deploy;
+    if (d && d.state === 'up' && this.u.world.time >= d.until) { d.state = 'walk'; this.u.busyAnim = false; this.u.anim.play(this.u.idleAnim); }
     for (const p of this.parts) {
       if (p.anim) p.anim.update(dt);
       if (p.spec.kind === 'rider' && p.anim && p.attack) {

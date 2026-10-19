@@ -82,8 +82,9 @@ export class Attack {
     // a Domination attack (and any PureViolence attack on a map with flags, PV:36): who stands within 30 m of the
     // flag stays there (GA:414-461)
     const hold = (this.koth || (this.goal === 'pureviolence' && ai.gameType === 'KingOfTheHill')) && this.pos;
-    if (!this.scripted && result !== 'brainwash') ai.sendHome(hold ? us.filter((u) => d2({ x: u.pos.x, z: u.pos.z }, this.pos) >= 30) : us);
+    if (!this.scripted && result !== 'brainwash' && this.type !== 'transfer') ai.sendHome(hold ? us.filter((u) => d2({ x: u.pos.x, z: u.pos.z }, this.pos) >= 30) : us);
     if (this.ship) for (const s of this.ship) if (s.alive) { s.silentDeath = true; ai.W.kill(s, null); }
+    if (result === 'done' && /^(blitz|quick|towersiege)$/.test(this.type)) ai.pest = null;          // (DA:466-483)
     const i = ai.attacks.indexOf(this);
     if (i >= 0) ai.attacks.splice(i, 1);
     const log = ai.launched.find((l) => l.id === this.id);
@@ -107,6 +108,9 @@ export const Fight = {
     if (!this.plan) this.plan = DATA.attackPlan({ ...this.ctx(), letter: this.letter });
     let entry = this.plan.attacks[Math.min(5, age) - 1] || 'none';
     const enemy = this.pickEnemy(S);
+    // a pest patrol asked for (DA:944-948): what disturbs that spot, else the request is dropped
+    let pest = null;
+    if (this.pest) { pest = this.multimap ? this.disturbance(S, this.pest) : null; if (!pest || !pest.found) { this.pest = null; pest = null; } }
     // an enemy warp gate is hunted before anything else (DA:1532)
     const gate = this.multimap ? this.W.buildings.find((b) => b.alive && b.def.script === 'CWarpGate' && !b.disabled && this.isEnemyEntity(b)) : null;
     if (gate) this.requestAttack(S, 'siege_warpgate', gate.owner, [gate]);
@@ -116,7 +120,7 @@ export const Fight = {
       this.scouted = true;
       return;
     }
-    if (this.pest) this.pestPatrol(S);
+    if (pest) this.requestAttack(S, pest.type, pest.wild ? null : pest.list[0].owner, pest.list, pest.pos);    // DA:1546
     if (this.shipAttackCheck(S)) return;                              // a ship attack before the plan's entry (DA:1534)
     if (entry === 'none') return;
     if (rnd(100) <= 10) entry = 'pyramid';                              // 11 %: everything it has (DA:1550)
@@ -126,8 +130,9 @@ export const Fight = {
       this.firstAttack = (this.firstAttack || 0) + 1;
     }
     if (entry === 'none' || entry === 'scout' || !enemy) return;
-    // guerilla raids, trap detection and ship attacks are not ported: the entry itself is requested
+    // guerilla raids and trap detection are not ported: the entry itself is requested (ship attacks: ai/naval.js)
     this.requestAttack(S, entry, enemy);
+    this.pest = null;                                                   // (DA:1628)
   },
   // whom to attack (GetValidStartLocationToAttack, DA:368-421): by a strategy drawn anew every 20 thinks -
   // 0 anybody, 1-2 the weakest, 3-4 a human, 5 the human who attacked last
@@ -210,7 +215,7 @@ export const Fight = {
   // the pool units an attack adds to its squad: "bad" ones first (not in the unit mix any more: used up), then the
   // lowest levels (MOD.QueryUnits). -> null when fewer than min are there
   queryPool(S, min, max, exclude, all = false) {
-    const pool = S.pool.filter((u) => !this.claims.has(u) && !(exclude && exclude.has(u)) && !u.def.unique);
+    const pool = S.pool.filter((u) => !this.claims.has(u) && !(exclude && exclude.has(u)) && !u.def.unique && !u.item);   // (a unit with an item stays home)
     if (pool.length < min) return null;
     // how much of the pool an attack may take: the behaviour's "riskiness" (Dodo 100, Giraffe 50, Schnecke 10 %).
     // The scripts only store that number; here it keeps a home guard for the careful personalities
@@ -362,7 +367,7 @@ export const Fight = {
     if (!aim) return a.end('no target');
     a.aim = aim;
     // across the water: in transports first (ai/naval.js)
-    if (S.home && this.needsCrossing(S, a, aim) && this.startCrossing(S, a, us, aim)) return;
+    if (S.home && this.needsCrossing(S, a, aim, us) && this.startCrossing(S, a, us, aim)) return;
     a.set('walk');
     // skirmish squads attack-move; campaign waves walk unless told to fight on the way (AO:880-896)
     // (hunters walk: an attack-move would take on every animal they pass)
@@ -472,16 +477,13 @@ export const Fight = {
   },
 
   // ------------------------------------------------------------------ pest patrol (DA:689-812) and the scout
-  // where a wild animal killed a worker: a squad clears the hostile animals around the spot
-  pestPatrol(S) {
-    const W = this.W, at = this.pest;
-    this.pest = null;
-    if (!this.multimap) return;
-    const prey = [];
-    W.uHash.query(at.x, at.z, 90, (u) => { if (u.alive && u.wild && !u.naval && (u.def.aggressive > 0 || (u.attackers && u.attackers.size)) && Math.hypot(u.pos.x - at.x, u.pos.z - at.z) < 90) prey.push(u); });
-    if (!prey.length) return;
-    if (S.age <= 3 && prey.some((u) => /allosaurus|tyranno|_rex/i.test(u.name))) return;        // too big before epoch 4
-    this.hunt(S, 'pest', prey, 2, Math.max(4, prey.length * 3));
+  // RequestPestPatrol (DA:689-699, skirmish maps): a place where something hurt the computer player - a worker killed
+  // by a wild animal (ai/defense.js), every unit of a task gone (TargetRealization:226), enemies at an item it wants
+  // from epoch 3 (GetItem:315, ai/items.js). The strategy think looks what disturbs it (gametypes.js disturbance) and
+  // asks for that attack until a blitz / quick / towersiege attack succeeds (DA:466-483) or a think gets as far as
+  // its plan's attack (DA:1628).
+  requestPest(at) {
+    if (this.multimap && at) this.pest = { x: at.x, z: at.z };
   },
   // a small squad of pool units against wild animals (pest patrol, food, skulls): one of each kind at a time
   hunt(S, type, prey, min, max) {

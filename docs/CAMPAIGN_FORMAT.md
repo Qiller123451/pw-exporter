@@ -288,27 +288,19 @@ frame is one spoken line. The text of a frame is the text-table entry `_<scene>_
 
 Languages present in the original: `cz de fr hu it pl ru uk zh` (`uk` = English).
 
-## 9. `.seq` - sequences (partly decoded)
+## 9. `.seq` - sequences
 
-gzip-compressed binary:
+Fully decoded: `pwexport/seq.py` (`read_seq`, schema `pw-seq/1`); the format and how the game plays a sequence:
+`docs/SEQUENCE_FORMAT.md` (gzip around the client's archive: the sequence record, the camera track of cuts, the
+global items - fades, wide-screen bars, sounds, particles, films, texts, camera shakes, time skips -, the SeqRegion,
+the actors with their own items - animations, walks, recorded paths, turns, lip-sync speech, attributes, links -
+and the cameras with their spline keys).
 
-```
-u32 0, u32 version (20, one file 21), u32 1, u8 0
-f64 timeline length (s)        the editor's ruler: 25, 50, 250 …
-f64 start marker (s)           0, or the first frame to play
-f64 end marker (s)             where the sequence ends = its real length (for a film: the video's length)
-u32 1 …
-tracks: u32 kind, u32 1, guid, f32 start, f32 length, str name, …
-        kinds seen: 6 camera, 7 particle / event, 0x0b "Bink" (a film: str file name `hs_NNNN.bik`), 0x0c text,
-        0x0d sound (str path)
-whole actor objects (the same records as in a map), a region record "SeqRegion"
-```
-
-Decoded and exported: the three times, the film names (`*.bik`), speech and sound file names. **Not decoded**:
-the tracks' key frames (camera paths, actor movements, animations) and the embedded objects - a sequence cannot
-be replayed from the export. The subtitle lines are not in the file: they are the `sequences` text-table
-entries `_seq_<number>_<speaker>_<nn>` in table order (number = the digits of the file name, plus those of the
-films it shows).
+The campaign export (`campaign.sequence`) keeps for each sequence: the times, the film names, speech and sound
+paths, `play` (`seq_play`: what the remake plays - cuts, cameras, global items, actors with their binding and
+items; map space, path keys relative to their item) and the subtitle `lines`: the lip-sync items in time order
+(`t`, `len`, `mp3`, key `"_seq_" + the .lsd name` looked up without regard to case in the `sequences` text table).
+Without the file the lines fall back to the table entries `_seq_<number>_<speaker>_<nn>` of the file name's digits.
 
 9 sequences that triggers name do not exist in the game (`sc_0112`, `sc_0217`, `sc_1070`, `sc_1072`, `ns_2040`,
 `ms_4020`, `sc_7031`, `sc_7037`, `sc_7053`).

@@ -37,7 +37,7 @@ export function generatedSource(cfg) {
   const gen = generate(cfg.seed || 1234);
   const h = MAP.size / 2;
   const models = new Set();
-  for (const t of gen.trees) { models.add(t.model); }
+  for (const t of gen.trees) { models.add(t.model); models.add(t.model + '_stump'); models.add(t.model + '_timber'); }
   for (const d of gen.decor) models.add(d.model);
   ['resource_stone_jun', 'jungle_fruit_bush', 'jungle_tree_01_stump', 'jungle_tree_01_timber', 'jungle_tree_02_timber',
     ...[1, 2, 3, 4, 5].map((n) => `jungle_tree_0${n}_stump`)].forEach((m) => models.add(m));
@@ -50,8 +50,9 @@ export function generatedSource(cfg) {
     fallbackTextures: ['grass_green.jpg', 'grass_yellow.jpg', 'dirt.jpg', 'rock.jpg'],
     splat: splatFn,
     trees: gen.trees.map((t) => {
-      const big = !/_med_/.test(t.model), num = t.model.slice(-2);
-      return { ...t, stump: big ? `jungle_tree_${num}_stump` : 'jungle_tree_01_stump', timber: null, big };
+      // (each tree class has its own _Stump and _Timber, jungle_vegetation.txt)
+      const big = !/_med_/.test(t.model);
+      return { ...t, stump: t.model + '_stump', timber: t.model + '_timber', big };
     }),
     decor: gen.decor, stones: gen.stones.map((s) => ({ ...s, model: 'resource_stone_jun', amount: 2000 })),
     bushes: gen.bushes.map((b) => ({ ...b, model: 'jungle_fruit_bush', amount: 150 })),

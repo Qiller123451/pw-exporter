@@ -371,8 +371,13 @@ export const Moves = {
     this.trap(u, u.jumpFx.T, 'jump');
     return true;
   },
+  // (CBrachioHarvest, ANMLSpec.usl:480-545: every tree falls away from the brachio)
   fellTreesAround(c, R) {
-    this.rHash.query(c.x, c.z, R + 4, (n) => { if (n.alive && n.type === 'tree' && Math.hypot(n.pos.x - c.x, n.pos.z - c.z) <= R) this.fellTree(n); });
+    this.rHash.query(c.x, c.z, R + 4, (n) => {
+      if (!n.alive || n.type !== 'tree' || Math.hypot(n.pos.x - c.x, n.pos.z - c.z) > R) return;
+      const a = Math.atan2(n.pos.z - c.z, n.pos.x - c.x);
+      this.fellTree(n, ((Math.round(a / (Math.PI / 4)) % 8) + 8) % 8);
+    });
   },
   // Aje quicksand: 30 s, radius 8, holds every enemy unit that walks in for 5 s
   spawnQuicksand(owner, p) {

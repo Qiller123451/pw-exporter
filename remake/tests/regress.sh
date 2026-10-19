@@ -5,7 +5,12 @@
 # $T/regress_*.log
 cd "$(dirname "$0")/.."    # the remake folder
 T=${PWR_TMP:-/tmp}; R=$T/regress.txt; : > $R
-run() { name=$1; shift; "$@" > $T/regress_$name.log 2>&1; rc=$?; ok=$(grep -c '^ok' $T/regress_$name.log); fail=$(grep -c 'FAIL\|PAGEERROR' $T/regress_$name.log); [ $rc -ne 0 ] && [ $fail -eq 0 ] && fail="1 (exit $rc)"; echo "$name ok=$ok fail=$fail" >> $R; }
+# each test at most RUN_T seconds (40 min); one that hangs or crashes before any result (the headless browser
+# sometimes stalls on start) is run once more
+once() { L=$1; shift; timeout ${RUN_T:-2400} "$@" > $L 2>&1; }
+run() { name=$1; shift; L=$T/regress_$name.log; once $L "$@"; rc=$?; note=""
+  if [ $rc -ne 0 ] && ! grep -q '^ok\|FAIL' $L; then once $L "$@"; rc=$?; note=" (run twice)"; fi
+  ok=$(grep -c '^ok' $L); fail=$(grep -c 'FAIL\|PAGEERROR' $L); [ $rc -ne 0 ] && [ $fail -eq 0 ] && fail="1 (exit $rc)"; echo "$name ok=$ok fail=$fail$note" >> $R; }
 PW_REMAKE_DATA=${PW_REMAKE_DATA:-$T/rbuild} node tests/rules_check.mjs > $T/regress_rules.log 2>&1; echo "rules exit=$? $(tail -1 $T/regress_rules.log)" >> $R
 for pair in "Hu Aje" "Aje Ninigi" "Ninigi SEAS" "SEAS Hu"; do set -- $pair; run scen_$1 python3 tests/scenarios.py "&tribe=$1&enemy=$2"; done
 run naval python3 tests/evaljs.py tests/naval.js "&tribe=Hu&enemy=Aje&map=maps/Base/Multiplayer/multi_2_jun_001.ula"
@@ -24,6 +29,14 @@ run scorpion_start python3 tests/evaljs.py tests/scorpion_start.js "&campaign=16
 # the Dustriders' mobile base of a mission start waits for a worker to put it down, free and at once
 run free_main python3 tests/evaljs.py tests/free_main.js "&campaign=8&tribe=Aje"
 run free_main_seas python3 tests/evaljs.py tests/free_main.js "&campaign=8&tribe=SEAS"
+run unit_looks python3 tests/evaljs.py tests/unit_looks.js "&tribe=Hu&enemy=Aje"
+run controls python3 tests/evaljs.py tests/controls.js "&tribe=Hu&enemy=Aje"
+run zeppelin python3 tests/evaljs.py tests/zeppelin.js "&campaign=3&notriggers"
+run ai_mines python3 tests/evaljs.py tests/ai_mines.js "&tribe=Hu&enemy=Ninigi&map=maps/Base/Multiplayer/multi_2_jun_001.ula"
+run ai_crossing python3 tests/evaljs.py tests/ai_crossing.js "&tribe=Hu&enemy=Aje&map=maps/Base/Multiplayer/forsaken_islands.ula"
+run tree_fall python3 tests/evaljs.py tests/tree_fall.js ""
+run gates_campaign python3 tests/evaljs.py tests/gates_campaign.js "&campaign=1&notriggers&tribe=SEAS"
+run gates_m16 python3 tests/evaljs.py tests/gates_m16.js "&campaign=16&notriggers"
 run pathing python3 tests/evaljs.py tests/pathing.js
 # cliffs: the original maps' pathfinder grid, the slope rule of the sequel's maps (tests/cliffs.js)
 run cliffs python3 tests/evaljs.py tests/cliffs.js "&campaign=13&notriggers"
@@ -85,6 +98,12 @@ run bot_mock node tests/campaign_bot_mock.mjs
 run engine python3 tests/evaljs.py tests/campaign_engine.js "&campaign=11"
 run play_11 python3 tests/evaljs.py tests/campaign_play_11.js "&campaign=11"
 run play_01 python3 tests/evaljs.py tests/campaign_play_01.js "&campaign=1"
+run cutscene python3 tests/evaljs.py tests/cutscene.js "&campaign=1"
+run cutscene_all_08 python3 tests/evaljs.py tests/cutscene_all.js "&campaign=8"
+run cutscene_all_15 python3 tests/evaljs.py tests/cutscene_all.js "&campaign=15"
+run seq_export python3 tests/seq_export.py
+run seq_camera node tests/seq_camera.mjs
+run mission_audio python3 tests/evaljs.py tests/mission_audio.js "&campaign=1"
 # played with another tribe (game/campaign/tribes.js) and the tutorial
 run play_01_ninigi python3 tests/evaljs.py tests/campaign_play_01.js "&campaign=1&tribe=Ninigi"
 run play_00 python3 tests/evaljs.py tests/campaign_play_00.js "&campaign=0"
@@ -134,22 +153,23 @@ for pair in "Hu SEAS" "Aje Hu" "Ninigi SEAS" "SEAS Hu"; do set -- $pair; run mir
 # the story films (needs <data>/assets/video/hs_3010.webm, pwexport/video.py) and the particle emitters of the models
 run films python3 tests/evaljs.py tests/films.js "&campaign=9"
 run particles python3 tests/evaljs.py tests/particles.js "&tribe=Hu&enemy=Aje"
+run particles_wake python3 tests/evaljs.py tests/particles_wake.js "&tribe=SEAS&enemy=Hu&map=maps/Base/Multiplayer/multi_2_jun_001.ula"
 # the mission UI driven through its contract with the data of mission 1 (quests, ticker, dialogues, cutscenes, markers ...)
 run mission_ui python3 tests/evaljs.py tests/mission_ui.js "&campaign=1&notriggers"
 # the computer player: a match against itself, its defence, and the campaign interface (COMPUTER_PLAYER.md)
-aitest() { timeout 1500 python3 tests/evaljs.py "$@" || echo "FAIL $1: timeout or crash"; }
-run ai_match aitest tests/ai_match.js "&tribe=Hu&enemy=Aje&aivai&aib=Giraffe,Dodo&aid=4&minutes=25"
-run ai_defence aitest tests/ai_defence.js "&tribe=Hu&enemy=Aje&aid=4"
-run ai_campaign aitest tests/ai_campaign.js "&tribe=Hu&enemy=Aje"
+run ai_match python3 tests/evaljs.py tests/ai_match.js "&tribe=Hu&enemy=Aje&aivai&aib=Giraffe,Dodo&aid=4&minutes=25"
+run ai_defence python3 tests/evaljs.py tests/ai_defence.js "&tribe=Hu&enemy=Aje&aid=4"
+run ai_campaign python3 tests/evaljs.py tests/ai_campaign.js "&tribe=Hu&enemy=Aje"
 # the computer player's walls, outposts, trade, items, chat (ai/walls.js, outposts.js, trade.js, items.js, chat.js)
-run ai_walls aitest tests/ai_walls.js "&tribe=Aje&enemy=Hu&aid=6"
-run ai_outpost aitest tests/ai_outpost.js "&tribe=Hu&enemy=Aje&aid=6"
-run ai_outpost_hu aitest tests/ai_outpost.js "&tribe=Aje&enemy=Hu&aid=6"
-run ai_trade aitest tests/ai_trade.js "&tribe=Aje&enemy=Hu&aid=6"
-run ai_items aitest tests/ai_items.js "&tribe=Hu&enemy=Aje&aid=8&map=maps/Base/Multiplayer/multi_2_nor_002.ula"
-run ai_chat aitest tests/ai_chat.js "&tribe=Hu&enemy=Aje&aid=6"
+run ai_walls python3 tests/evaljs.py tests/ai_walls.js "&tribe=Aje&enemy=Hu&aid=6"
+run ai_outpost python3 tests/evaljs.py tests/ai_outpost.js "&tribe=Hu&enemy=Aje&aid=6"
+run ai_outpost_hu python3 tests/evaljs.py tests/ai_outpost.js "&tribe=Aje&enemy=Hu&aid=6"
+run ai_trade python3 tests/evaljs.py tests/ai_trade.js "&tribe=Aje&enemy=Hu&aid=6"
+run ai_items python3 tests/evaljs.py tests/ai_items.js "&tribe=Hu&enemy=Aje&aid=8&map=maps/Base/Multiplayer/multi_2_nor_002.ula"
+run ai_pest python3 tests/evaljs.py tests/ai_pest.js "&tribe=Hu&enemy=Aje&aid=8&map=maps/Base/Multiplayer/multi_2_nor_002.ula"
+run ai_chat python3 tests/evaljs.py tests/ai_chat.js "&tribe=Hu&enemy=Aje&aid=6"
 # the computer player in Domination and Defender games (ai/gametypes.js)
-run ai_koth aitest tests/ai_gametypes.js "&players=Hu,Aje&mode=domination&map=maps/Base/Base/Multiplayer/death_valley.ula"
-run ai_defender aitest tests/ai_gametypes.js "&players=Hu,Aje&mode=defender&hq=1,0&map=maps/Base/Base/Multiplayer/die_zitadelle.ula"
-run ai_attacker aitest tests/ai_gametypes.js "&players=Hu,Aje&mode=defender&hq=0,1&map=maps/Base/Base/Multiplayer/die_zitadelle.ula"
+run ai_koth python3 tests/evaljs.py tests/ai_gametypes.js "&players=Hu,Aje&mode=domination&map=maps/Base/Base/Multiplayer/death_valley.ula"
+run ai_defender python3 tests/evaljs.py tests/ai_gametypes.js "&players=Hu,Aje&mode=defender&hq=1,0&map=maps/Base/Base/Multiplayer/die_zitadelle.ula"
+run ai_attacker python3 tests/evaljs.py tests/ai_gametypes.js "&players=Hu,Aje&mode=defender&hq=0,1&map=maps/Base/Base/Multiplayer/die_zitadelle.ula"
 echo done >> $R

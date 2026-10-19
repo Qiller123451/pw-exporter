@@ -40,9 +40,11 @@ if (M.id === 1) {
   check('the rift by the mine opens', !!r && r.open, r && r.id);
   if (r) {
     const b = M.building('sq_stabilizer', 'me', r.x - 20, r.z + 14, 0);
-    for (const u of M.units('me', (u) => !u.isWorker)) W.teleport(u, r.x - 25 + Math.random() * 10, r.z + 20 + Math.random() * 10);
+    // (Colonel Halloran stays out of it: his death loses the mission and the game stops 3 s later - the failed runs
+    // had the seal standing still at 46 - 47 of its 60 s, one passing run was lost at 157 s)
+    for (const u of M.units('me', (u) => !u.isWorker && u.name !== 'sq_halloran')) W.teleport(u, r.x - 25 + Math.random() * 10, r.z + 20 + Math.random() * 10);
     for (let k = 0; k < 12 && r.open; k++) run(100);
-    check('the stabilizer seals the rift', !r.open && b.alive, { seal: Math.round(r.seal), hp: Math.round(b.hp) });
+    check('the stabilizer seals the rift', !r.open && b.alive, { seal: Math.round(r.seal), hp: Math.round(b.hp), ended: M.ended || null });
     // the townsfolk objective says how many were lost and how many are still out (runtime.js civStatus)
     const ev = M.objectives.find((o) => o.id === 'evac');
     check('the townsfolk line counts the lost and those still out', ev && /\d+ lost · \d+ still out/.test(ev.note || '') || (ev && ev.done), ev && ev.note);

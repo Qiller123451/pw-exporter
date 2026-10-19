@@ -55,11 +55,20 @@ u.healedT = W.time;
 G.hud.infoKey = null; G.hud.refreshInfo();
 check('getting healed: another icon', G.hud.infoBody.querySelectorAll('.buffs span').length >= 2, G.hud.infoBody.querySelectorAll('.buffs span').length);
 G.overlay.decals.cache.clear(); G.overlay.decals.update((e) => e === u);
-check('poisoned (a buff without a tile): the white ring under it', G.overlay.decals.used.hero === 1 && G.overlay.decals.used.buff === 0, G.overlay.decals.used);
+check('poisoned (a buff without a tile): no decal - untiled buffs never get one (PWClient 0x484abf)', G.overlay.decals.used.hero === 0 && G.overlay.decals.used.buff === 0, G.overlay.decals.used);
 u.st.bonus.DEFENSE = 20;
 G.overlay.decals.cache.clear(); G.overlay.decals.update((e) => e === u);
 check('more defence comes first in the table: its decal tile', G.overlay.decals.used.buff === 1 && G.overlay.decals.used.hero === 0, G.overlay.decals.used);
 u.st.bonus.DEFENSE = 0;
+// a group: the info window shows the buffs of its highest level unit (Info.usl:1338-1360)
+const u2 = spawn(me.tribe === 'Hu' ? 'hu_warrior' : 'aje_warrior', h.pos.x - 42, h.pos.z - 40);
+G.select([u, u2]); G.hud.infoKey = null; G.hud.refreshInfo();
+check('a group shows the buffs of its highest-level unit', G.hud.infoBody.querySelectorAll('.buffs span').length >= 1, G.hud.infoBody.querySelectorAll('.buffs span').length);
+// Ada's aura slows the attacks: less_attack_speed; a wall gives no buff
+u.st.aura.slowhand = 1.5;
+G.overlay.decals.cache.clear(); G.overlay.decals.update((e) => e === u);
+check('Ada\'s slow hand shows "less attack speed" (decal tile 1)', G.overlay.decals.used.buff === 1 && G.overlay.decals.cache.get(u).tile === 1, G.overlay.decals.cache.get(u));
+u.st.aura.slowhand = 0;
 const hero = W.units.find((x) => x.alive && x.owner === me && /_s0$/.test(x.name));
 if (hero) { G.overlay.decals.cache.clear(); G.overlay.decals.update((e) => e === hero); check('a hero stands on its ring', G.overlay.decals.used.hero === 1, hero.name); }
 } catch (e) { out.push('FAIL exception ' + e.message + ' ' + (e.stack || '').split('\n').slice(0, 3).join(' | ')); }

@@ -306,11 +306,21 @@ player 5 rider × 5; `Single 01` player 1 blitz × 5; `Single 09` Hu Giraffe pla
   that map's value ("center_of_threat"); the attack position is the first target's.
 
 ### 5.4 Pest patrol
-`RequestPestPatrol(deathPos)` (DA:689-699, skirmish maps only) is called where a wild animal killed one of the
-AI's units; the next strategy think runs `SearchForDisturbance` (DA:703-812) around that spot: hostile animals and
-nests within 90 m → a `suicide` attack on them (not against an allosaurus or a nest before epoch 4); else enemy
-units / buildings within 60 m (Dodo always, Giraffe from epoch 2, Schnecke from epoch 4) → `blitz`; else enemy
-towers within 60 m → `blitz` in epoch 1, `towersiege` later.
+`RequestPestPatrol(pos)` (DA:689-699, skirmish maps only) is asked for where every worker of an economy task is gone
+(TargetRealization:206-227, the task's last position), where the way to a building site or an item passes a threat
+(BuildBuilding:455-480, GetItem:255-272) and, from epoch 3, at enemies or hostile animals within 60 m of an item the
+AI wants (GetItem:283-321, at the object of that query nearest to the start location). Each strategy think then runs
+`SearchForDisturbance` (DA:703-812) around that spot: hostile wild animals and nests within 90 m, sorted from the
+start location → a `suicide` attack on their centre, unless the first is an allosaurus or a nest and the epoch is
+3 or lower (then nothing); else enemy units / buildings within 60 m (Dodo always, Giraffe from epoch 3, Schnecke from
+epoch 5: `m_iAge` is the epoch - 1) → `blitz`; else enemy towers of a fixed class list within 60 m → `blitz` in
+epochs 1 - 2, `towersiege` later. Nothing found: the request is dropped. Else the attack is requested
+(DA:1546) on every think until a `blitz` / `quick` / `towersiege` attack succeeds (DA:466-483) or a think reaches
+its plan's attack request (DA:1628). [I: the personality test compares `m_sBehavior` with the full names, while
+SetTactics - sent by every behaviour setup, CM:318-421 - stores the letter; if that runs after the goal's Init the
+enemy branch never fires. The remake keeps it.]
+Remake (ai/attack.js `requestPest`, ai/gametypes.js `disturbance`): a worker killed by a wild animal or an enemy
+stands for the emptied economy task; the path threat checks are not ported; nests are no objects.
 
 ### 5.5 Warp gate, items, King of the Hill
 - An enemy warp gate under construction starts the "warp gate hunt": `siege_warpgate` requests on it before
@@ -460,8 +470,12 @@ undoes it (`/DismountAll`, entrench off, cap back).
   shift it (§9). Not for attackers in Defender games.
 - Village walls (`BuildVillageWalls`, 899 lines + the engine's wall placer): activated at epoch 3 when the map
   option `walls` is set, not in `Single 02` or Defender games (DM:671-685); `upgrade_walls`, `close_start_location`
-  steer it. Not ported.
-- Ninigi on water maps: mine belts from epoch 2 (DM:660-669). Not ported.
+  steer it. Ported: `ai/walls.js`.
+- Ninigi on water maps: mine belts from epoch 2 (DM:660-669, goals/AiGoalBuildMineBelts.usl): one minelayer lays
+  five mines at a time on the positions of the server's `CAiMineMgr` (a 20 m lattice in the main water, about 30 m
+  off each landing shore of the home island whose land path to the start is at most 400 m, the nearest shore first;
+  a position with any mine within 6 m is taken). Ported: `ai/mines.js` (RE notes: PWServer.exe 0x458de0 ComputeShore,
+  0x4f0b20 / 0x4f0d50 / 0x4ecce0).
 - Aggressive animal clusters near the home island are marked as path-finding blockers (DM:704-747).
 
 ---
@@ -475,13 +489,17 @@ undoes it (`/DismountAll`, entrench off, cap back).
 Watercrossing goal (945 lines): transports for squads whose targets are on another island; IslandSurveillance;
 BuildOutpost (`outposts` in `ai.json`: `RessourceOutpost`, `AttackOutpost`, `OP_ResAll`, `OP_AttackAll` build
 lists per tribe); the market manager's trade route (Schnecke, Deathmatch, epoch 2+, map option `markplace_outpost`,
-EM:527-537). Not ported, except the landing of scripted waves (§6.5).
+EM:527-537). Ported: `ai/naval.js` (crossings: the squad's own land to the target's, landing in water with the
+target's land within 14 m and no enemy mine, water turret or tower within 30 m; units left on another land fetched
+home), `ai/outposts.js` (an outpost on another land: its crew crosses the same way), `ai/trade.js`; the landing of
+scripted waves: §6.5.
 
 ### 8.3 Ships
 Warships come from the build list (`m_bWatermap`) and `CheckForEnemyShips` (§4.2); ship attacks: §5.2 step 2.
 
 ### 8.4 Items
-`CheckGetItem` / GetItem goal / ItemAttack: map items are fetched by a small squad (`FindItem_1`). Not ported.
+`CheckGetItem` / GetItem goal / ItemAttack: map items are fetched by a small squad (`FindItem_1`). Ported:
+`ai/items.js`.
 
 ### 8.5 Level-ups (Kindergarten, KG:49-155, 255-)
 Think every 500 / 100 / 10 ticks by class; **never on Easy**, not with AI assist. "Children" are the units of

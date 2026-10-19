@@ -221,6 +221,7 @@ function gather(goal = { food: 500, wood: 400, stone: 300 }) {
 }
 // promote one of the player's units (heroes first) a level; true when one was promoted
 function promote() {
+  if (!W.changeLevel) return false;               // (the mock world of campaign_play_mock.mjs has no levels)
   for (const u of [...heroes(), ...fighters()]) if (u.level < 5 && W.changeLevel(u, u.level + 1) === null) return true;
   return false;
 }

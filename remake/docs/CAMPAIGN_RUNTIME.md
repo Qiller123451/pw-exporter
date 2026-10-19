@@ -453,7 +453,7 @@ citations of the original scripts are in the code.
 | regions | at start, a region that a trigger query names, that has shapes marked "not enabled" and that no `ARGN` touches gets them switched on (`engine.regionsFixed`): mission 8's `trigger_sc_3004` is such a region and the mission goes on through it |
 | level timers | `G.campaign.timers: Map<id, { id, left, total, show, label, paused }>` (`TIMR` action). A `TIME` condition with `show = 1` adds `{ id: 'time:<trigger guid>:<n>', cond: true, countup }` while it runs |
 | quests | the flags `visible / accomplished / unaccomplishable` of `data.quests[]` are kept up to date; `G.mission.questChanged(quest, 'shown' | 'done' | 'failed' | 'hidden')`; `G.campaign.boni` = quest bonuses + `BONI` |
-| sequences | `SQNZ` queues; one at a time via `G.mission.playSequence(seq, { camera, snapBack, title }, onEnd)`; on its end: the fog reveal of `disable_fow` is removed, the camera goes to `camera_data` (unless `snap_cam_back`), `SQEN` conditions are pushed, `quit` wins the mission. A sequence the data does not have ends at once |
+| sequences | `SQNZ` queues; one at a time via `G.mission.playSequence(seq, { camera, snapBack, actors }, onEnd)`: the actors are bound when it starts (`game/campaign/sequence.js`: by GUID, else class / owner / level / name, else drawn for the scene only), the UI plays the timeline (`ui/cutscene.js`: the game stands still as in the original - the server skips the world update -, camera shots, walks, animations, speech with subtitles, sounds, effects, fades, bars). On its end - played or skipped - the bound actors stay where the scene leaves them (with `snap_actors_back`: where they were), the fog reveal of `disable_fow` is removed, the camera goes to `camera_data` (unless `snap_cam_back`), `SQEN` conditions are pushed, `quit` wins the mission. A sequence the data does not have ends at once |
 | dialogues | `DGSC` → `G.mission.playDialog(scene, onEnd)`; `DSEN` on its end. Mentor scenes whose file was not exported get an empty scene `{ id, path, frames: [], mentor: true }` |
 | end | `QUIT` / `SQNZ quit` → `G.endMission(true)`; `GAOV` → `G.endMission(false, { text })` 4 s later (the engine stops firing triggers during these 4 s and after the end) |
 | patrols | `WYPT`: `engine.patrols: Map<unit, { pts, mode, i }>`, checked 4 × per second: the unit is sent to the next point when it stands idle at the current one; a unit that fights on the way goes on afterwards; an order from elsewhere (player, `ACDO`) ends the patrol; mode 0 ends with the `WAYR` push |
@@ -544,7 +544,7 @@ Not used by the campaign and not implemented (never true, one warning): `CHKO`, 
 | `GAOV` | implemented | G.endMission(false) 4 s later with the reason text |
 | `BONI` | implemented | G.campaign.boni; a won mission gives the next one at least that army budget (main.js G.endMission) |
 | `FDBK` | ignored | designer debug texts, off in the original too; printed with &trace |
-| `SQNZ` | implemented | G.mission.playSequence; end event, camera_data, quit |
+| `SQNZ` | implemented | the timeline (ui/cutscene.js) or, skipped, its end: actors where the scene leaves them unless snap_actors_back; end event, camera_data, quit |
 | `DGSC` | implemented | G.mission.playDialog; DSEN on its end |
 | `QUES` | implemented |  |
 | `QMRK` | implemented | state and tooltip (G.campaign.setQuestionMark) |
@@ -554,11 +554,11 @@ Not used by the campaign and not implemented (never true, one warning): `CHKO`, 
 | `PSND` | implemented | G.audio.play if the sound event exists |
 | `MUSI` | implemented | G.audio.mus.trigger (engine/music.js); no mission of the campaign uses it |
 | `ACDO` | implemented | WalkAction, Aggressive Walk, Attack, SetPos, RotateTo, SetAnim, Invulnerability, AbortTask, Stop, Kill, FullHeal, Open / Close / Auto Gate, SetRallyPoint, BuildUp; GiveItem approximated; JumpOffWall ignored |
-| `WYPT` | approximated | patrol driver in the engine (once / circle / back and forth); fighters walk as an attack-move; straightwalk ignored (path finding) |
+| `WYPT` | approximated | patrol driver in the engine (once / circle / back and forth); fighters walk as an attack-move, a straightwalk one as a plain move (it only switches the aggression walk off) |
 | `COBJ` | implemented |  |
-| `OCPY` | implemented | highlight ignored |
+| `OCPY` | implemented | `chk_highlight`: a thin green ring of the object's radius for `highlight_time` s (colour a guess) |
 | `UNIT` | implemented | hitpoints only (all that occurs) |
-| `SPGR` | approximated | units leave a spawn building on the line towards `pos` (no link points); §buildup variants ignored |
+| `SPGR` | implemented | spawned at the source's `Spwn` link after its `open` clip, one per `spawn_delay`, walk through `Ex_1` to `pos` (a scenery source: they stay at `Spwn`); `class§buildup` enables that upgrade on the unit's own tech tree |
 | `CPLX` | implemented |  |
 | `REPL` | implemented |  |
 | `DELO` | implemented |  |
@@ -589,11 +589,10 @@ Two rules of the engine that go beyond the scripts: an `ACDO Invulnerability Dis
 the objects that the same region's `Enable` protected earlier and that have walked out since (the remake's wild
 animals roam further than the original's; "kill all Smilodons" could otherwise never be fulfilled); a spawned unit
 that comes out of a spawn building appears on the line between the building and `pos`, as close to the building as
-free ground reaches from `pos` (never behind the building's wall).
+free ground reaches from `pos` (never behind the building's wall) - only where the building has no `Ex_1` link.
 
-Approximations a player can notice: units leaving a spawn building appear in front of it (no walk out of the
-gate's tunnel); `§buildup` variants of spawned classes are not applied; the highlight of handed-over units
-(`OCPY chk_highlight`) is not shown; an effect that is playing when the game is saved is gone after loading (mission
+Approximations a player can notice: a spawned unit without `pos` stops at `Ex_1` (the original sends it towards
+the map's corner); an effect that is playing when the game is saved is gone after loading (mission
 1's dust cloud has no model in the installation); items are taken by walking over them and work at once (no
 inventory).
 
@@ -667,6 +666,10 @@ attack). In a mod configuration the HUD cards, menu art and cursors are those of
 Base's file by file (MIRAGE had lost most of the icons of units and buildings; `pipeline/build_ui.py`).
 
 What is still open for all missions: no savegames; scenery buildings without hit points; stand-in models for a few
-campaign-only classes; the pre-rendered films play (converted by the toolkit, MISSION_UI.md "Story films"), but the
-cutscenes made in the engine are shown as subtitles with a camera move, not as the original animation; the army
-building screen before missions 4, 5, 9, 11, 16 does not exist (the preset army is used).
+campaign-only classes; the pre-rendered films play (converted by the toolkit, MISSION_UI.md "Story films"); the
+cutscenes made in the engine play their timelines as the original (lip sync: the jaw only, frame 1 of `faceanim`
+for IY / IH / h / y - the shipped clips have no other face frames; the camera's keys, shakes and day time items
+evaluated with the client's formulas; walks straight through their waypoints at the times the server's walk gave,
+on the terrain or at their own heights - without the gait start / stop clips, which the remake's units have
+nowhere); the army building screen before missions 4, 5, 9, 11, 16 does not
+exist (the preset army is used).

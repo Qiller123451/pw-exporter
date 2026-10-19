@@ -87,6 +87,33 @@ class Install:
                 found = p
         return found
 
+    def audio_file(self, rel, lang=None):
+        """a sound (rel = 'Audio/...'): Data/<mod>/<rel> as file() finds it, else from a language pack - some
+        installations keep the speech (unit acknowledgements, dialogue) only in Data/locale/<lang>/Audio (the game reads
+        it there through Locale_<LANG>.info: tryfilereplace data/base/ -> data/locale/<lang>/, also
+        data/<mod>/locale/<lang>/). Language order: `lang`, English (uk, us, en), then any other. With a language
+        other than English its own file comes first, as in the game (the Polish speech of a cutscene)"""
+        if lang and lang.lower() not in ('uk', 'us', 'en'):
+            for base in [self.data] + [os.path.join(self.data, m) for m in self.mods]:
+                q = _ci_join(base, 'locale/%s/%s' % (lang, rel))
+                if q and os.path.isfile(q):
+                    return q
+        p = self.file(rel)
+        if p:
+            return p
+        if not hasattr(self, '_audio_langs'):
+            loc = _ci_join(self.data, 'locale')
+            have = sorted(os.listdir(loc)) if loc and os.path.isdir(loc) else []
+            self._audio_langs = have
+        order = [l for l in ([lang] if lang else []) + ['uk', 'us', 'en'] if l]
+        order += [l for l in self._audio_langs if l.lower() not in {o.lower() for o in order}]
+        for lg in order:
+            for base in [self.data] + [os.path.join(self.data, m) for m in self.mods]:
+                q = _ci_join(base, 'locale/%s/%s' % (lg, rel))
+                if q and os.path.isfile(q):
+                    return q
+        return None
+
     def dir(self, rel, mods=None):
         """path of the folder Data/<mod>/<rel> from the newest official mod that has it (None if missing)"""
         found = None

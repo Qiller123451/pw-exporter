@@ -8,7 +8,8 @@ and checked by rendering the results.
 - Little endian. Every offset is a **self-relative** int32: target = field position + value. `0x80000000` = null.
   Archives written by mod tools (MIRAGE's `mirage_animals.gsf`) also store empty slots of a model's chunk table as
   `0` (a pointer to the field itself): read as null as well.
-- File: `"GSF\0"`, version 0, u32 offset of header 2 (usually 0x10000). Header 1 is the table of contents: model
+- File: `"GSF\0"`, version 0, u32 offset of header 2 (the end of the table of contents rounded up to a multiple of
+  0x10000: 0x10000 for most archives, 0x60000 all_animals, 0x3B0000 all_characters). Header 1 is the table of contents: model
   names, animation names, sound, dust-trail and walk-set tables.
 - **new:** header 1 walk-set entries are 42 variable-length indices. One byte each, or two bytes
   (`((b0 & 0x7f) << 8) | b1`) when the first byte is ≥ 0x80. After the indices comes a 4-char name. Character archives need this
@@ -93,10 +94,17 @@ collision" list of SEK's exporter; attr = the record's visibility bits): type 0 
 - Types: 0 static, 0x80000000 skinned, 0x20000000 "simple skinned" (the whole chunk is bound to one bone set),
   9 / 0x80000009 / 0x20000009 cloth (same header, 36 bytes of cloth data before the bbox, 60-byte submeshes).
 - `+12` 4x4 row-major matrix (D3D, row vectors). Positions are quantised inside the **chunk** bbox.
-- Vertex strides 9 and 17 add one byte of baked ambient occlusion ("NormalLight", 1..255, computed by SEK's
-  resource builder from 511 rays and the mesh's convexity) after the 8 / 16 bytes below.
+- Vertex strides 9 and 17 add one byte after the 8 / 16 bytes below, **exactly when the mesh flags (`+76`) have 0x08 or
+  0x10** (every archive of the game): 0x10 = baked ambient occlusion ("NormalLight", 0..255, computed by SEK's
+  resource builder from 511 rays and the mesh's convexity; the NormalLight parameters before the bbox are then
+  non-zero), 0x08 = extended UV (the high bits of 10-bit texture coordinates, 81 submeshes: rivers, lava).
+- Skinned meshes (`+80` u32) name their skeleton by its **index in the model's chunk table**, not by a skeleton
+  number (the same thing for the game's skeletons, which come first). It can point at a **cloth chunk**: the meshes
+  then hang on the cloth simulation (BoosterPack1 `barbarian_swimming_corpses_*` / `_barrels_01`,
+  `excavation_camp_*`, sl_pirate_outpost `ship_chain`) - the converter exports them static. The same holds for the
+  skeleton index of links, emitters, billboards, light volumes, speed lines and cloth colliders.
 - Vertex (8 bytes): bits 0–38 = 3×13-bit position (value/8191 inside bbox), bits 39–47 = index into a 511-entry
-  unit-normal table, byte 6 = u×256, byte 7 = v×256. **v runs bottom-up** (OpenGL style): for glTF/top-down
+  unit-normal table, byte 6 = u×255, byte 7 = v×255 (PWClient.exe 0x7369e7: byte / 255). **v runs bottom-up** (OpenGL style): for glTF/top-down
   images use v = 1 − byte7/256. (Checked against atlas features: nuts, valve wheels and skin charts line up exactly.) 16-byte vertices add 4 bone indices (255 = none) and 4 u8 weights.
 - Triangles: u16 triplets, clockwise when viewed from the side the normals point to in the model's own left-handed
   space (x, y, z with z up, like the maps: docs/MAP_FORMAT.md) - the Direct3D way. Read as right-handed they are
@@ -106,7 +114,8 @@ collision" list of SEK's exporter; attr = the record's visibility bits): type 0 
 
 ## Skeleton chunk (type 5) — **new** parts
 - `+16` first bone (60 bytes), `+76` bind-pose ptr, `+80` bone count, then the other bones every 60 bytes from `+92`.
-- Bone: guid (= crc32 of the lower-case name, e.g. crc32("root") = 0x16F4F95B), flags, pos[3], scale[3],
+- Bone: guid (= crc32 of the name **as written in the source scene**, e.g. crc32("root") = 0x16F4F95B; checked on 13,408
+  emitter names, 4,200 of them with capitals), flags, pos[3], scale[3],
   quat[4] (xyzw), child count, **pointer to the first child — children are stored next to each other**, child count.
 - Quaternions are D3D style: for column vectors use the **conjugate**. Rest local transform = T(pos)·R(conj q).
   The magnitude of the rest scale is **not** part of the bind pose (ignore it). Its **sign is**: a bone with scale
@@ -123,8 +132,12 @@ collision" list of SEK's exporter; attr = the record's visibility bits): type 0 
   root track (`+25` = 0xFF); 0x4 root height (`+20` float); probably 0x8 fix root z, 0x10 absolute root. `+48` = the
   loop's speed in m/s (allosaurus walk_1/2/3: 1.5 / 5 / 7). The root layout's 3 "unused" floats are the root's
   velocity per frame. Animations are made at 25 fps. (From SEK's 3ds Max exporter source, checked on the data.)
-- `+25` root-track layout (0: 40 bytes/frame = quat, pos, 3 unused floats; 1: 52 bytes = … + scale; 2: quat only),
-  `+28` root track ptr, `+32` track tree ptr, `+36` count, `+40` frame count, `+44` 3 floats (walk distances).
+- `+24` the root track's node, the same 16 bytes as every track node: `+24` bone, `+25` layout (0: 40 bytes/frame =
+  quat, pos, velocity; 1: 52 bytes = … + scale; 2: quat only), `+26` child count, **`+27` flags (0x01 constant: ONE
+  key of 4 floats; 0x02 no keys)**, `+28` keys ptr, `+32` track tree ptr, `+36` count; then `+40` frame count, `+44`
+  3 floats (walk distances). 14 root tracks of the game are constant (all_characters' rotate_left / rotate_right /
+  shoulder_standanim of the Dustrider archers and others; 1421 model animations use them), 3 have no keys
+  (domination_flag up / down, ninigi_siegetower move_up).
 - Track node (16 bytes): u32 attr = [depth-first bone index, type, child count, ?], data ptr, children ptr, child count.
   Type 2 = quat per frame (16 B), 3 = quat + x-offset (20 B), 4 = quat + x-offset + scale (32 B), 0 = no data.
 - Track rotations are **deltas in bone space**: local = T(rest pos [+x-offset]) · R(conj rest q) · R(conj track q).
@@ -194,8 +207,8 @@ Layout from SEK's exporter (gsf.ksy `particle_chunk`), read by `pwexport.gsf.par
   `walk_<n>_new`), `hump` (seriously injured animals), carrying sets. FightingObj.usl uses "defn" when the model has
   it, else "def". Exported as root `extras.walksets`.
 - **Constant tracks:** track attr byte 3 bit 0 (mask 0x01000000) = the track has **one key** (not one per frame).
-  Reading a key per frame ran into the next tracks' data: necks, heads and fingers got wild rotations. (Byte 2 of
-  the attr is the number of extra child entries; the data block is keys × stride + 4 floats per child.)
+  Reading a key per frame ran into the next tracks' data: necks, heads and fingers got wild rotations. The single
+  key is **a rotation only (16 bytes) whatever the track's format**. (Byte 2 of the attr is the child count.)
 - **Helper ("root") track bone:** the chunk byte at `+24` is the **depth-first index of the bone** the helper track
   drives – 0 (the root) for creatures, but e.g. 1 = the lighthouse lamp of hu_harbour, 15 = the fan of
   seas_greenhouse, 2–12 = neck/head for animal turn and head-turn animations. 0xFF with layout 0xFF = no helper.
@@ -204,3 +217,25 @@ Layout from SEK's exporter (gsf.ksy `particle_chunk`), read by `pwexport.gsf.par
   material and size corrected, see above; static exports get two vertical quads per sprite, turned by a per-sprite
   angle, instead of three axis-aligned ones.)
 - **Flag-less low-poly hulls** (≤ 24 vertices, no flags at all, > 8 units) are whole-object pick/collision volumes.
+
+## Corrections 2026-10-19 (from the Blender add-on; pwexport/gsf.py VERSION 2026.10.19)
+Found while writing the Blender import / export add-on (`E:\Paraworld\BlenderGSF`), which reads and rewrites every
+archive of Base + BoosterPack1 without a difference.
+- **Skeleton index = chunk-table index** (see Mesh chunks). `model_info +33` (number of skeletons) counts the skeleton
+  chunks plus every cloth chunk a skinned component hangs on (ship_chain: 2, the swimming corpses: 1); a skeleton
+  chunk's own index field (`+12`) is its position in the chunk table.
+- Billboard `+102` (u16) is the **chunk-table index of a light volume** chunk (0xFFFF = none; 2,489 billboards).
+- **Animated scale can reach 0**: the game shrinks bones to 0 to hide parts (13 tracks: `react_dilo_fm_0` and `chop_1`
+  of cole / stina / queen / aje archers, ninigi_water_turret `attack_front`). The converter dropped scale channels
+  that touched 0; it keeps them now. Code that converts animations must not invert animated matrices.
+- **Root track flags** (`+27`, above): constant / no-key root tracks are read as such now (the root's translation
+  and scale were read from the data behind the key).
+- **Track tree**: a node's parent is the nearest animated ancestor bone (98.3 % of the chunks; the rest are chunks
+  shared by models whose skeletons differ). The converter does not need the tree; a writer should keep it.
+- **Normals as SEK's exporter computed them** (ResourceBuilder.cpp): face normal = (v0 − v1) × (v0 − v2), not
+  normalised (bigger faces weigh more; degenerate faces get (1, 0, 0)); a corner's normal = the sum of the normals of
+  the faces at the vertex that share a smoothing group with its face, normalised; the stored index = the closest
+  table entry. Recomputed that way the indices of the game's meshes come out the same for 94 % of the corners
+  (angle weighting: 70 %).
+- The data has triangles that repeat a vertex index, zero-area slivers and a submesh material index 65535
+  (jungle_beachpalm_02_timber): readers must not rely on clean meshes.

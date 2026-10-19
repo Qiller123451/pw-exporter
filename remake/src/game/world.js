@@ -244,9 +244,11 @@ export class World {
     if (owner && def.unique && owner.heroes.has(name)) return null;
     // a class whose model is not loaded (campaign maps load other tribes' classes on demand) is not created
     if (!this.unitModel(name, level, owner)) { if (!this._noModel) this._noModel = new Set(); if (!this._noModel.has(name)) { this._noModel.add(name); console.warn('no model for unit', name); } return null; }
+    const zep = this.data.script(name) === 'CFlyingTraderObj';
     const nv = this.navFor({ naval: !!opts.swim || (this.data.info(name)?.type === 'SHIP' && !AMPHIBIOUS.test(name)), amphib: AMPHIBIOUS.test(name) });
-    if (!nv.isFree(x, z)) { const c = nv.nearestFree(nv.idx(x, z)); [x, z] = nv.center(c); }
-    const u = new Unit(this, name, owner, x, z, level || this.defaultLevel(name, owner), heading, opts);
+    if (!zep && !nv.isFree(x, z)) { const c = nv.nearestFree(nv.idx(x, z)); [x, z] = nv.center(c); }
+    const u = new Unit(this, name, owner, x, z, level || this.defaultLevel(name, owner), heading, zep ? { ...opts, temp: true } : opts);
+    if (zep) this.makeZeppelin(u, opts.alt);
     u.pos.y = this.groundY(u); u.syncObj();          // ships and swimmers start on the water, not on the sea bed below
     this.units.push(u);
     this.uHash.insert(u);
@@ -266,6 +268,14 @@ export class World {
     return u;
   }
   defaultLevel(name, owner) { return this.data.minLevel(name, owner); }
+  // the campaign trader's zeppelin (Vehicle.usl CFlyingTraderObj): flies, cannot be hit nor selected, takes no damage,
+  // not in the unit limit; walks are straight flights to the point and its height at the order's speed (m/s, at most
+  // its max speed: task/misc.usl:137-174), always playing "standanim". alt: its height above the sea (map z).
+  makeZeppelin(u, alt) {
+    u.zeppelin = true; u.flying = true; u.untargetable = true; u.unselectable = true; u.countsInPop = false;
+    u.liftH = alt != null ? Math.max(0, alt - this.height(u.pos.x, u.pos.z)) : 0;
+    u.pos.y = this.groundY(u) + u.liftH; u.syncObj();
+  }
 
   // ------------------------------------------------------------------ tech tree filters driven by entities
   // (FightingObj.SetStartFilters / SetLevelFilter, BuildObjects of finished buildings, chief bonus at level 5)
@@ -356,7 +366,7 @@ export class World {
       const user = o.auto ? false : true;
       switch (o.type) {
         case 'move': case 'attackmove':
-          u.task = { type: o.type, x: o.x, z: o.z, user, then: o.then || null, slow: !!o.slow };   // then: next order on arrival; slow: at walking pace (mission scripts)
+          u.task = { type: o.type, x: o.x, z: o.z, user, then: o.then || null, slow: !!o.slow, wp: o.wp || null, alt: o.alt ?? null, flySpeed: o.flySpeed || 0 };   // then: next order on arrival; slow: at walking pace (mission scripts); wp: the group walk (pullGroup)
           u.setPath(o.x, o.z);
           u.anchor.set(o.x, o.z);
           break;
@@ -400,6 +410,32 @@ export class World {
         case 'trade': this.startTrade(u, o.target); break;
         case 'rallyJob': u.task = { type: 'idle' }; this.rallyJob(u, o.x, o.z); break;      // a new worker at its rally point
       }
+    }
+  }
+  // one step of the zeppelin's flight: straight to the point at the order's speed, its height going over to the
+  // point's along the way; arrived within 1 m
+  zeppelinStep(u, t, dt) {
+    const max = (u.stats && (u.stats.maxspeed || u.stats.speed)) || 3;
+    const sp = Math.min(max, t.flySpeed || max);
+    if (t.alt != null && t.alt0 == null) { t.alt0 = this.height(u.pos.x, u.pos.z) + (u.liftH || 0); t.d0 = Math.max(1, Math.hypot(t.x - u.pos.x, t.z - u.pos.z)); }
+    u.steer(dt, sp, 1);
+    if (t.alt != null) {
+      const d = Math.hypot(t.x - u.pos.x, t.z - u.pos.z), f = Math.min(1, Math.max(0, 1 - d / t.d0));
+      u.liftH = Math.max(0, t.alt0 + (t.alt - t.alt0) * f - this.height(u.pos.x, u.pos.z));
+    }
+    if (u.idleAnim && u.anim.curName !== u.idleAnim) u.anim.play(u.idleAnim);
+    if (!u.path.length) { const next = t.then; u.task = { type: 'idle' }; if (next) this.order([u], next); }
+  }
+  // a queued group walk: the first member to reach a waypoint takes every member of the same walk whose next walk is
+  // the same one along at once - the stragglers cut the corner, nobody waits (FightingObj.usl:2033-2044 OnActionPreEnd,
+  // misc.usl:187-199 Execute_Q_Walk, FO:8731-8746)
+  pullGroup(done, next) {
+    if (!done.wp || !next.wp || done.wp === next.wp) return;
+    for (const v of this.units) {
+      const t = v.task;
+      if (!v.alive || v.inside || t.wp !== done.wp || (t.type !== 'move' && t.type !== 'attackmove') || !t.then || t.then.wp !== next.wp) continue;
+      v.task = { type: 'idle' };
+      this.order([v], t.then);
     }
   }
   // Shift + right-click: the order comes after the walks the unit has (HandleWalkCommand /Queued); false: it has none
@@ -468,9 +504,10 @@ export class World {
           u.scanT = (u.scanT || 0) - dt;
           if (u.scanT <= 0) { u.scanT = 0.4; const e = this.findTarget(u, Math.max(30, this.alarmRange(u))); if (e) { u.task = { type: 'attack', target: e, amove: [t.x, t.z], then: t.then, user: false, auto: true }; break; } }
         }
+        if (u.zeppelin) { this.zeppelinStep(u, t, dt); break; }
         const sp = u.steer(dt, u.task.user && !t.back && !t.slow ? u.runSpeed : u.speed, 0.8);
         u.moveAnim(sp, u.task.user && !t.slow && u.runSpeed > u.speed * 1.2);
-        if (!u.path.length) { const next = t.then; u.task = { type: 'idle' }; if (next) this.order([u], next); }
+        if (!u.path.length) { const next = t.then; u.task = { type: 'idle' }; if (next) { this.order([u], next); this.pullGroup(t, next); } }
         break;
       }
       case 'attack': this.attackUpdate(u, dt); break;

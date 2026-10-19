@@ -308,6 +308,7 @@ export const Construction = {
     const act = b.action || this.buildActionOf(b);
     if (act) for (const r of act.results) for (const ra of r.resultActions || []) this.applyResultAction(b, ra);
     this.recomputeCaps(b.owner);
+    if (b.behaviour && b.behaviour.built) b.behaviour.built(b, this);   // (a gate's passable cells, a warp gate's timer ...)
     this.emit('built', { building: b });
     if (b.onBuilt) b.onBuilt();
     for (const w of workers) { this.releaseTask(w); w.task = { type: 'idle' }; w.busyAnim = false; this.autoWork(w, b); }

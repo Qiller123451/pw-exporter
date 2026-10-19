@@ -32,6 +32,16 @@ export function projectileType(gfx) {
   return 'blunt_sml';
 }
 const TRIBES = new Set(['hu', 'aje', 'ninigi', 'seas']);
+// camera shakes (Effects.usl ShakeCameraTheGundlachStyle calls): [duration s, strength, fade-out %, range m]
+export const SHAKES = {
+  CPlaceBuildingFX: [1.0, 5, 100, 60],        // a building placed (Building.usl:174 -> Game.usl:972); the mammoth's stomp
+  CBrachioDying: [1.0, 40, 75, 60],          // the brachiosaurus falls (dying, frame 58)
+  CBrachioWalking: [0.5, 5, 75, 30],         // its footfalls (walk_1 / walk_2 / walk_left / walk_right)
+  CVehicleExplosion: [0.5, 5, 100, 60],      // the torpedo turtle explodes (Ship.usl:1540)
+  CDestructionHit: [0.5, 5, 100, 30],        // an object drops below 50 % and 25 % (FightingObj.usl:3054)
+  CCamShakeHarvestTrees: [1.0, 5, 100, 20],  // a felled tree hits the ground
+  CBigBuildingExplosion: [1.0, 40, 75, 60],
+};
 // the effect models used here (main.js loads them with the map)
 export const GAME_FX_MODEL = /^(hit_|fx_impact_|spawnping_|readyping_|placeping_|deathping_animal_|levelup_char_fx$|leave_blast$|vehicle_explosion$|explo_logcannon_building$|fx_poison|fx_ice_freeze$|hu_wallstones$)/;
 const CASTE_SPAWN = { res: 'spawnping_char_res_fx', nat: 'spawnping_char_nat_fx', tec: 'spawnping_char_tec_fx' };
@@ -107,12 +117,12 @@ export class GameFx {
     if (u.cls === 'ANML') return !!this.m.at('spawnping_animal_fx', u.pos, 2.85);
     return false;
   }
-  placed(b) { const ok = !!this.m.at('placeping_building_fx', b.pos, 1.55); if (ok) this.shake(b, 0.5); return ok; }
+  placed(b) { const ok = !!this.m.at('placeping_building_fx', b.pos, 1.55); this.camShake('CPlaceBuildingFX', b.pos); return ok; }
   built(b) { return !!this.m.at('readyping_building_fx', b.pos, 1.8, { party: b.party }); }
   invented(b) { return !!b && !!this.m.at('readyping_invent_fx', b.pos, 1.5, { party: b.party }); }
   // death pings (character.usl:2281, Animal.usl:945): characters small, animals by radius; vehicles explode
   died(u) {
-    if (u.cls === 'VHCL') { const ok = !!this.m.at('vehicle_explosion', u.pos, 2.5); if (ok) this.shake(u, 0.6); return ok; }
+    if (u.cls === 'VHCL') return !!this.m.at('vehicle_explosion', u.pos, 2.5);
     if (u.cls !== 'CHTR' && u.cls !== 'ANML') return false;
     const r = u.cls === 'CHTR' ? 0 : u.radius;
     return !!this.m.at(r <= 3.5 ? 'deathping_animal_small_fx' : r <= 5 ? 'deathping_animal_med_fx' : 'deathping_animal_big_fx', u.pos, 3.0, { party: u.party });
@@ -122,14 +132,12 @@ export class GameFx {
     const p = b.pos.clone(); p.y += (b.ht || 4) * 0.5;
     const n = b.cls === 'BLDG' ? 'explo_logcannon_building' : `hit_object_${this.tribeOf(b) || 'hu'}_blunt_big`;
     const ok = !!this.m.at(n, p, 2.5);
-    if (ok) this.shake(b, 0.5);
+    this.camShake('CDestructionHit', b.pos);
     return ok;
   }
-  // a tree falls (CCamShakeHarvestTrees): leaves blast where the crown lands, 8 m away
-  treeFell(node) {
-    const a = node.rot || 0;
-    const p = node.pos.clone().add(new THREE.Vector3(Math.sin(a) * 8, 0, Math.cos(a) * 8));
-    p.y = this.W.height(p.x, p.z);
+  // a felled tree's crown hits the ground (CCamShakeHarvestTrees, ui/logs.js): a cloud of leaves and the shake
+  leafBlast(p) {
+    this.camShake('CCamShakeHarvestTrees', p);
     return !!this.m.at('leave_blast', p, 2.4);
   }
   // an explosion on the ground (MIRAGE's meteor and walking bomb)
@@ -137,10 +145,14 @@ export class GameFx {
     const n = this.first(this.impactName('ninigi_rocket', null, pos).names);
     if (!n) return false;
     this.m.at(n, pos, 4.0);
-    this.shake({ pos }, 1.0);
+    this.camShake('CBigBuildingExplosion', pos);       // (the MIRAGE blasts: a guess - no client script of MIRAGE)
     return true;
   }
-  shake(e, s) { const G = this.G; if (G.input && G.input.onScreen && G.input.onScreen(e)) G.rtscam.shake = Math.max(G.rtscam.shake || 0, s); }
+  // the camera shakes of the original's effect classes (Effects.usl: duration s, strength, fade-out %, range m)
+  camShake(cls, pos) {
+    const k = SHAKES[cls];
+    if (k && this.G.rtscam && this.G.rtscam.addShake) this.G.rtscam.addShake(k[0], k[1], k[2], pos, k[3]);
+  }
   clipLen(gfx, d) { const tpl = this.W.template(gfx, true); const c = tpl && tpl.clips && tpl.clips.find((x) => x.name.toLowerCase() === 'anim'); return c ? c.duration : d; }
   // poison (CPoisonEffect, linked while poisoned) and ice (CIcedEffect, 5 s) - checked a few times a second
   status(dt) {

@@ -309,8 +309,18 @@ export const Combat = {
     u.lastTarget = tgt;
     const cs = u.cs(w);
     const proj = !!w.projectile;
-    let off = u.face(tgt.pos.x, tgt.pos.z, dt, 7);
-    if (u.comp && u.comp.top) off = u.comp.aim(tgt.pos.x, tgt.pos.z, dt);
+    // a unit that sets up to shoot (the log cannon: compose.js DEPLOY) turns to the target, sets up, then only its gun turns
+    const dep = u.comp && u.comp.dep ? u.deploy : null;
+    let off;
+    if (dep && dep.state !== 'attack') {
+      if (dep.state === 'walk' || dep.state === 'up') { if (dep.state === 'up' && u.comp.holdMove(this.time)) return; if (u.face(tgt.pos.x, tgt.pos.z, dt, 7) > 0.3) return; }
+      if (!u.comp.deployReady(this.time)) return;
+    }
+    if (dep) off = u.comp.aimGun(tgt.pos.x, tgt.pos.z, dt);
+    else {
+      off = u.face(tgt.pos.x, tgt.pos.z, dt, 7);
+      if (u.comp && u.comp.top) off = u.comp.aim(tgt.pos.x, tgt.pos.z, dt);
+    }
     const dur = this.attackDuration(u, cs);
     if (this.time - u.lastHitDone > dur && off < (proj ? (w.penetration ? Math.PI / 16 : Math.PI / 4) : Math.PI)) {
       u.lastHitDone = this.time;
@@ -321,7 +331,8 @@ export const Combat = {
       if (this.startFinishingMove(u, tgt, w)) return;
       const anims = w.anims && w.anims.length ? w.anims : [{ name: 'attack_front', delay: 0.4, shootdelay: 0.3 }];
       const pick = anims.filter((a) => !a.combo)[Math.floor(Math.random() * anims.filter((a) => !a.combo).length)] || anims[0];
-      const clip = u.anim.pick(pick.name, 'attack_front', 'attack_1', 'res_strike_3', 'nat_strike_0');
+      const clip = dep ? null : u.anim.pick(pick.name, 'attack_front', 'attack_1', 'res_strike_3', 'nat_strike_0');
+      if (dep) u.comp.fired();                       // (it lies still: the gun recoils)
       if (clip) {
         const len = u.anim.duration(clip);
         const ts = len > dur ? len / dur : 1;
@@ -331,13 +342,14 @@ export const Combat = {
       const delay = proj ? (pick.shootdelay || 0.3) : (pick.delay || 0.4);
       u.pending = { t: Math.min(delay, dur * 0.9), w, target: tgt };
       if (!t.user) this.shout(u, tgt, false, false);
-    } else if (!u.busyAnim) {
+    } else if (!u.busyAnim && !dep) {
       u.anim.play(u.fightStand() || u.idleAnim);
     }
   },
   // the fight is over: resume work (workers), look for the next enemy, or go back to the post
   endAttack(u, leashed) {
     const t = u.task;
+    if (u.deploy && u.deploy.state !== 'walk' && u.comp && u.comp.dep) u.comp.holdMove(this.time);   // (the fight is over: it gets up, Fight.usl:634)
     // a worker that killed an animal on an order of the player gathers its carcass (Fight.usl:332-343 "GetFood"; the
     // hunting chain of GetFood.usl orders the next animal the same way)
     const prey = t.target, meat = prey && !prey.alive && prey.corpseNode;
@@ -561,6 +573,7 @@ export const Combat = {
     if (!damageOnly && active(V, 'invul', t)) return true;
     if (active(V, 'peace', t)) return true;                          // ceasefire (MIRAGE FO:5744)
     if (V.finishing) return true;                                    // during its finishing move
+    if (V.zeppelin) return true;                                     // the trader's zeppelin: Damage() is empty (Vehicle.usl:852)
     return V.invulnT > 0;
   },
   // retaliation (OnDefend / AddEnemy(defend=true)): fight back unless busy with an order or passive

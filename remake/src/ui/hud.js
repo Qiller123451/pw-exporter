@@ -219,8 +219,23 @@ export class HUD {
     // the epoch bar (IngameScreen.usl m_pxSmall, UpdatePyramidButton): four layers of hud_pyrabutton_all.png
     const bar = this.epBar = el('div', 'epbar', this.pyrWrap);
     this.epLayers = ['avail', 'nextage', 'noavail', 'ovl'].map((k) => el('i', 'ep-' + k, bar));
+    // the strip opens / closes the pyramid: left click OnPyramidOpen, right click OnPyramidClose - both toggle
+    // (IngameScreen.usl:936-952)
+    bar.onmousedown = (ev) => { if (ev.button === 0 || ev.button === 2) { ev.preventDefault(); this.togglePyramid(); } };
+    bar.oncontextmenu = (ev) => ev.preventDefault();
     bar.onmouseenter = () => { this.epHover = true; this.epKey = null; this.refreshEpochBar(); };
     bar.onmouseleave = () => { this.epHover = false; this.epKey = null; this.refreshEpochBar(); };
+  }
+  // the pyramid open (its cards, pyramid_open) or closed (the 11 px strip pyramid_closed, no cards): Tab, the strip
+  // (CInGameScreen.TogglePyramidState, NewPyramid.usl SmallView / CollapsedView; starts open)
+  togglePyramid(open) {
+    const want = open === undefined ? !!this.pyrClosed : !!open;
+    if (want === !this.pyrClosed) return;
+    this.pyrClosed = !want;
+    this.pyr.classList.toggle('closed', this.pyrClosed);
+    this.pyr.style.backgroundImage = img(this.pyrClosed ? 'hud_pyramid_closed.png' : 'hud_pyramid_open.png');
+    if (this.pyrHead) this.pyrHead.style.visibility = this.pyrClosed ? 'hidden' : '';
+    if (this.G.feedback) this.G.feedback.ui(this.pyrClosed ? 'ui_pyramid_close' : 'ui_pyramid_open');
   }
   // UpdatePyramidButton (every second): the bar's rows are the pyramid's levels; from the top down to the current
   // epoch's line (BLEND: % of the height, by epoch) it is dark, below it lit. The next epoch, when the player can start
@@ -286,7 +301,11 @@ export class HUD {
   // ------------------------------------------------------------------ info window
   refreshInfo() {
     const G = this.G, sel = [...G.sel].filter((e) => e.alive);
-    const buffs = sel.length === 1 && (sel[0].kind === 'unit' || sel[0].kind === 'building') ? visibleBuffs(G.world, sel[0], G.me) : [];
+    // the buffs of the object the info window speaks for: the only one, or the first of the highest level of a group
+    // (Info.usl:1338-1360)
+    let lead = sel.length === 1 ? sel[0] : null;
+    if (sel.length > 1) for (const e of sel) if (e.kind === 'unit' && (!lead || (e.level || 0) > (lead.level || 0))) lead = e;
+    const buffs = lead && (lead.kind === 'unit' || lead.kind === 'building') ? visibleBuffs(G.world, lead, G.me) : [];
     const key = buffs.map((x) => x.attrib).join(',') + '/' + sel.map((e) => e.id + ':' + Math.round(e.hp || e.amount || (e.well ? e.well.fill : 0)) + ':' + (e.workers ? e.workers.size : '') + ':' + (e.level || 0) + ':' + (e.queue ? e.queue.map((q) => q.action.id + Math.floor(q.t)).join(',') : '') + ':' + (e.progress || 0).toFixed(2) + (e.carry ? e.carry.amount : '')).join('|');
     if (key === this.infoKey) return;
     this.infoKey = key;
@@ -301,7 +320,9 @@ export class HUD {
         h += `<div class="gi" data-id="${e.id}"><div style="${css}"></div><i style="width:${Math.round(f * 100)}%;background:${f > 0.6 ? '#7c3' : f > 0.3 ? '#dc3' : '#d42'}"></i></div>`;
       }
       h += `</div><div class="gcount">${sel.length} selected</div>`;
+      if (buffs.length) h += '<div class="buffs">' + buffs.slice(0, 5).map((x) => `<span data-tt="${x.tip}" style="${spriteCss(x.icon, -1, 16, 16) || ''}"></span>`).join('') + '</div>';
       b.innerHTML = h;
+      b.querySelectorAll('.buffs [data-tt]').forEach((d) => { d.onmouseenter = () => this.showTip(d, buttonTip(G, d.dataset.tt)); d.onmouseleave = () => this.hideTip(); });
       b.querySelectorAll('.gi').forEach((d) => { d.onclick = (ev) => { const e = sel.find((x) => x.id === +d.dataset.id); if (e) { if (ev.shiftKey) G.deselect(e); else G.select([e]); } }; });
       return;
     }

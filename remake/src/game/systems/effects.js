@@ -170,7 +170,7 @@ export const Effects = {
     const modRage = this.data.base.filter(BOAR_RAGE_FILTER);
     for (const u of this.units) {
       if (!u.alive || u.name !== 'hu_wild_boar' || !u.owner || !this.data.invented(u.owner, 'wild_boar_rage', u.owner.tribe)) continue;
-      if (!modRage) { if (u.hp * 4 <= u.maxHp) u.st.aura.boarRage = true; continue; }
+      if (!modRage) { if (u.hp * 4 <= u.maxHp && !(u.localTT && u.localTT.has('Hu/Upgrades/hu_wild_boar/wild_boar_rage'))) u.st.aura.boarRage = true; continue; }   // (a mission's raging boar has it already)
       const on = u.hp * 7 / 3 <= u.maxHp;
       if (on !== !!(u.localTT && u.localTT.has(BOAR_RAGE_FILTER))) this.localFilter(u, BOAR_RAGE_FILTER, on);
     }

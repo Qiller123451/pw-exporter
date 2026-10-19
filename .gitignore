@@ -18,3 +18,5 @@ remake/esbuild
 !/remake/art/sequel/built/models/*.glb
 # the downloaded materials they are made from (remake/art/sequel/fetch.py)
 /remake/art/sequel/_lib/
+# the built Blender add-on (python blender/make_zip.py)
+/blender/dist/

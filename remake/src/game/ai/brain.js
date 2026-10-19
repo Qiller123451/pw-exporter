@@ -24,6 +24,7 @@ import { TradeAI } from './trade.js';
 import { GameTypesAI } from './gametypes.js';
 import { ChatAI } from './chat.js';
 import { NavalAI } from './naval.js';
+import { MinesAI } from './mines.js';
 
 const rnd = (n) => Math.floor(Math.random() * n);
 const urlParam = (k) => { try { return new URLSearchParams(location.search).get(k); } catch (e) { return null; } };
@@ -235,7 +236,7 @@ export class TribeAI {
       if (!u.alive || u.owner !== p || u.autonomous || u.illusion) continue;
       S.units.push(u); inc(u.name);
       if (this.locked.has(u) || (this.crew && this.crew.has(u))) continue;       // (an outpost's crew: ai/outposts.js)
-      if (u.naval) { if (!u.stationary) S.fleet.push(u); continue; }
+      if (u.naval || u.cls === 'SHIP') { if (!u.stationary) S.fleet.push(u); continue; }       // (the Aje's transport turtle swims and walks)
       if (u.isWorker) { S.workers.push(u); if (u.task.type === 'idle' && !u.inside) S.idle.push(u); continue; }
       if (u.def.unique) S.heroes.push(u);
       if (u.cannotFight || u.stationary || u.isDropoff || NOT_ARMY.test(u.name)) continue;
@@ -337,6 +338,7 @@ export class TribeAI {
     if (now >= (N.outposts || 0) && Wt.outposts && !this.economyOff) { N.outposts = now + Wt.outposts; if (cs().base) this.outpostsThink(S); }
     if (now >= (N.trade || 0) && Wt.trade && !this.economyOff) { N.trade = now + Wt.trade; if (cs().base) this.tradeThink(S); }
     if (now >= (N.area || 0) && Wt.area && this.W.waterNav) { N.area = now + Wt.area; if (cs().base) this.strandedThink(S); }
+    if (now >= (N.mines || 0) && this.W.waterNav && !this.economyOff) { N.mines = now + this.mineWait(); if (cs().base && this.mineBeltsOn(S)) this.mineBeltThink(S); }
     if (now >= N.mod) { N.mod = now + Wt.mod; if (cs().base) this.armyThink(S); }
     if (now >= N.fight) { N.fight = now + Wt.fight; if (cs().base) { this.xtraThink(S); this.timerThink(S); } }
     if (now >= N.strat) { N.strat = now + this.stratWait(); if (cs().base) this.strategyThink(S); }
@@ -345,4 +347,4 @@ export class TribeAI {
     if (this.getItem && now >= (N.item || 0)) { N.item = now + (30 + 1 + rnd(this.W.players.length + 1)) * TICK; this.getItemThink(cs()); }
   }
 }
-Object.assign(TribeAI.prototype, Economy, Army, Fight, Defense, ItemsAI, WallsAI, OutpostsAI, TradeAI, ChatAI, NavalAI, GameTypesAI);
+Object.assign(TribeAI.prototype, Economy, Army, Fight, Defense, ItemsAI, WallsAI, OutpostsAI, TradeAI, ChatAI, NavalAI, MinesAI, GameTypesAI);

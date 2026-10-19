@@ -130,6 +130,32 @@ def map_object_models(game, index, classgfx):
     return out
 
 
+def sequence_anims(data_dir):
+    """the animations the campaign's cutscenes play (Data/<pack>/Sequences/**/*.seq, pwexport.seq: ItemAnim /
+    ItemAnimAct), lower case - the character packs keep them"""
+    from pwexport import seq as SEQ
+    out = set()
+    if not data_dir or not os.path.isdir(data_dir):
+        return out
+    for pack in os.listdir(data_dir):
+        root = os.path.join(data_dir, pack, 'Sequences')
+        if not os.path.isdir(root):
+            continue
+        for dp, _, fs in os.walk(root):
+            for f in fs:
+                if not f.lower().endswith('.seq'):
+                    continue
+                try:
+                    doc = SEQ.read_seq(os.path.join(dp, f))
+                except Exception:                     # noqa: BLE001 (a broken file only loses its animations)
+                    continue
+                for a in doc.get('actors') or []:
+                    for it in a.get('items') or []:
+                        if it.get('anim'):
+                            out.add(str(it['anim']).lower())
+    return out
+
+
 def main(log=print, progress=None):
     CONV, DATA, OUT = paths.CONV, paths.DATA, paths.OUT
     roster = json.load(open(os.path.join(HERE, 'roster.json')))
@@ -145,6 +171,8 @@ def main(log=print, progress=None):
                     index[f[:-4].lower()] = (arch, os.path.join(d, f))   # VEG overrides CONV (walked last)
     TT = json.load(open(os.path.join(OUT, 'techtree.json')))['StartTT']['Objects']
     used_anims = set()
+    seq_anims = sequence_anims(DATA) | {'faceanim'}      # (the cutscenes' talk, gesture and one-off animations; the
+    # jaw pose of the lip sync: ui/cutscene.js)
     for lst in (data.get('idle') or {}).values():      # IdleAnims.txt
         for e in lst: used_anims.add(e[0])
     want = set(x.lower() for x in techtree_models())
@@ -255,7 +283,7 @@ def main(log=print, progress=None):
         nm = len(j.get('animations', []))
         if nm > 80:   # human animation packs: keep only what the game uses
             keep = set(KEEP_ANIMS) | used_anims | set(walkset.values())
-            names = [a['name'] for a in j['animations'] if a['name'] in keep or re.match(r'(res|nat|tec)_(idle|fight)', a['name'])]
+            names = [a['name'] for a in j['animations'] if a['name'] in keep or a['name'].lower() in seq_anims or re.match(r'(res|nat|tec)_(idle|fight)', a['name'])]
             binc = rest[8:8 + struct.unpack_from('<I', rest, 0)[0]]
             out = repack(j, binc, set(names))
             open(OUT + '/assets/models/%s.glb' % w, 'wb').write(out)

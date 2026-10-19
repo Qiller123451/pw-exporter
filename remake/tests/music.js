@@ -5,6 +5,10 @@
 //   python3 tests/evaljs.py tests/music.js "&tribe=Aje&enemy=Hu"
 const W = G.world, M = G.audio.mus, D = M.data, out = [];
 const check = (n, ok, info) => out.push((ok ? 'ok   ' : 'FAIL ') + n + (info !== undefined ? '  ' + JSON.stringify(info) : ''));
+// the mission's own fights (the campaign's enemies attack while the test runs) are kept out: the test's attacks go
+// through attack(), the feedback section lets the hits through
+const attack = M.attack.bind(M);
+M.attack = () => {};
 const run = (sec, dt = 0.25) => { for (let t = 0; t < sec; t += dt) { G.step(1, dt); M.update(W.time, G.audio.listener, () => []); } };
 check('the tables of MusicMgr.txt / MusicTracks.txt are loaded', !!(D.playlists && D.playlists.default && D.playlists.single_05 && D.tracks['01_maintheme']), Object.keys(D.playlists || {}).length);
 const want = G.campaign ? D.playlists['single_' + String(G.campaign.id).padStart(2, '0')] : D.playlists[(G.mapSource.setting || '').toLowerCase() + '_txt'] || D.playlists.default;
@@ -17,9 +21,9 @@ else check('the background plays', st.playing === 'Background' && want.Backgroun
 // the opening ends -> the background
 if (want.Opening) { M.S('Opening').el = { ended: true }; M.update(W.time); check('after the opening the background', M.state().playing === 'Background' && want.Background.includes(M.state().track), M.state()); }
 // two attacks are no battle, the third place is
-M.attack(1, 1, W.time); M.attack(1, 1, W.time); M.attack(5, 5, W.time); M.update(W.time);
+attack(1, 1, W.time); attack(1, 1, W.time); attack(5, 5, W.time); M.update(W.time);
 check('attacks at 2 places: no combat music', M.state().playing === 'Background', M.state());
-M.attack(9, 9, W.time); M.update(W.time);
+attack(9, 9, W.time); M.update(W.time);
 check('at 3 places within 10 s: combat music', want.Combat ? M.state().playing === 'Combat' && want.Combat.includes(M.state().track) : M.state().track === '-silence-', M.state());
 run(5);
 check('5 s later still combat', M.state().playing === 'Combat', M.state());
@@ -29,6 +33,7 @@ check('10 s without an attack: the background again', M.state().playing === 'Bac
 {
   const mine = W.units.filter((u) => u.alive && u.owner === G.me).slice(0, 3), F = G.feedback;
   F.audio = F.audio || G.audio;
+  M.attack = attack;
   const n0 = M.attacks.length;
   for (const u of mine) { F.handle([{ type: 'attacked', entity: u }]); F.hitsT -= 1; F.handle([]); u.pos.x += 0.01; }
   check('hits on own units count as attack places', M.attacks.length > n0, [n0, M.attacks.length]);
@@ -36,8 +41,9 @@ check('10 s without an attack: the background again', M.state().playing === 'Bac
   M.attacks = [];
   if (enemy) { F.handle([{ type: 'attacked', entity: enemy, by: mine[0] }]); F.hitsT -= 1; F.handle([]); check('hits of own units on others do not (FeedbackEventMgr: the attacked object\'s owner)', M.attacks.length === 0, M.attacks.length); }
   for (const u of mine) u.pos.x -= 0.01;
-  M.attacks = []; run(11);
 }
+M.attack = () => {};
+M.attacks = []; run(11);
 // the trigger action MUSI (CActionMusic), once
 M.trigger('24_location_temple', false); M.update(W.time);
 check('the trigger action\'s track plays', M.state().playing === 'Trigger' && M.state().track === '24_location_temple', M.state());

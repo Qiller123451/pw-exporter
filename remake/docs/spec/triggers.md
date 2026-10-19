@@ -566,8 +566,9 @@ the query's order.
   object (group members individually) gets `StartPatrol(waypoints, mode, speed, straight)`:
   mode 0 = walk the points once in order and stop (91 ×; reaching the last point sends `OBJ_WYPT` → `WAYR`
   condition, AF:33-39) · 1 = circular patrol 1 2 3 … n 1 2 … (47 ×) · 2 = back and forth 1 … n … 1 (20 ×)
-  (AF:1771-1774). `straightwalk = 1` (29 ×, ships and flying objects): straight lines between the points instead
-  of path finding. No waypoints → nothing.
+  (AF:1771-1774). `straightwalk = 1` (29 ×, ships and flying objects): `m_bAggressionWalk = !straight` (FightingObj.usl:2414),
+  i.e. the unit does not fight what it meets on the way (an aggression walk attacks enemies near its path); the
+  `GoTo` and its path finding are the same either way [S]. No waypoints → nothing.
 * **COBJ** (129) `obj_name` (= the **class** to create), `obj_owner` (-1 = nobody), `obj_pos` (`x y z` or
   `x, y, z`), `obj_rot` (Euler angles in radians, only z = heading is used in the data), `obj_level` (0-based;
   missing = 0, -1 behaves as 0), `ignore_pyramid` (default 1), `pos_from_obj` (0) + query with prefix `trgt_`,

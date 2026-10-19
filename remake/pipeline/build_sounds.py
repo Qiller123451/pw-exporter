@@ -129,7 +129,7 @@ def main(log=print, progress=None):
     game = paths.game()
     have = {}
     for w in wavs:
-        if game.file('Audio/Sound/' + w):
+        if game.audio_file('Audio/Sound/' + w):          # (speech may be only in a language pack)
             have[w.lower()] = w
     events = {}
     for k in keep:

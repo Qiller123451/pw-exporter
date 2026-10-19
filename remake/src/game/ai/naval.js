@@ -12,7 +12,8 @@
 //     ones first, else trained at the harbour (2 minutes at most); the squad boards (BoardTransporter: the transport
 //     comes to the shore near them; again every 7th think, 7 rounds at most), sails to the water off the enemy's
 //     village and gets out at the shore within 30 m; then the attack goes on by land and the transports go home. At
-//     most 5 crossings at once (AM:75). A transport lost while boarding: everybody out at home and the attack ends.
+//     most 5 crossings at once (AM:75). A transport lost or attacked while boarding: everybody out at home and the
+//     attack ends.
 //   * Units left on another land (idle for 10 area thinks) are fetched home the same way (AM:140-210).
 import * as DATA from './data.js';
 import { Attack } from './attack.js';
@@ -97,10 +98,14 @@ export const NavalAI = {
 
   // ------------------------------------------------------------------ crossing the water
   // does a squad going to aim cross the water? (GA:236-262)
-  needsCrossing(S, a, aim) {
+  // (the squad's own land: units fetched home from another land start there, AM:140-210)
+  needsCrossing(S, a, aim, us = []) {
     const W = this.W;
     if (!W.waterNav || a.goal === 'ship' || a.crossed) return false;
-    const from = W.landIsland(S.home.x, S.home.z), to = W.landIsland(aim.x, aim.z);
+    const on = us.filter((u) => u.alive && !u.inside), c = on.length ? a.centre(on) : S.home;
+    let from = W.landIsland(c.x, c.z);
+    if (from < 0) from = W.landIsland(S.home.x, S.home.z);
+    const to = W.landIsland(aim.x, aim.z);
     if (from >= 0 && to >= 0 && from !== to) return true;
     if (this.multimap && this.mapOptions.watermap && this.mapOptions.harbour && this.p.tribe !== 'Aje' && !a.scripted && !a.hunt && a.enemy && rnd(100) <= 10) return true;
     return false;
@@ -110,14 +115,31 @@ export const NavalAI = {
     for (const act of D.actions(p)) { const o = act.kind === 'Build' && act.results[0] && act.results[0].obj; if (!o) continue; const df = D.def(o, p); if (df && df.transportClass === 2 && D.info(o).type === 'SHIP') return o; }
     return TRANSPORTS.find((n) => D.exists(n) && n.startsWith(p.tribe.toLowerCase())) || null;
   },
-  // the water off the enemy's shore nearest aim, and the landing on that shore -> {water: {x, z}} | null
+  // the water off the target's shore nearest aim -> {water: {x, z}} | null: a spot ships can reach with the target's
+  // own land within 14 m towards aim (not a shore of another island on the way), and no enemy water mine, water
+  // turret or tower within 30 m of it (WC: the landing is given up near those)
   landingFor(aim) {
     const W = this.W, wn = W.waterNav;
     if (!wn) return null;
-    const c = wn.nearestFree(wn.idx(aim.x, aim.z), 120);
-    if (wn.block[c]) return null;
-    const [x, z] = wn.center(c);
-    return { water: { x, z } };
+    const to = W.landIsland(aim.x, aim.z);
+    const danger = [];
+    for (const u of W.units) if (u.alive && /mineship_mine|water_turret/.test(u.name) && this.isEnemyEntity(u)) danger.push(u.pos);
+    for (const b of W.buildings) if (b.alive && b.weapons && b.weapons.long && this.isEnemyEntity(b)) danger.push(b.pos);
+    for (let r = 8; r <= 160; r += 6) {
+      let best = null, bd = Infinity;
+      for (let i = 0; i < 48; i++) {
+        const t = i / 48 * Math.PI * 2, x = aim.x + Math.cos(t) * r, z = aim.z + Math.sin(t) * r;
+        if (wn.block[wn.idx(x, z)]) continue;
+        const dx = (aim.x - x) / r, dz = (aim.z - z) / r;
+        let land = false;
+        for (let s = 4; s <= 14 && !land; s += 2) { const qx = x + dx * s, qz = z + dz * s; if (!W.isWater(qx, qz, 0.4) && (to < 0 || W.landIsland(qx, qz) === to)) land = true; }
+        if (!land || danger.some((p) => Math.hypot(p.x - x, p.z - z) < 30)) continue;
+        const d = Math.hypot(x - aim.x, z - aim.z);
+        if (d < bd) { bd = d; best = { x, z }; }
+      }
+      if (best) return { water: best };
+    }
+    return null;
   },
   // the crossing of an attack: 'ferry' state (boarding, sailing, landing)
   startCrossing(S, a, us, aim) {
@@ -140,17 +162,21 @@ export const NavalAI = {
     switch (F.phase) {
       case 'ships': {
         const need = Math.ceil(us.length / 10);
-        for (const u of S.fleet) if (F.ships.length < need && u.name === F.cls && !this.claims.has(u) && !(u.passengers || []).length) { F.ships.push(u); this.claims.set(u, a); }
+        // (a transport does not stop to fight on the way: the Aje's turtle bites)
+        for (const u of S.fleet) if (F.ships.length < need && u.name === F.cls && !this.claims.has(u) && !(u.passengers || []).length) { F.ships.push(u); this.claims.set(u, a); u.ferryStance = u.stance; u.stance = 3; }
         if (F.ships.length < need && !F.ordered) {
           F.ordered = true;
           for (let i = F.ships.length; i < need; i++) { const T = this.trainable(S, F.cls); if (T && T.producer && this.armyCanPay(S, T.action.cost)) W.queueAction(T.producer, T.action); }
         }
-        if (F.ships.length >= need || (F.ships.length && W.time - F.t0 > 120)) { F.phase = 'board'; F.round = 0; break; }
+        if (F.ships.length >= need || (F.ships.length && W.time - F.t0 > 120)) { F.phase = 'board'; F.round = 0; F.hp = new Map(F.ships.map((s) => [s, s.hp])); break; }
         if (W.time - F.t0 > 120) { this.ferryDone(a); return a.end('no transports'); }
         return;
       }
       case 'board': {
-        if (F.lost) { this.ferryUnload(a); this.ferryDone(a); return a.end('transport lost'); }
+        // a transport lost or attacked while boarding: everybody out at home (WC:138 OnShipAttacked, 444-447)
+        if (!F.hp) F.hp = new Map(F.ships.map((s) => [s, s.hp]));         // (the hit points when the boarding began)
+        const hit = F.ships.some((s) => s.hp < (F.hp.get(s) ?? s.hp));
+        if (F.lost || hit) { this.ferryUnload(a); this.ferryDone(a); return a.end(F.lost ? 'transport lost' : 'transport attacked'); }
         const out = us.filter((u) => !u.inside);
         if (!out.length) {
           F.phase = 'sail';
@@ -192,7 +218,11 @@ export const NavalAI = {
     if (!F) return;
     const S = this.S || this.census();
     const h = this.harbourOf(S);
-    for (const s of F.ships) { this.claims.delete(s); if (s.alive && h) this.W.order([s], { type: 'move', x: h.pos.x, z: h.pos.z, auto: true }); }
+    for (const s of F.ships) {
+      this.claims.delete(s);
+      if (s.ferryStance !== undefined) { s.stance = s.ferryStance; s.ferryStance = undefined; }
+      if (s.alive && h) this.W.order([s], { type: 'move', x: h.pos.x, z: h.pos.z, auto: true });
+    }
   },
   // a transport of a crossing died (readEvents)
   ferryLost(s) { for (const a of this.attacks) if (a.ferry && a.ferry.ships.includes(s) && a.ferry.phase === 'board') a.ferry.lost = true; },

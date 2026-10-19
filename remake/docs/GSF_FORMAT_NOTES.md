@@ -35,7 +35,7 @@ and checked by rendering the results.
   9 / 0x80000009 / 0x20000009 cloth (same header, 36 bytes of cloth data before the bbox, 60-byte submeshes).
 - `+12` 4x4 row-major matrix (D3D, row vectors). Positions are quantised inside the **chunk** bbox.
 - Vertex (8 bytes): bits 0–38 = 3×13-bit position (value/8191 inside bbox), bits 39–47 = index into a 511-entry
-  unit-normal table, byte 6 = u×256, byte 7 = v×256. **v runs bottom-up** (OpenGL style): for glTF/top-down
+  unit-normal table, byte 6 = u×255, byte 7 = v×255 (PWClient.exe 0x7369e7: byte / 255). **v runs bottom-up** (OpenGL style): for glTF/top-down
   images use v = 1 − byte7/256. (Checked against atlas features: nuts, valve wheels and skin charts line up exactly.) 16-byte vertices add 4 bone indices (255 = none) and 4 u8 weights.
 - Triangles: u16 triplets, clockwise when viewed from the side the normals point to in the model's own left-handed
   space (x, y, z with z up, like the maps: docs/MAP_FORMAT.md) - the Direct3D way. Read as right-handed they are

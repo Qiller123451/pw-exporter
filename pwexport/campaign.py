@@ -443,9 +443,16 @@ def _quests(m, tx, level_name, warn):
 
 
 # ---------------------------------------------------------------- dialogue scenes, sequences
-def _game_file(install, folder, rel):
+def _game_file(install, folder, rel, lang=None):
+    """Data/<mod>/<folder>/<rel>; with a language other than English its own copy first (Data/locale/<lang>/<folder>:
+    the Polish cutscenes are timed for the Polish speech)"""
     if install is None:
         return None
+    if lang and lang.lower() not in ('uk', 'us', 'en'):
+        for base in [install.data] + [os.path.join(install.data, m) for m in install.mods]:
+            p = _ci_join(base, 'locale/%s/%s/%s' % (lang, folder, rel))
+            if p and os.path.isfile(p):
+                return p
     for mod in reversed(install.mods):
         for base in (folder + '/' + rel, rel):          # DialogScene.usl:169-173: DialogScenes/<path>, else Data/<path>
             p = _ci_join(os.path.join(install.data, mod), base)
@@ -506,14 +513,111 @@ def _pchild(node, name):
     return next((c for c in node['children'] if c['name'] == name), None)
 
 
+def _r3(v):
+    return [round(float(x), 3) for x in v]
+
+
+def _seq_heading(q):
+    """the map rotation about z of a stored quaternion (x, y, z, w), as for the map objects"""
+    import math
+    return round(-2 * math.atan2(q[2], q[3]), 4)
+
+
+def _key_shape(k):
+    tcb, ease = k.get('tcb') or [0.5, 0.5, 0], k.get('ease') or [0, 0, 0]
+    return [k.get('interp', 4), round(tcb[0], 3), round(tcb[1], 3), round(ease[0], 3), round(ease[1], 3)]
+
+
+def seq_play(doc):
+    """what the remake needs to play a decoded cutscene (pwexport.seq, docs/SEQUENCE_FORMAT.md) - map space, seconds
+    on the timeline (path keys relative to their item's start), headings as map rotations"""
+    tl = doc['timeline']
+    out = {'length': tl['length'], 'start': tl['start'], 'end': tl['end'] if tl['end'] > tl['start'] else tl['length'],
+           'cuts': [[round(c['start'], 3), round(c['length'], 3), c['camera']] for c in doc['camera_track']],
+           'cams': {}, 'items': [], 'actors': [],
+           'hide_region': bool((doc.get('flags') or {}).get('hide_region_objects')),
+           'region': [{'x': s['x'], 'y': s['y'], 'w': s['w'], 'h': s['h'], 'oval': s['type'] == 'oval'}
+                      for s in ((doc.get('region') or {}).get('shapes') or [])]}
+    for c in doc['cameras']:
+        sp = c.get('spline') or {}
+        out['cams'][c['guid']] = {
+            'eye': _r3(c['eye']['pos']), 'q': _r3(c['eye']['q']), 'fov': round(c['fov'], 4),
+            'target': _r3(c['target']['pos']) if c.get('target') else None,
+            # keys: [t, value..., interp, tcb0, tcb1, ease0, ease1] (docs/SEQUENCE_FORMAT.md §7)
+            'pk': [[round(k['t'], 3)] + _r3(k['v']) + _key_shape(k) for k in sp.get('pos') or []],
+            'rk': [[round(k['t'], 3)] + _r3(k['q']) + _key_shape(k) for k in sp.get('rot') or []],
+            'fk': [[round(k['t'], 3), round(k['fov'], 4)] + _key_shape(k) for k in sp.get('fov') or []]}
+    for it in doc['items']:
+        c, t, ln = it['class'], round(it['start'], 3), round(it['length'], 3)
+        if c == 'ItemFading':
+            out['items'].append({'k': 'fade', 't': t, 'len': ln, 'dir': it['direction']})
+        elif c == 'ItemWideScreen':
+            out['items'].append({'k': 'bars', 't': t, 'len': ln, 'on': it['bars'] == 'on'})
+        elif c == 'ItemCut':
+            out['items'].append({'k': 'skip', 't': t, 'len': ln})
+        elif c == 'ItemSound':
+            out['items'].append({'k': 'sound', 't': t, 'len': ln, 'path': it['path'], 'pos': _r3(it['pos']) if it['positional'] else None,
+                                 'vol': it['volume'], 'loop': bool(it['loop'])})
+        elif c == 'ItemParticle':
+            out['items'].append({'k': 'fx', 't': t, 'len': ln, 'path': it['path'], 'pos': _r3(it['pos'])})
+        elif c == 'ItemCamFX':
+            out['items'].append({'k': 'shake', 't': t, 'len': ln, 'mode': it.get('mode', 0), 'axes': it['axis_mask'],
+                                 'shake': [[s['amplitude'], s['frequency'], s.get('flag', 0)] for s in it['shake']]})
+        elif c == 'ItemText':
+            out['items'].append({'k': 'text', 't': t, 'len': ln, 'text': it.get('text', ''), 'x': it.get('x'), 'y': it.get('y'), 'size': it.get('size')})
+        elif c == 'ItemDayTime':
+            w = it.get('weather') or {}
+            out['items'].append({'k': 'daytime', 't': t, 'len': ln, 'tod': it.get('time_of_day'), 'weather': w.get('type', 0), 'intensity': w.get('intensity', 0)})
+    # (the sequence-level day_time is not applied by an in-game play: docs/SEQUENCE_FORMAT.md §9.7)
+    for a in doc['actors']:
+        st = a.get('state') or {}
+        b = a.get('binding') or {}
+        ac = {'guid': a['guid'], 'name': a['name'], 'cls': a['class'], 'type': a['type'],
+              'bind': {'cls': b.get('class') or a['class'], 'owner': b.get('owner', -1), 'level': b.get('level', -1), 'name': b.get('name') or ''},
+              'pos': _r3(st.get('pos') or [0, 0, 0]), 'rot': _seq_heading(st['q']) if st.get('q') else 0,
+              'attach': [[x['slot'], x['model']] for x in st.get('attachments') or [] if x.get('model')], 'items': []}
+        for it in a['items']:
+            c, t, ln = it['class'], round(it['start'], 3), round(it['length'], 3)
+            if c == 'ItemAnim':
+                ac['items'].append({'k': 'anim', 't': t, 'len': ln, 'anim': it['anim'], 'rep': it.get('repeat', 1), 'f0': it.get('first_frame', 0), 'f1': it.get('last_frame', -1)})
+            elif c == 'ItemAnimAct':
+                ac['items'].append({'k': 'act', 't': t, 'len': ln, 'anim': it['anim'], 'loops': it.get('loops', 1), 'intro': bool(it.get('intro')), 'outro': bool(it.get('outro'))})
+            elif c in ('ItemWalkAct', 'ItemVisPath'):
+                pth = it.get('path') or {}
+                x = {'k': 'walk' if c == 'ItemWalkAct' else 'path', 't': t, 'len': ln,
+                     'keys': [[round(k['t'], 3)] + _r3(k['v']) for k in pth.get('pos') or []],
+                     'rots': [[round(k['t'], 3), _seq_heading(k['q'])] for k in pth.get('rot') or []]}
+                if c == 'ItemWalkAct':
+                    x['speed'], x['ws'] = it.get('speed', 1), it.get('walkset', 'def')
+                    x['ground'] = bool(it.get('walk_flag', True))      # on the terrain, else the waypoints' heights
+                ac['items'].append(x)
+            elif c == 'ItemRotAct':
+                ac['items'].append({'k': 'turn', 't': t, 'len': ln, 'angle': it.get('angle', 0), 'mode': it.get('mode')})
+            elif c == 'ItemLipSync':
+                lsd = (it.get('lsd') or '').replace('\\', '/')
+                m = re.search(r'SeqSounds/(.*)\.lsd$', lsd, re.I)
+                ac['items'].append({'k': 'say', 't': t, 'len': ln, 'mp3': (m.group(1) + '.mp3') if m else None,
+                                    'key': it.get('subtitle_key'), 'music': '/music/' in lsd.lower()})
+            elif c == 'ItemAttr':
+                ac['items'].append({'k': 'attr', 't': t, 'hidden': it.get('hidden')})
+            elif c == 'ItemBeam':
+                ac['items'].append({'k': 'beam', 't': t, 'pos': _r3(it['pos']), 'rot': _seq_heading(it['q'])})
+            elif c == 'ItemLink':
+                ac['items'].append({'k': 'link', 't': t, 'links': [[l.get('op'), l.get('slot'), l.get('object')] for l in it.get('links') or []]})
+        out['actors'].append(ac)
+    return out
+
+
 def sequence(path, install, tx):
     """a cutscene: its subtitle lines from the text tables (keys _seq_<id>_<speaker>_<nn>, in table order = the
     order they are spoken) and, when the installation has the .seq file (gzip; a binary timeline with whole actor
-    objects, cameras, sound and effect tracks - see CAMPAIGN_FORMAT.md §9), the videos, speech and sounds it names"""
+    objects, cameras, sound and effect tracks - docs/SEQUENCE_FORMAT.md, pwexport.seq), the videos, speech and
+    sounds it names and `play`: the timeline the remake plays (seq_play). With the file the lines are its speech
+    items (key "_seq_" + the .lsd name, at their time) - the file name's digits only without it"""
     stem = os.path.splitext(os.path.basename(path.replace('\\', '/')))[0]
     d = {'path': path, 'id': stem, 'file': False, 'lines': [], 'videos': [], 'speech': [], 'sounds': [], 'duration': None}
     ids = [p for p in re.split(r'_', re.sub(r'^(ms|sc|hs)_', '', stem)) if re.match(r'\d{3,}', p)]
-    f = _game_file(install, 'Sequences', path)
+    f = _game_file(install, 'Sequences', path, getattr(tx, 'lang', None))
     if f:
         try:
             with gzip.open(f) as fh:
@@ -539,9 +643,28 @@ def sequence(path, install, tx):
                     d['speech'].append(s)
                 elif low.endswith(('.wav', '.lsd', '.mp3', '.ogg')):
                     d['sounds'].append(s)
+            from . import seq as SEQ
+            doc = SEQ.read_seq(b)
+            d['play'] = seq_play(doc)
         except (OSError, EOFError, struct.error, ValueError):
             d['file'] = False
+        except Exception:                          # noqa: BLE001 (SeqError: the timeline is not played, the lines stay)
+            d.pop('play', None)
     d['ids'] = ids
+    if d.get('play'):
+        low = {k.lower(): (k, v) for k, v in tx.prefix('_seq_')}
+        for a in d['play']['actors']:
+            for it in a['items']:
+                if it['k'] != 'say' or it['music'] or not it.get('key'):
+                    continue
+                k, v = low.get(it['key'].lower(), (it['key'], None))
+                it['key'] = k
+                if v is None:
+                    continue
+                sp = re.sub(r'_?\d+[a-z]?$', '', re.sub(r'^_seq_\d+[a-z]?_', '', k, flags=re.I))
+                d['lines'].append({'key': k, 'speaker': sp, 'text': v, 't': it['t'], 'len': it['len'], 'mp3': it['mp3']})
+        d['lines'].sort(key=lambda l: l['t'])
+        return d
     for i in ids:
         for k, v in tx.prefix('_seq_%s_' % i):
             sp = k[len('_seq_%s_' % i):]

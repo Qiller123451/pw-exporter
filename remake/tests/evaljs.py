@@ -20,11 +20,11 @@ with sync_playwright() as p:
         st = pg.evaluate('window.G && (G.ready ? "ready" : G.error ? "error:" + G.error : "loading")')
         if st and st != 'loading': break
         time.sleep(1)
-    print('state', st)
+    print('state', st, flush=True)
     src = open(sys.argv[1]).read()
     m = __import__('re').match(r'//\s*include:\s*(\S+)', src)        # "// include: campaign_bot.js": helpers in front
     if m:
         src = open(_os.path.join(_os.path.dirname(_os.path.abspath(sys.argv[1])), m.group(1))).read() + '\n' + src
-    print(pg.evaluate('(async () => {' + src + '})()'))
+    print(pg.evaluate('(async () => {' + src + '})()'), flush=True)
     for l in logs[-15:]: print(l[:300])
     b.close()

@@ -34,7 +34,8 @@ const DO = {
     if (!v || prm.length < 2 || !u || u.kind !== 'unit') return;
     if (u.inside && E.W.leaveTransport) E.W.leaveTransport(u);
     E.stopPatrol(u);
-    E.W.order([u], { type: 'move', x: v.x, z: v.z, slow: num(prm[1], 2) < 3 });
+    // (the zeppelin flies to the point's height at the given speed in m/s: misc.usl:137-146)
+    E.W.order([u], { type: 'move', x: v.x, z: v.z, slow: num(prm[1], 2) < 3, ...(u.zeppelin ? { alt: v.mz, flySpeed: num(prm[1], 3) } : {}) });
   },
   // attack-move to the point (AF:1196-1197); the number and the dst query are not used
   'Aggressive Walk'(E, u, rec, prm) {
@@ -130,10 +131,22 @@ function slotFree(E, owner, level) {
   const pyr = owner.pyramid || (E.G && E.G.data && E.G.data.pyramid) || STD_PYRAMID;
   return (owner.atLevel[level - 1] || 0) < (pyr[level - 1] != null ? pyr[level - 1] : STD_PYRAMID[level - 1]);
 }
-// where a unit that comes out of a spawn building appears. The original creates it at the building's link point
-// Spwn and lets it walk through Ex_1 to `pos` (MiscObj.usl:2291-2500); the remake has no link points: the unit
-// appears on the line between the building and `pos`, as close to the building as free ground reaches from `pos`
-// (so it is never put behind the building's wall, where it could not come out).
+// a link point of a source object (a building's or a scenery prop's model) in the world, or null
+function linkOf(rec, name) {
+  if (!rec) return null;
+  if (rec.entity && rec.entity.alive && rec.entity.linkWorld) return rec.entity.linkWorld(name);
+  const o = rec.prop && rec.prop.obj;
+  if (!o) return null;
+  let l = null;
+  o.traverse((x) => { if (!l && x.name === 'link_' + name) l = x; });
+  if (!l) return null;
+  o.updateMatrixWorld(true);
+  const v = l.getWorldPosition(l.position.clone());
+  return { x: v.x, z: v.z };
+}
+const animOf = (rec) => (rec.entity && rec.entity.anim) || (rec.prop && rec.prop.anim) || null;
+// where a unit comes out of a source without the link Spwn: on the line between the source and `pos`, as close to
+// the source as free ground reaches from `pos`
 function exitPoint(E, src, target) {
   const W = E.W, [sx, sz] = posOf(E, src);
   const nav = W.nav;
@@ -149,6 +162,16 @@ function exitPoint(E, src, target) {
     best = [x, z];
   }
   return best;
+}
+// "<class>§<buildup>": the unit's own tech tree gets that upgrade of its class (AF:4928-4938: ClearFilters, then
+// /Filters/<tribe>/Upgrades/<class>/<buildup> - the wild boars' rage of missions 4 and 14; the others name their
+// class's default and change nothing)
+function applyBuildup(E, rec, buildup) {
+  const u = rec && rec.entity, W = E.W;
+  if (!u || !u.owner || !W.localFilter || !buildup) return;
+  const tribe = (u.def && u.def.tribe) || u.owner.tribe;
+  const path = `${tribe}/Upgrades/${u.name}/${buildup}`;
+  if (W.data.base && W.data.base.filter && W.data.base.filter(path)) W.localFilter(u, path, true);
 }
 function spawnOne(E, cls, slot, x, z, level, group, t, exact) {
   const C = E.C, [mx, my] = C.toMap(x, z);
@@ -174,7 +197,7 @@ export const ACTIONS = {
   FDBK(E, p, t) { if (E.trace && typeof console !== 'undefined') console.log('[FDBK]', t.name, p.msg_text); },
   SQNZ(E, p, t) {
     const C = E.C;
-    E.playSequence({ path: p.sequence, quit: on(p.quit), reason: p.reason, snapBack: on(p.snap_cam_back), camera: C.vec(p.camera_data), fow: on(p.disable_fow), fowPos: C.vec(p.fow_pos), fowRadius: num(p.fow_radius, 30), trigger: t });
+    E.playSequence({ path: p.sequence, quit: on(p.quit), reason: p.reason, snapBack: on(p.snap_cam_back), snapActors: on(p.snap_actors_back), camera: C.vec(p.camera_data), fow: on(p.disable_fow), fowPos: C.vec(p.fow_pos), fowRadius: num(p.fow_radius, 30), trigger: t });
   },
   DGSC(E, p, t) { E.playDialog(p.scene, t); },
 
@@ -254,7 +277,7 @@ export const ACTIONS = {
   // AF:1769-1970: every object walks the points (map coordinates "x y z|..."; 0 0 0 entries are skipped)
   WYPT(E, p, t) {
     const C = E.C, pts = [];
-    for (const s of String(p.waypoints || '').split('|')) { const v = C.vec(s); if (v && !v.zero) pts.push([v.x, v.z]); }
+    for (const s of String(p.waypoints || '').split('|')) { const v = C.vec(s); if (v && !v.zero) pts.push([v.x, v.z, v.mz]); }
     if (!pts.length) return;
     const mode = toInt(p.patrolmode), speed = num(p.walkspeed, 2), straight = on(p.straightwalk);
     for (const u of units(objs(E, p, t))) E.startPatrol(u, pts, mode, speed, straight);
@@ -273,9 +296,19 @@ export const ACTIONS = {
     if (!on(p.ignore_pyramid, true) && !slotFree(E, C.player(slot), level0 + 1)) return;
     const rec = C.spawn(p.obj_name, slot, v.mx, v.my, { level0, rot: heading });
     if (!rec) E.warn(`${t.name}: COBJ ${p.obj_name} could not be created`);
+    else if (p.buildup) applyBuildup(E, rec, String(p.buildup).trim());
   },
   // AF:661-738; new_owner missing = the human player
-  OCPY(E, p, t) { const slot = slotOf(p.new_owner, 0); for (const rec of objs(E, p, t)) E.C.setOwner(rec, slot); E.touch(); },
+  // chk_highlight (AF ObjOccupy): what the player gets is marked by a ring for highlight_time s
+  OCPY(E, p, t) {
+    const slot = slotOf(p.new_owner, 0), hl = on(p.chk_highlight) ? Math.floor(num(p.highlight_time)) : 0;
+    for (const rec of objs(E, p, t)) {
+      E.C.setOwner(rec, slot);
+      const e = rec.entity, W = E.W;
+      if (hl > 0 && e && e.alive && E.C.human && e.owner === E.C.human) (W.highlights || (W.highlights = new Map())).set(e, W.time + hl);
+    }
+    E.touch();
+  },
   // AF:227-328: only hitpoints occurs
   UNIT(E, p, t) {
     const name = String(p.attrib_name || '').toLowerCase(), mod = String(p.attrib_mod == null ? '' : p.attrib_mod).trim();
@@ -299,16 +332,22 @@ export const ACTIONS = {
     const src = on(p.use_spawn_obj) ? objs(E, p, t)[0] || null : null;
     if (!src) {
       if (!v) return;
-      for (const e of list) spawnOne(E, e.cls, slot, v.x, v.z, e.level, group, t, false);
+      for (const e of list) { const r = spawnOne(E, e.cls, slot, v.x, v.z, e.level, group, t, false); if (e.buildup) applyBuildup(E, r, e.buildup); }
       return;
     }
-    // out of a building: one unit every spawn_delay seconds, the first at once; each walks on to `pos`
-    const delay = Math.max(0, num(p.spawn_delay, 0));
+    // out of a building (MiscObj.usl CDelayedArmySpawn 2400-2478): it opens (its "open" clip, if it has one: the first
+    // unit comes when the clip is over), then one unit every spawn_delay seconds at its link Spwn; it closes one
+    // delay after the last. A fighting object (a building, a decorative building, a vehicle) sends them out through
+    // Ex_1 to `pos` and keeps `pos` as its rally point; from a scenery prop they stay at Spwn (CTheLite.usl:95).
+    const delay = Math.max(0, num(p.spawn_delay, 0)), step = Math.max(delay, 0.05);
     const target = v && !v.zero ? v : null;
-    DO.SetAnim(E, null, src, ['open', '1']);
-    if (src.entity && src.entity.kind === 'building' && target) src.entity.rally = [target.x, target.z];
-    list.forEach((e, i) => E.after(i * delay, 'spawnOut', { src, target, cls: e.cls, level: e.level, slot, group }, t));
-    E.after((list.length - 1) * delay + 2.5, 'closeSpawner', { src }, t);
+    const A = animOf(src), t0 = A && A.has('open') ? A.duration('open') : 0;
+    if (t0) DO.SetAnim(E, null, src, ['open', '1']);
+    const cls0 = src.entity ? src.entity.name : src.cls;
+    const fighting = !!(src.entity && src.entity.alive) || !!(cls0 && W.data && W.data.isA && W.data.isA(cls0, 'CFightingObj'));
+    if (fighting && src.entity && src.entity.kind === 'building' && target) src.entity.rally = [target.x, target.z];
+    list.forEach((e, i) => E.after(t0 + i * step, 'spawnOut', { src, target, cls: e.cls, level: e.level, slot, group, fighting }, t));
+    if (A && A.has('close')) E.after(t0 + list.length * step, 'closeSpawner', { src }, t);
   },
   // AF:2644-2865: a transporter with passengers "class/level|..." (levels 1-based); obj_owner missing = 0
   CPLX(E, p, t) {
@@ -319,6 +358,7 @@ export const ACTIONS = {
     if (!on(p.ignore_pyramid, true) && !slotFree(E, C.player(slot), lvl)) return;
     const tr = C.spawn(p.obj_name, slot, v.mx, v.my, { level: lvl });
     if (!tr || !tr.entity) { E.warn(`${t.name}: CPLX ${p.obj_name} could not be created`); return; }
+    if (p.buildup) applyBuildup(E, tr, String(p.buildup).trim());
     E.after(0.2, 'loadPassengers', { tr, passengers: String(p.passengers || ''), slot }, t);
   },
   // AF:4334-4406: the FIRST object of the query becomes an object of class new_obj (same place, rotation, owner)
@@ -508,15 +548,15 @@ export const ACTION_STATUS = {
   QUIT: ['implemented', 'G.endMission(true)'], GAOV: ['implemented', 'G.endMission(false) 4 s later with the reason text'],
   BONI: ['implemented', 'G.campaign.boni; a won mission gives the next one at least that army budget (main.js G.endMission)'],
   FDBK: ['ignored', 'designer debug texts, off in the original too; printed with &trace'],
-  SQNZ: ['implemented', 'G.mission.playSequence; end event, camera_data, quit'], DGSC: ['implemented', 'G.mission.playDialog; DSEN on its end'],
+  SQNZ: ['implemented', 'the timeline (ui/cutscene.js: cameras, actors, speech, subtitles, fades) or, skipped, its end: the actors where the scene leaves them unless snap_actors_back; end event, camera_data, quit'], DGSC: ['implemented', 'G.mission.playDialog; DSEN on its end'],
   QUES: ['implemented', ''], QMRK: ['implemented', 'state and tooltip (G.campaign.setQuestionMark)'], MPNG: ['implemented', 'G.mission.marker / removeMarker; only markers for the human player'],
   INBA: ['implemented', 'refreshed when a variable changes'], TIMR: ['implemented', 'create / pause / unpause / kill'], PSND: ['implemented', 'G.audio.play if the sound event exists'],
   MUSI: ['implemented', 'G.audio.mus.trigger (engine/music.js); no mission of the campaign uses it'],
   WTHR: ['approximated', 'the next track of the level\'s weather program (systems/landmarks.js); a program file (chgtype 0) is not loaded - the game has none, no mission uses it'],
   ACDO: ['implemented', 'WalkAction, Aggressive Walk, Attack, SetPos, RotateTo, SetAnim, Invulnerability, AbortTask, Stop, Kill, FullHeal, Open / Close / Auto Gate, SetRallyPoint, BuildUp, GiveItem, JumpOffWall (the Scorpion wakes)'],
-  WYPT: ['approximated', 'patrol driver in the engine (once / circle / back and forth); fighters walk as an attack-move; straightwalk ignored (path finding)'],
-  COBJ: ['implemented', ''], OCPY: ['implemented', 'highlight ignored'], UNIT: ['implemented', 'hitpoints only (all that occurs)'],
-  SPGR: ['approximated', 'units leave a spawn building on the line towards `pos` (no link points); §buildup variants ignored'],
+  WYPT: ['approximated', 'patrol driver in the engine (once / circle / back and forth); fighters walk as an attack-move, a straightwalk one as a plain move (it only switches the aggression walk off)'],
+  COBJ: ['implemented', ''], OCPY: ['implemented', ''], UNIT: ['implemented', 'hitpoints only (all that occurs)'],
+  SPGR: ['implemented', 'out of a building: at Spwn after its open clip, through Ex_1 to pos (from a scenery prop they stay at Spwn); a unit without pos stops at Ex_1 (the original sends it to the map corner)'],
   CPLX: ['implemented', ''], REPL: ['implemented', ''], DELO: ['implemented', ''], ADGR: ['implemented', ''],
   TRSP: ['approximated', 'mount: board orders to the nearest passengers; dismount: every transporter of the query unloads'],
   EFCT: ['implemented', 'the model of the particle database (sequencer/particles.txt) for loop_value × its length; not kept in saved games'], OBAP: ['implemented', 'visible / hitable / selectable; the other bits are kept on the record'],
@@ -529,12 +569,24 @@ export const ACTION_STATUS = {
 // the delayed parts of the actions (TriggerEngine.after, game/delayed.js)
 Object.assign(JOBS, {
   // SPGR out of a building: one unit leaves it and walks on to the target
-  spawnOut(E, { src, target, cls, level, slot, group }, t) {
-    const W = E.W;
-    const [x, z] = src.alive ? exitPoint(E, src, target) : target ? [target.x, target.z] : posOf(E, src);
-    const rec = spawnOne(E, cls, slot, x, z, level, group, t, false);
+  // (CTheLite.usl:84-186: from Spwn it walks to Ex_1 - else the source's position + its radius along the map's +y -,
+  // with the spawn effect, then on to the rally point; a worker looks for work there)
+  spawnOut(E, { src, target, cls, level, slot, group, fighting = true }, t) {
+    const W = E.W, C = E.C;
+    const sp = src.alive ? linkOf(src, 'Spwn') : null;
+    const [x, z] = sp ? [sp.x, sp.z] : src.alive ? exitPoint(E, src, target) : target ? [target.x, target.z] : posOf(E, src);
+    const rec = spawnOne(E, cls, slot, x, z, level, group, t, true);
     const u = rec && rec.entity;
-    if (u && u.kind === 'unit' && target) W.order([u], { type: 'move', x: target.x, z: target.z, auto: true });
+    if (!u || u.kind !== 'unit') return;
+    if (u.naval && src.entity && src.entity.spawnPoint && target) { const [sx, sz] = src.entity.spawnPoint(target.x, target.z, W.waterNav); W.teleport(u, sx, sz); }
+    else if (sp && !u.naval) { u.pos.x = sp.x; u.pos.z = sp.z; u.pos.y = W.groundY(u); u.syncObj(); if (W.uHash) W.uHash.move(u); }   // (exactly there, inside the building)
+    if (!sp || !fighting) { if (target && fighting) W.order([u], { type: 'move', x: target.x, z: target.z, auto: true }); return; }
+    let ex = linkOf(src, 'Ex_1');
+    if (!ex) { const [sx, sz] = posOf(E, src), [mx, my] = C.toMap(sx, sz), r = (src.entity && src.entity.radius) || 4, [fx, fz] = C.toGame(mx, my + r); ex = { x: fx, z: fz }; }
+    const then = target ? { type: 'move', x: target.x, z: target.z, auto: true, then: u.isWorker ? { type: 'rallyJob', x: target.x, z: target.z } : null } : null;
+    W.order([u], { type: 'move', x: ex.x, z: ex.z, auto: true, then });
+    u.path = [[ex.x, ex.z]]; u.goal = [ex.x, ex.z];        // (straight out: the pathfinder can't start inside the footprint)
+    W.emit('spawnfx', { unit: u });
   },
   closeSpawner(E, { src }) { if (src.alive) DO.SetAnim(E, null, src, ['close', '1']); },
   // CPLX: the passengers board the transporter

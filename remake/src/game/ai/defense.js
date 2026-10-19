@@ -37,8 +37,9 @@ export const Defense = {
         } else if (by.kind === 'unit') this.animalHit = { u: by, t: this.W.time };
       } else if (e.type === 'died') {
         const v = e.entity, k = e.killer;
-        // a worker killed by a wild animal: pest patrol there on the next strategy think (DA:689)
-        if (v && v.owner === p && v.isWorker && k && !k.owner && this.multimap) this.pest = P(v);
+        // a worker killed by a wild animal or an enemy: a pest patrol there (DA:689; the original asks for it when every
+        // worker of an economy task is gone, TargetRealization:206-227 - the remake's workers have no shared tasks)
+        if (v && v.owner === p && v.isWorker && k && (!k.owner || p.isEnemy(k.owner))) this.requestPest(P(v));
         if (v && v.owner === p && v.naval && this.ferryLost) this.ferryLost(v);          // (a crossing's transport: ai/naval.js)
       }
     }
@@ -186,6 +187,7 @@ export const Defense = {
     const W = this.W;
     this.guardN = (this.guardN || 0) + 1;
     if (this.areas.size) this.areasThink(S);
+    this.guardItem(S);
     if (!this.economyOff && this.guardN % 10 === 3) this.towerThink(S);
     if (!this.prm.guard_village || this.prm.noDefence) return;
     // the idle army patrols to a building that was just hit, else it stands at the guard point (GV:399-428)
@@ -204,6 +206,16 @@ export const Defense = {
         W.order([u], { type: 'attackmove', x: g.x + (Math.random() - 0.5) * 16, z: g.z + (Math.random() - 0.5) * 16, auto: true });
       }
     }
+  },
+  // GuardVillage.CheckForItem (GV:1107-1138, every think, skirmish maps): the first guard with empty hands picks up a
+  // free item lying within 60 m of it
+  guardItem(S) {
+    const W = this.W;
+    if (!this.multimap || !W.items || !W.items.length) return;
+    const u = S.pool.find((x) => !this.claims.has(x) && !x.item && W.canCarry && W.canCarry(x) && !x.inside);
+    if (!u || u.task.type === 'pickup') return;
+    const it = W.items.find((x) => x.alive && !x.item.carrier && Math.hypot(x.pos.x - u.pos.x, x.pos.z - u.pos.z) <= 60);
+    if (it) W.order([u], { type: 'pickup', target: it, auto: true });
   },
   // AIDA {id, position, radius, max_units}: a guard of up to maxUnits pool units in a disc; maxUnits <= 0 removes it
   setDefenceArea(id, pos, radius, maxUnits) {

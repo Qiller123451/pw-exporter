@@ -10,6 +10,14 @@ const RALLY = { Hu: 'hu_rally_point', Aje: 'aje_rally_point', Ninigi: 'ninigi_ra
 const ringGeo = new THREE.RingGeometry(0.88, 1.0, 48).rotateX(-Math.PI / 2);
 const ringGeoBig = new THREE.RingGeometry(0.965, 1.0, 64).rotateX(-Math.PI / 2);
 
+// the highlight ring: a 0.3 m line at any radius (geometries by radius in 0.25 m steps)
+const hlGeos = new Map();
+const hlGeo = (r) => {
+  const k = Math.round(r * 4);
+  if (!hlGeos.has(k)) hlGeos.set(k, new THREE.RingGeometry(Math.max(0.1, 1 - 0.3 / (k / 4)), 1.0, 64).rotateX(-Math.PI / 2));
+  return hlGeos.get(k);
+};
+
 export class Overlay {
   constructor(G) {
     this.G = G;
@@ -92,6 +100,21 @@ export class Overlay {
       const own = e.owner === G.me, rel = e.owner && !own ? G.me.relation(e.owner) : 0;
       const col = own ? 0x7dff6a : e.owner ? (rel === 2 ? 0x6ab4ff : rel === 1 ? 0xf0e060 : 0xff4a3a) : e.kind === 'res' ? 0xffe070 : 0xffb050;
       put(e.pos.x, e.pos.z, (e.kind === 'building' ? e.radius * 1.05 : e.radius * 1.25 + 0.2), col);
+    }
+    // objects a mission handed over (OCPY chk_highlight): a steady thin ring of the object's radius until the time is
+    // up; selecting and deselecting it ends it as in the original
+    const HL = G.world.highlights;
+    if (HL) for (const [e, until] of HL) {
+      const sel = G.sel.has(e);
+      if (!e.alive || e.owner !== G.me || G.world.time >= until || (e._hlSel && !sel)) { HL.delete(e); continue; }
+      if (sel) { e._hlSel = true; continue; }
+      const r = Math.max(0.5, e.radius || 1);
+      const m = this.ring(n++);
+      m.position.set(e.pos.x, H(e.pos.x, e.pos.z) + 0.35, e.pos.z);
+      m.scale.setScalar(r);
+      m.geometry = hlGeo(r);
+      m.material.color.setHex(0x7dff6a);
+      m.material.opacity = 0.9;
     }
     const tg = new Set();
     for (const e of G.sel) if (e.alive && e.owner === G.me && e.task && e.task.type === 'attack' && e.task.target && e.task.target.alive && !e.task.auto) tg.add(e.task.target);

@@ -5,7 +5,7 @@
 // hero dies and the mission's own trigger must end the game (GAOV). The pure semantics (expressions, flags,
 // variables, timers) are also covered without a browser by tests/campaign_engine.mjs.
 const C = G.campaign, W = G.world, E = C.engine, D = C.debug, R = C.objects, out = [];
-const ok = (c, m) => out.push(`${c ? 'ok' : 'FAIL'} ${m}`);
+const ok = (c, m, info) => out.push(`${c ? 'ok' : 'FAIL'} ${m}` + (info !== undefined ? '  ' + JSON.stringify(info) : ''));
 const info = (m) => out.push('   ' + m);
 const run = (s) => { for (let i = 0; i < s; i += 1) { G.step(Math.round(Math.min(1, s - i) * 20), 0.05); } };
 const v = (n) => C.variables.get(n);
@@ -68,9 +68,11 @@ try {
   add('t cls', {}, [['REGN', { obj_type: 'ANML|', obj_owner: '1', obj_class: 'arena_gallimimus', obj_count: '==2' }]], [vars('two_galli', 'set', '1')]);
   add('t none', {}, [['REGN', { obj_type: 'CHTR|', obj_owner: '1', obj_count: '<1' }], ['CVAR', { varname: 'in_gate', operation: '==', value: '1' }]], [vars('no_chtr', 'set', '1')], { expression: '1 && 2' });
   run(1.2);
+  const n0 = W.units.length - u0;
+  run(2.3);
   const n1 = W.units.length - u0;
-  ok(n1 >= 1 && n1 <= 2, `SPGR with a spawn building: the units come out one by one (${n1} after 0.7 s)`);
-  run(4);
+  ok(n0 === 0 && n1 >= 1 && n1 <= 2, `SPGR with a spawn building: the first unit after the gate's open clip (2.4 s), then one per spawn_delay (${n0} after 0.7 s, ${n1} after 3 s)`);
+  run(3.5);
   const wave = grp.list().map((r) => r.entity);
   ok(wave.length === 4 && wave.every((u) => u.owner === C.players[1]) && wave.filter((u) => u.name === 'aje_warrior').every((u) => u.level === 2), `the wave of 4 is in the group, owned by player 1, levels as asked (${wave.map((u) => u.name + ' L' + u.level).join(', ')})`);
   ok(v('wave_dead') === undefined, '"wave is dead" (CKGR <1 && TIME) does not fire while the wave lives');
@@ -92,12 +94,16 @@ try {
   ok(v('arrived') === '2' && Math.hypot(g1.pos.x - ex, g1.pos.z - ez) < 8, `WYPT mode 0: the route is walked once, WAYR fires for each unit (${v('arrived')})`);
   ok(v('hurt') === '1', 'OBJP: hit points below 50 %');
   const rev0 = W.reveals.length;
-  add('t join', {}, [['TIME', { duration: '0.2' }]], [['OCPY', { obj_type: 'ANML|', obj_owner: '1', obj_class: 'arena_gallimimus' }], ['SFOW', { pos: '[0 0 0]', obj_type: 'ANML|', obj_class: 'arena_gallimimus', radius: '20', duration: '5' }],
+  add('t join', {}, [['TIME', { duration: '0.2' }]], [['OCPY', { obj_type: 'ANML|', obj_owner: '1', obj_class: 'arena_gallimimus', chk_highlight: '1', highlight_time: '6.7' }], ['SPGR', { classes_0: 'hu_wild_boar§wild_boar_rage 1 1|', owner: '0', pos: '280 250 38' }], ['SFOW', { pos: '[0 0 0]', obj_type: 'ANML|', obj_class: 'arena_gallimimus', radius: '20', duration: '5' }],
     ['ACDO', { obj_name: gate.name, obj_guid: gate.guid, action: 'SetAnim', additional_params: 'open | 1' }], ['ACDO', { obj_type: 'CHTR|', obj_owner: '1', action: 'WalkAction', additional_params: '[256 240 38] | 2' }],
     ['ACDO', { obj_class: 'Cole_s0', obj_owner: '0', action: 'SetPos', additional_params: '[280 250 38] | 2' }], ['UNIT', { obj_class: 'Bela_s0', attrib_name: 'hitpoints', attrib_mod: '=33' }]]);
   run(1);
   const cole = heroes.find((h) => h.name === 'Cole_s0'), bela = heroes.find((h) => h.name === 'Bela_s0');
   ok(g1.owner === me && wave.filter((u) => u.owner === me).length === 2, 'OCPY without new_owner gives the objects to the human player');
+  const hl = [...(W.highlights || new Map())].filter(([e]) => e.owner === me && e.name === 'arena_gallimimus');
+  ok(hl.length === 2 && hl.every(([, until]) => Math.abs(until - W.time - 5) < 0.3), 'OCPY chk_highlight: both are marked for floor(highlight_time) = 6 s', hl.map(([, u]) => +(u - W.time).toFixed(2)));
+  const boar = W.units.find((u) => u.alive && u.name === 'hu_wild_boar' && u.owner === me);
+  ok(!!boar && !!boar.localTT && boar.localTT.has('Hu/Upgrades/hu_wild_boar/wild_boar_rage'), 'SPGR "hu_wild_boar§wild_boar_rage": the boar has the rage upgrade on its own tech tree');
   ok(W.reveals.length === rev0 + 2 && W.reveals[W.reveals.length - 1].follow, 'SFOW with pos [0 0 0]: one reveal per object, following it');
   const [cx, cz] = C.toGame(280, 250);
   ok(Math.hypot(cole.pos.x - cx, cole.pos.z - cz) < 3 && Math.round(bela.hp) === 33, 'ACDO SetPos teleports Cole; UNIT sets hit points');

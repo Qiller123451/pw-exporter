@@ -492,9 +492,25 @@ export class WallMap {
     return null;
   }
   // ---------------------------------------------------------------- objects on the map (AddObj 0x7de950, RemoveObj 0x7dee80)
+  // an old two-tile gate (the campaign maps: on a tile edge or corner, walls_re.md §1.4) -> [tile A, tile B, d] with
+  // B = A + d, or null for a gate centred on a tile
+  oldGateTiles(b, d) {
+    const x = b.origin ? b.origin.x : b.pos.x, z = b.origin ? b.origin.z : b.pos.z;
+    const [ci, cj] = this.tileOf(x, z), [cx, cz] = this.centre(ci, cj);
+    if (Math.hypot(x - cx, z - cz) < 1) return null;
+    let best = null, bd = 1;
+    for (const e of [d, (d + 4) & 7, (d + 2) & 7, (d + 6) & 7, (d + 1) & 7, (d + 3) & 7, (d + 5) & 7, (d + 7) & 7]) {
+      const ax = x - 4 * DX[e], az = z - 4 * DZ[e], [ai, aj] = this.tileOf(ax, az), [tx, tz] = this.centre(ai, aj);
+      const err = Math.hypot(ax - tx, az - tz);
+      if (err < bd - 1e-6) { bd = err; best = [[ai, aj], [ai + DX[e], aj + DZ[e]], e]; }
+    }
+    return best;
+  }
   add(b) {
     const c = this.classOf(b.name);
-    const [i, j] = this.tileOf(b.origin ? b.origin.x : b.pos.x, b.origin ? b.origin.z : b.pos.z);
+    let [i, j] = this.tileOf(b.origin ? b.origin.x : b.pos.x, b.origin ? b.origin.z : b.pos.z);
+    const old = b.def.wallKind === 'gate' ? this.oldGateTiles(b, b.gateD != null ? b.gateD : this.gateDOf(b)) : null;
+    if (old) { [i, j] = old[0]; b.gateD = old[2]; b.tile2 = old[1]; }
     b.tile = [i, j];
     const k = this.key(i, j);
     const t = this.tiles.get(k) || {};
@@ -505,6 +521,17 @@ export class WallMap {
     if (type === undefined) return;
     b.wallType = type;
     this.write(i, j, this.ownerId(b.owner), race, cls, type);
+    if (old) {
+      // the second tile of an old gate: a gate too (the pair rule gives the walls on both sides their arms into it),
+      // no flank blocking
+      const [i2, j2] = old[1], k2 = this.key(i2, j2), t2 = this.tiles.get(k2) || {};
+      t2.gate = b; this.tiles.set(k2, t2);
+      this.write(i2, j2, this.ownerId(b.owner), race, cls, type);
+      if (b.built) this.setReady(b);
+      this.refresh(i, j, type, b);
+      this.refresh(i2, j2, type, b);
+      return;
+    }
     if (b.built) this.setReady(b);
     // a gate centred on a tile: its flank tiles are blocked for good
     if (type === WT.GATE) {
@@ -516,6 +543,19 @@ export class WallMap {
   }
   remove(b) {
     if (!b.tile) return;
+    if (b.tile2) {
+      const [i2, j2] = b.tile2, k2 = this.key(i2, j2), t2 = this.tiles.get(k2);
+      if (t2 && t2.gate === b) { delete t2.gate; if (!t2.wall && !t2.gate && !t2.tower && !t2.trap) this.tiles.delete(k2); }
+      if (b.wallType !== undefined) this.clearPart(i2, j2, b.wallType);
+      b.tile2 = null;
+      this.refresh(i2, j2, b.wallType, b);
+      const [i, j] = b.tile, k = this.key(i, j), t = this.tiles.get(k);
+      if (t && t.gate === b) { delete t.gate; if (!t.wall && !t.gate && !t.tower && !t.trap) this.tiles.delete(k); }
+      if (b.wallType !== undefined) this.clearPart(i, j, b.wallType);
+      b.tile = null;
+      this.refresh(i, j, b.wallType, b);
+      return;
+    }
     const [i, j] = b.tile;
     const k = this.key(i, j), t = this.tiles.get(k);
     if (t && t[b.def.wallKind] === b) { delete t[b.def.wallKind]; if (!t.wall && !t.gate && !t.tower && !t.trap) this.tiles.delete(k); }
@@ -535,10 +575,12 @@ export class WallMap {
     return d >= 0 ? d : 3;
   }
   setReady(b) {
-    if (!b.tile) return;
-    const [i, j] = b.tile, v = this.word(i, j);
-    if (b.wallType === WT.TOWER) this.setWord(i, j, v | 0x4000);
-    else if (b.wallType === WT.WALL || b.wallType === WT.GATE) this.setWord(i, j, v | 0x2000 | (b.wallType === WT.GATE ? 0x4000 : 0));
+    for (const tl of [b.tile, b.tile2]) {
+      if (!tl) continue;
+      const [i, j] = tl, v = this.word(i, j);
+      if (b.wallType === WT.TOWER) this.setWord(i, j, v | 0x4000);
+      else if (b.wallType === WT.WALL || b.wallType === WT.GATE) this.setWord(i, j, v | 0x2000 | (b.wallType === WT.GATE ? 0x4000 : 0));
+    }
   }
   // a tile changed: the wall pieces there and on its own neighbours get their parts and blocking again
   // (towers do not refresh their neighbours: 0x7dce10)
@@ -587,7 +629,7 @@ export class WallMap {
   pfMask(i, j) {
     const v = this.word(i, j);
     if (!(isWall(v) || isGate(v))) return 0;
-    const rel = this.connections(i, j, ownerOf(v), raceOf(v), WT.WALL);
+    const rel = this.visualRel(i, j);           // (no box into a one-tile gate: its posts close the gap, the passage stays free)
     if (!rel) return 0;
     const pf = new Array(8).fill(NONE);
     for (let d = 0; d < 8; d++) {

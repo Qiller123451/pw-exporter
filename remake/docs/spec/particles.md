@@ -50,10 +50,30 @@ the client (types 0-2 are USL classes, `Data/Base/Scripts/gfx/particle.usl`). Re
 - emit_timer > 0: emission only on the frame the timer runs out (then it restarts at FRand * emit_timer_var *
   emit_timer): the stones' twinkle, bursts every few seconds.
 - dt: real frame time, at most 1 s (the 25 fps tick of particle.usl is the script sources').
-- Not ported: the spawn point spread along the emitter's movement in a frame, emit_per_meter, src_rot_speed (orbit
-  about the axis), the camera-distance level of detail (120 m full, none beyond 220 m; the remake sprays within
-  160 m of the camera's target), 0x40000000 ground-flat quads, "no emission while the emitter is below the model's
-  origin" (0x40000 lifts it).
+- emit_per_meter (ship wakes, arrow trails): one particle per 1 / emit_per_meter metres the emitter moved
+  (moveDelta, SetMatrix 0x703f70: the emitter's movement since the last frame in its model's frame); the slots
+  start hidden; distance left over carries to the next frame. New particles start somewhere along that movement
+  (EmitPos 0x703ac0) unless flag 0x1000000.
+- 0x80000 (world-space particles) also inherit half the model's speed (srcVel: the world movement smoothed with a
+  0.08 s time constant), which fades with 1 - 0.5 dt per frame.
+
+## More of ProcPart / the renderer
+- src_rot_speed (rad/s): the particle turns about the emitter's axis - R = rotation by -theta about z; about the
+  emitter pos' = E + 2e - R e (to first order +theta, slowly spiralling out), with 0x400000 R pos about the model's
+  origin. With 0x20000000 the sprite then points along that motion.
+- 0x40000000: the sprite lies flat in the world's ground plane at the particle's height, a square with the
+  half-diagonal size / 8, turned by rot (with 0x20000000: the heading of its flight on the ground, + pi). Ship
+  wakes, waterfall feet, the healing well.
+- Level of detail (0x703e40): with d = the model origin's distance from the camera minus ParticleSrcOffset (config
+  "Rendering", default 120 m), a source keeps all its slots for d <= 0, max * (1 - d / ParticleSrcDist (100 m)) *
+  load + 2 of them below 100, none beyond; load = 1 - clamp((count / limit - 0.75) * 4) once the last frame drew
+  at least half of ParticleLimit (5000).
+- Fade (0x705191): a particle farther from the camera than the fog's start fades by (end - d) / (end - start) and
+  is not drawn beyond its end - the scene's linear fog (the sky renderer sets it each frame from the sky colour,
+  the view's tilt and ViewDepth; the remake: its fixed scene fog).
+- Not ported: the 0x400000 orbit about the model's origin (no model uses it), "no emission while the emitter is below its
+  model's origin (z < 0) without 0x40000" (Process 0x704a91): in which frame is unclear - the SEAS turret's muzzle
+  flashes sit 4 m below their own model's origin and flash in the game.
 
 ## Before (the remake's guess, until 2026-10-18)
 The vector was taken as the half sizes of an emitting box with random speeds. The hit sparks (vel.z 26.5) and the

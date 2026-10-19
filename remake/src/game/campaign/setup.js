@@ -533,7 +533,9 @@ export class Campaign {
     // building_ready "0" = a construction site (the zeppelin wreck of mission 4). Without the attribute and with 0 hit
     // points the building was never put up (the launch ramp of mission 9, "Order your workers to build the ramp!")
     const ready = a.building_ready != null ? a.building_ready !== '0' : a.hitpoints == null || +a.hitpoints > 0;
-    const owner = this.players[o.owner], at = String(pl.cls).toLowerCase() === String(o.class).toLowerCase() ? { x, z, rot: this.heading(o.rot) } : this.fit(pl.cls, owner, x, z, this.heading(o.rot));
+    const owner = this.players[o.owner], same = String(pl.cls).toLowerCase() === String(o.class).toLowerCase();
+    // (walls, gates, towers and traps of every tribe share the 8 m wall grid: the equivalent stands in the same place)
+    const at = same || this.onWallGrid(pl.cls, owner) ? { x, z, rot: this.heading(o.rot) } : this.fit(pl.cls, owner, x, z, this.heading(o.rot));
     const b = W.placeBuilding(pl.cls, owner, at.x, at.z, at.rot, ready);
     this.pending = null;
     if (!b) { this.counts.missing++; this.miss(o.class, 'no model'); return; }
@@ -543,8 +545,9 @@ export class Campaign {
     this.counts.buildings++;
     this.applyState(pl, b);
   }
-  // a building of another tribe's class (tribes.js) can be bigger than the one the map was made for, and walls and
-  // harbours snap to their own grid / the coast: the nearest place where it fits (else where it was)
+  onWallGrid(cls, owner) { const d = this.world.data.def(cls, owner); return !!(d && d.wallKind); }
+  // a building of another tribe's class (tribes.js) can be bigger than the one the map was made for, and harbours snap
+  // to the coast: the nearest place where it fits (else where it was)
   fit(cls, owner, x, z, rot) {
     const W = this.world;
     for (let k = 0; k < 160; k++) {
@@ -559,7 +562,7 @@ export class Campaign {
     const [x, z] = this.toGame(o.x, o.y);
     const owner = o.owner != null ? this.players[o.owner] || null : null;
     this.pending = pl.rec;
-    const u = W.spawn(pl.cls, owner, x, z, { level: Math.max((o.level || 0) + 1, this.D.minLevel(pl.cls, owner)), heading: this.heading(o.rot) });
+    const u = W.spawn(pl.cls, owner, x, z, { level: Math.max((o.level || 0) + 1, this.D.minLevel(pl.cls, owner)), heading: this.heading(o.rot), unit: { alt: o.z } });   // (alt: the zeppelin's height)
     this.pending = null;
     if (!u) { this.counts.missing++; this.miss(o.class, this.manifestHas(pl.cls) ? 'not created' : 'no model'); return; }
     if (W.standIns.get(pl.cls.toLowerCase()) && u.gfx === W.standIns.get(pl.cls.toLowerCase())) this.miss(o.class, 'no model, shown as ' + u.gfx);
@@ -740,21 +743,24 @@ export class Campaign {
   }
   // an object given to the player in a mission played with another tribe becomes the chosen tribe's (tribes.js):
   // the same record (name, groups) gets a new world object of the equivalent class in the same place (a building where
-  // it fits: fit), with the same share of hit points and level; 'owner' is emitted as for OCPY
+  // it fits: fit; walls, gates, towers, traps exactly, a gate with its state), with the same share of hit points and
+  // level; 'owner' is emitted as for OCPY
   convert(rec, p) {
     const W = this.world, e = rec.entity, from = e.owner, to = this.ownClass(e.name);
-    const ix = this.D.info(to), x = e.pos.x, z = e.pos.z, ratio = e.hp / e.maxHp;
+    const bld = e.kind === 'building', x = bld && e.origin ? e.origin.x : e.pos.x, z = bld && e.origin ? e.origin.z : e.pos.z, rot = bld ? e.rot || 0 : e.heading || 0;
+    const ix = this.D.info(to), ratio = e.hp / e.maxHp, gateState = e.def.gate ? e.gateState : null;
     const level = e.kind === 'unit' ? e.level : undefined, built = e.kind !== 'building' || e.built;
     if (this.G.sel) this.G.sel.delete(e);
     W.removeEntity(e);
     rec.entity = null;
     rec.setClass(to, ix.type);
     this.pending = rec;
-    const at = ix.type === 'BLDG' ? this.fit(to, p, x, z, e.heading || 0) : { x, z, rot: e.heading || 0 };
+    const at = ix.type === 'BLDG' && !this.onWallGrid(to, p) ? this.fit(to, p, x, z, rot) : { x, z, rot };
     const n = W.spawn(to, p, at.x, at.z, { level: level != null ? Math.max(level, this.D.minLevel(to, p)) : undefined, heading: at.rot, built });
     this.pending = null;
     if (!n) { this.warn(`${to}: could not be created for the player (model not loaded?)`); this.objects.drop(rec); return false; }
     n.hp = Math.max(1, Math.round(n.maxHp * ratio));
+    if (gateState != null && n.def.gate && W.setGate) W.setGate(n, gateState);
     if (n.kind === 'building') n.updateVisual();
     else n.home.set(n.pos.x, n.pos.z);
     this.emit('owner', rec, from, p);

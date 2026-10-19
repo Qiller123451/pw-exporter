@@ -57,7 +57,7 @@ const SPECS = [
   { cls: WallMap, name: 'WallMap', skip: ['world'] },
   { cls: Attack, name: 'Attack', skip: [] },
   { cls: Pool, name: 'Pool', skip: [] },
-  { cls: TribeAI, name: 'TribeAI', skip: ['G', 'W', 'D', 'S', '_res', '_resV', '_mix', '_mixKey', '_modes', '_hint', '_hintT', 'evI', 'evLast', 'cfg'] },
+  { cls: TribeAI, name: 'TribeAI', skip: ['G', 'W', 'D', 'S', '_res', '_resV', '_mix', '_mixKey', '_modes', '_hint', '_hintT', 'evI', 'evLast', 'cfg', 'minePos', 'mineShoreList', 'mineDbg'] },
   { cls: Rec, name: 'Rec', skip: ['data'], make: () => Object.create(Rec.prototype) },
   { cls: Group, name: 'Group', skip: [], make: () => Object.create(Group.prototype) },
   { cls: Registry, name: 'Registry', keep: ['all', 'groups', 'counter'], revive: reviveRegistry },
@@ -295,7 +295,11 @@ export function restore(G, snap) {
   for (const r of W.resources) {
     const f = savedRes.get('res:' + r.id);
     const type = f ? f.type : r.type === 'tree' ? 'timber' : r.type, alive = f ? f.alive : false;
-    if (r.type === 'tree' && type !== 'tree') W.fellTree(r);
+    if (r.type === 'tree' && type !== 'tree') {
+      if (f && f.fallClip) { r.fallClip = f.fallClip; if (f.logRot != null) r.logRot = f.logRot; }
+      r.fallen = true;                // (the log lies as it fell: ui/logs.js)
+      W.fellTree(r);
+    }
     if (!alive && r.alive) W.depleteNode(r);
   }
   // 4. every saved object, made or found, with its saved values
@@ -353,7 +357,7 @@ function reviveUnit(u, X, W) {
   u.hp = hp;
   if (u.weapon !== u.weapons.long) u.attachWeapon(u.weapon);
   if (u.carry) u.setCarry(u.carry.res, u.carry.amount, u.carry.look);
-  if (u.toolGfx) { const g = u.toolGfx; u.toolGfx = null; u.attachTool(g); }
+  if (u.toolGfx && !u.toolObj) { const g = u.toolGfx; u.toolGfx = null; u.attachTool(g, u.toolLink || 'HndR'); }
   if (u.busyAnim) u.busyAnim = false;           // (the animation callbacks that end it are not saved)
   if (u.inside || u.parked || u.removed) u.obj.visible = false;
   if (!u.alive) {

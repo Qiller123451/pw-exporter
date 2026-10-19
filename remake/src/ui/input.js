@@ -53,6 +53,14 @@ function placeGrid() {
   return pts;
 }
 
+// where a unit's queued walks end
+function lastWaypoint(u) {
+  let t = u.task;
+  if (!t || (t.type !== 'move' && t.type !== 'attackmove' && !(t.type === 'attack' && t.amove))) return [u.pos.x, u.pos.z];
+  while (t.then && t.then.type !== 'patrol') t = t.then;
+  return t.amove ? t.amove : t.x != null ? [t.x, t.z] : [u.pos.x, u.pos.z];
+}
+
 export class Input {
   constructor(G) {
     this.G = G;
@@ -668,13 +676,16 @@ export class Input {
     let slots;
     if (n === 1) slots = [[units[0], x, z]];
     else {
+      // facing from where the group will be: its last queued waypoint (Shift) or where it stands
       let cx = 0, cz = 0;
-      for (const u of units) { cx += u.pos.x; cz += u.pos.z; }
+      for (const u of units) { const [qx, qz] = opts.queue ? lastWaypoint(u) : [u.pos.x, u.pos.z]; cx += qx; cz += qz; }
       cx /= n; cz /= n;
       slots = formationSlots(G.world, units, x, z, opts.dir ?? Math.atan2(z - cz, x - cx), opts.spacing ?? SPACING);
     }
+    // one walk of the group: the first one to reach a waypoint takes the others on to the next (world.js moveDone)
+    const wp = n > 1 ? { n } : null;
     for (const [u, px, pz] of slots) {
-      const o = opts.patrol ? { type: 'patrol', pts: [[u.pos.x, u.pos.z], [px, pz]], i: 1 } : { type, x: px, z: pz };
+      const o = opts.patrol ? { type: 'patrol', pts: [[u.pos.x, u.pos.z], [px, pz]], i: 1 } : { type, x: px, z: pz, wp };
       if (opts.queue && G.world.queueOrder(u, o)) continue;
       G.order([u], o);
     }
@@ -740,7 +751,7 @@ export class Input {
       const ships = [...G.sel].filter((e) => e.alive && e.owner === G.me && e.naval && G.data.actionsOf(e.rulesOwner(), e).some((x) => x.id === a.id));
       if (g && ships.length) {
         ships.sort((p, q) => Math.hypot(p.pos.x - g.x, p.pos.z - g.z) - Math.hypot(q.pos.x - g.x, q.pos.z - g.z));
-        const why = G.world.layWaterThing(ships[0], a, g.x, g.z);
+        const why = G.world.layWaterThing(ships[0], a, g.x, g.z, shift);
         if (why) { G.hud.message(why === 'place' ? 'Must be in deep water, away from other mines' : G.reason(why), 'bad'); G.feedback.error(); }
         else { G.overlay.marker(g.x, g.z, 0x7dff6a); G.feedback.ordered('move', [ships[0]]); }
       }
@@ -955,6 +966,8 @@ export class Input {
     // the chat (Keys: Enter to all, Ctrl+Enter to the allies, Shift+Enter to the enemies)
     if ((e.code === 'Enter' || e.code === 'NumpadEnter') && G.chat) { e.preventDefault(); G.chat.open(e.ctrlKey ? 'allies' : e.shiftKey ? 'enemies' : 'all'); return; }
     if (e.code === 'F1') { e.preventDefault(); G.menu.helpFor(); return; }      // ShowHelp (Keys.srf F1)
+    // Tab / Ctrl+Tab: the army pyramid open or closed (Keys.srf SwitchPyramidForward / Backward - the same toggle)
+    if (e.code === 'Tab') { e.preventDefault(); G.hud.togglePyramid(); return; }
     const units = this.myUnits();
     const digit = /^(Digit|Numpad)(\d)$/.exec(e.code);
     if (digit && !(digit[1] === 'Numpad' && !G.hud.armed)) {

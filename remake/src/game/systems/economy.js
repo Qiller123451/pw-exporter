@@ -306,10 +306,16 @@ export const Economy = {
     for (const x of this.units) if (x.isDropoff) test(x);
     return best;
   },
-  // trees: standing tree -> timber log after 6 chops (vegetation.usl)
-  fellTree(node) {
+  // trees: standing tree -> timber log after 6 chops (vegetation.usl CTree.Fall): the stump stays, the log (ui/logs.js)
+  // falls with chop_down_01..03 (CWood.OnInit: Random % 3 + 1), or with the clip a brachio's stomp chose (0..7, away
+  // from it; its logs lie at map rotation 0)
+  fellTree(node, clip = null) {
     if (node.type !== 'tree') return;
     node.type = 'timber';
+    if (!node.fallClip) {
+      node.fallClip = clip != null ? 'chop_down_0' + clip : 'chop_down_0' + (1 + (Math.imul(node.id | 0, 2654435761) >>> 0) % 3);
+      if (clip != null) node.logRot = Math.PI;
+    }
     node.chop = 0;
     this.forestVersion = (this.forestVersion || 0) + 1;      // (the minimap's forest)
     this.props.remove(node.propHandle);
@@ -319,7 +325,6 @@ export const Economy = {
     node.radius = 2.2;
     node.maxWorkers = 5;               // at most 5 workers on one log (Resource.usl:212)
     if (node.stumpKind) node.stumpHandle = this.props.add(node.stumpKind, node.pos.x, node.pos.y, node.pos.z, node.rot || 0, node.scale || 1);
-    if (node.timberKind) node.timberHandle = this.props.add(node.timberKind, node.pos.x, node.pos.y, node.pos.z, node.rot || 0, node.scale || 1);
     this.emit('treefall', { node });
   },
   depleteNode(node) {
@@ -327,7 +332,7 @@ export const Economy = {
     node.alive = false;
     this.rHash.remove(node);
     if (node.propHandle) this.props.remove(node.propHandle);
-    if (node.timberHandle) this.props.remove(node.timberHandle);
+    if (node.type === 'timber') this.emit('timbergone', { node });
     if (node.spriteHandles) for (const h of node.spriteHandles) this.foliage.hide(h);
     if (node.cells && node.cells.length) this.nav.mark(node.cells, -1);
     if (node.corpseOf) node.corpseOf.corpseGone = true;

@@ -9,7 +9,7 @@ import { Renderer, RTSCamera } from './engine/renderer.js';
 import { initAssets, loadModel, Assets } from './engine/assets.js';
 import { HeightField, buildTerrain, FogOfWar, refreshTerrain, refreshSplat } from './engine/terrain.js';
 import { GroundBrushes, levelGround, brushCells } from './game/ground.js';
-import { PropField, FoliageField, treeSprites, holeUniforms, spriteLight } from './engine/props.js';
+import { PropField, FoliageField, treeSprites, holeUniforms, spriteLight, spriteTexture } from './engine/props.js';
 import { FX } from './engine/fx.js';
 import { Particles } from './engine/particles.js';
 import { Weather } from './engine/weather.js';
@@ -17,6 +17,7 @@ import { Atmo } from './engine/atmo.js';
 import { Audio } from './engine/audio.js';
 import { HOME_CLASS } from './engine/music.js';
 import { Feedback } from './ui/feedback.js';
+import { FallenTrees } from './ui/logs.js';
 import { GAME_FX_MODEL } from './ui/gamefx.js';
 import { ModelFx } from './engine/modelfx.js';
 import { MIRAGE_FX_MODELS } from './game/systems/moves_mirage.js';
@@ -178,17 +179,6 @@ function tpl(name, soft) {
 }
 
 // ---------------------------------------------------------------------------- world setup
-const spriteTex = new Map();
-function spriteTexture(uri) {
-  const file = String(uri || '').split('/').pop();
-  if (spriteTex.has(file)) return spriteTex.get(file);
-  const t = new THREE.TextureLoader().load('assets/tex/' + file);
-  t.flipY = false;
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 4;
-  spriteTex.set(file, t);
-  return t;
-}
 
 // the setting's minimap colour table (pipeline/build_terrain.py: Texture/Scape/<Setting>/minimap_colors.tga, 6 rows of
 // 21 colours); null with game data built before it (the minimap then stays empty until "Rebuild game data")
@@ -278,6 +268,7 @@ async function buildWorld(cfg, S) {
   G.weather.enabled = G.settings.weather !== false;
   G.audio.muted = !G.settings.sound;
   G.feedback = new Feedback(G);
+  G.logs = new FallenTrees(G);
   const P = S.play;
   const W = G.world = new World({
     scene, data: G.data, templates: tpl, height, size: S.size, play: P, wallGrid: S.wallGrid,
@@ -360,7 +351,6 @@ async function buildWorld(cfg, S) {
     list.sort((a, b) => (a.size < 1 ? 1 : 0) - (b.size < 1 ? 1 : 0));
     return [G.foliage.add(miscTex, list)];
   };
-  const timbers = ['jungle_tree_01_timber', 'jungle_tree_02_timber'].filter((n) => tpl(n, true));
   for (const t of S.trees) {
     if (!tpl(t.model, true)) continue;
     const y = height(t.x, t.z);
@@ -371,11 +361,10 @@ async function buildWorld(cfg, S) {
     const cells = nav.markCircle(t.x, t.z, (big ? 1.6 : 1.1) * t.scale);
     if (!t.inside) continue;
     const stump = t.stump && tpl(t.stump, true) ? kind(t.stump, {}) : tpl('jungle_tree_01_stump', true) ? kind('jungle_tree_01_stump', {}) : null;
-    const tm = t.timber && tpl(t.timber, true) ? t.timber : timbers.length ? timbers[Math.floor(brnd() * timbers.length)] : null;
-    const timber = tm ? kind(tm, {}) : null;
+    const timber = t.timber && tpl(t.timber, true) ? t.timber : null;     // (the falling log: ui/logs.js)
     W.addResource('tree', 'wood', t.x, t.z, t.wood, {
       radius: big ? 1.5 : 1.1, propHandle: ph2, spriteHandles: sh, cells, stumpKind: stump, timberKind: timber,
-      rot: t.rot, scale: big ? t.scale : t.scale * 0.65, name: t.model, maxWorkers: 4,
+      rot: t.rot, scale: t.scale, name: t.model, maxWorkers: 4,
     });
   }
   // undergrowth: camera-facing leaf sprites (same technique as the tree canopies)
@@ -1084,13 +1073,14 @@ function atmoState() {
 // and the player sees the error text instead of a frozen black screen (ui/diagnostics.js).
 const DRAW_STEPS = [
   ['input', (dt) => G.input.update(dt)],
-  ['camera', (dt) => G.rtscam.update(dt)],
+  ['camera', (dt) => (G.seqCam ? G.seqCam(dt) : G.rtscam.update(dt))],      // (a cutscene's shot: ui/cutscene.js)
   ['culling', () => { cullUnits(); updateHoles(); freezeStill(); }],
   ['props', () => { G.props.update(G.camera); G.foliage.update(G.camera.position); if (G.grass && G.grass.mesh.visible) G.grass.update(G.rtscam.target, performance.now() / 1000); }],
   ['sun', () => G.renderer.followSun(G.rtscam.target)],
-  ['effects', (dt) => { G.fx.update(dt); G.mfx.update(dt); G.weather.update(G.world.weatherNow(), G.rtscam.target, dt); }],
+  ['effects', (dt) => { G.fx.update(dt); G.mfx.update(dt); G.weather.update(G.seqWeather !== undefined ? G.seqWeather : G.world.weatherNow(), G.rtscam.target, dt); }],
   ['audio', (dt) => { G.audio.listener.copy(G.rtscam.target); G.audio.yaw = G.rtscam.yaw; G.audio.mus.update(G.world.time, G.audio.listener, homes); G.audio.atmo.update(dt, atmoState(), G.world.time); }],
   ['overlay', (dt) => G.overlay.update(dt)],
+  ['logs', () => G.logs && G.logs.update()],
   ['hud', (dt) => G.hud.update(dt)],
   ['minimap', (dt) => G.minimap.update(dt)],
   ['mission', (dt) => { if (G.mission) G.mission.update(dt); if (G.sequelUI) G.sequelUI.update(dt); }],

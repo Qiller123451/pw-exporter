@@ -18,6 +18,7 @@ import { Assets, loadTexture } from './assets.js';
 // parts.js applyState) or a detached model sprays nothing. A weapon's flash sprays only while its wielder attacks.
 
 const RANGE = 160;              // m from the camera target
+const SRC_OFFSET = 120, SRC_DIST = 100;     // config ParticleSrcOffset / ParticleSrcDist (Rendering, 0x7096ba)
 const MAX_PER_BATCH = 4000;
 // what the graphics card is asked to fill per frame, in screen areas (sprites close to the camera cover it all;
 // thousands of them made a graphics card reset - Windows stops a GPU that takes seconds for a frame), and the
@@ -35,8 +36,8 @@ const F = {
   SPHERE: 0x1, SPHERE_VEL: 0x2, KEEP_POS: 0x4, KEEP_ROT: 0x8, KEEP_SIZE: 0x10, KEEP_TILE: 0x20, RADIAL_VEL: 0x40,
   BURST: 0x80, TILE_FWD: 0x100, RING: 0x200, TILE_BACK: 0x400, TILE_PING: 0x800, TILE_PONG: 0x1000, KEEP_COLOR: 0x2000,
   FADE_ALPHA: 0x4000, FADE_BOTH: 0x8000, RADIAL_H: 0x10000, UP_ONLY: 0x20000, BELOW: 0x40000, WORLD: 0x80000,
-  SUCK_ORIGIN: 0x200000, HEMI: 0x800000, STILL: 0x2000000, LOCAL_GRAV: 0x4000000, EDGE_SPEED: 0x8000000,
-  NO_Y: 0x10000000, ALONG_VEL: 0x20000000,
+  SUCK_ORIGIN: 0x200000, ROT_ORIGIN: 0x400000, HEMI: 0x800000, NO_SPREAD: 0x1000000, STILL: 0x2000000, LOCAL_GRAV: 0x4000000, EDGE_SPEED: 0x8000000,
+  NO_Y: 0x10000000, ALONG_VEL: 0x20000000, GROUND: 0x40000000,
 };
 // Sprites are quads (one instance each): as wide as their atlas cell is to its height, hung at the cell's pivot
 // (the atlas record's pivot x / y + 127: -127 .. 127 from the cell's middle to its edge, the rays of the healing aura
@@ -45,7 +46,7 @@ const F = {
 const VERT = `
 attribute vec2 corner;
 attribute vec3 aPos; attribute float aSize; attribute float aAlpha; attribute vec3 aColor; attribute vec2 aTile; attribute float aRot;
-attribute vec3 aPivot;        // pivot x, pivot y (-1 .. 1, y down), upright (0 / 1)
+attribute vec3 aPivot;        // pivot x, pivot y (-1 .. 1, y down), flat on the ground (0 / 1)
 uniform float uScale; uniform float uMaxPx; uniform float uAspect;
 varying float vAlpha; varying vec3 vColor; varying vec2 vUv;
 void main() {
@@ -54,9 +55,13 @@ void main() {
   float h = min(aSize, uMaxPx * d / uScale), w = h * uAspect;      // never larger than the largest share of the screen
   vec2 q = vec2((corner.x - aPivot.x * 0.5) * w, (corner.y + aPivot.y * 0.5) * h);
   if (aPivot.z > 0.5) {
-    vec3 r = vec3(viewMatrix[0][0], 0.0, viewMatrix[2][0]);
-    r = length(r) > 1e-4 ? normalize(r) : vec3(1.0, 0.0, 0.0);
-    gl_Position = projectionMatrix * viewMatrix * vec4(aPos + r * q.x + vec3(0.0, q.y, 0.0), 1.0);
+    // flag 0x40000000: a square lying flat on the world's ground plane at the particle's height, turned by aRot
+    // (renderer 0x7053b3: half-diagonal size / 8 = aSize / 2)
+    float side = aSize * 0.7071;
+    vec2 g = vec2((corner.x - aPivot.x * 0.5) * side, (corner.y + aPivot.y * 0.5) * side);
+    float s = sin(aRot), k = cos(aRot);
+    vec3 fwd = vec3(s, 0.0, k), rgt = vec3(k, 0.0, -s);
+    gl_Position = projectionMatrix * viewMatrix * vec4(aPos + rgt * g.x + fwd * g.y, 1.0);
   } else {
     float s = sin(aRot), k = cos(aRot);
     mv.xy += vec2(k * q.x - s * q.y, s * q.x + k * q.y);
@@ -111,7 +116,7 @@ class Batch {
     this.size[i] = d.size; this.alpha[i] = d.a; this.rot[i] = d.rot;
     this.color[i * 3] = d.c[0]; this.color[i * 3 + 1] = d.c[1]; this.color[i * 3 + 2] = d.c[2];
     this.tile[i * 2] = d.tx; this.tile[i * 2 + 1] = d.ty;
-    this.pivot[i * 3] = x.pivot[0]; this.pivot[i * 3 + 1] = x.pivot[1]; this.pivot[i * 3 + 2] = 0;
+    this.pivot[i * 3] = x.pivot[0]; this.pivot[i * 3 + 1] = x.pivot[1]; this.pivot[i * 3 + 2] = x.F & F.GROUND ? 1 : 0;
   }
   flush() {
     for (const k in this.attrs) {
@@ -213,6 +218,10 @@ export class Particles {
     const H = window.innerHeight * pixelRatio, maxPx = H * MAX_SHARE;
     const budget = { area: L.fill * H * window.innerWidth * pixelRatio, n: L.sprites };
     const eye = camera.position;
+    const fog = this.scene.fog && this.scene.fog.isFog ? this.scene.fog : null;
+    // the load of the last frame (0x706b9f): above half the limit the sources hold back
+    const last = this.drawn || 0, lim = L.sprites;
+    this.load = last >= lim / 2 ? 1 - Math.min(1, Math.max(0, (last / lim - 0.75) * 4)) : 1;
     const keep = [];
     for (const x of this.emitters) {
       if (x.dead) continue;
@@ -236,6 +245,12 @@ export class Particles {
       if (on && x.fire && !Particles.firing(x)) on = false;
       if (!x.parts.length && (!on || _v.distanceTo(target) > RANGE || !this.frustum.intersectsSphere(_s.set(_v, 15)))) continue;
       const near = on && _v.distanceTo(target) <= RANGE;
+      // the source's level of detail (0x703e40): every slot within ParticleSrcOffset (120 m) of the camera, then
+      // fewer over ParticleSrcDist (100 m), fewer still when the frame is full (load)
+      const max = Math.max(1, x.e.max || 1);
+      if (x.root) _g.setFromMatrixPosition(x.root.matrixWorld); else _g.setFromMatrixPosition(M);
+      const dl = _g.distanceTo(eye) - SRC_OFFSET;
+      x.lod = dl >= SRC_DIST ? 0 : dl <= 0 ? max : Math.min(max, Math.floor(max * (1 - dl / SRC_DIST) * this.load) + 2);
       this.step(x, dt, M, near);
       const b = this.batch(x.T);
       if (!b.b) continue;
@@ -246,17 +261,22 @@ export class Particles {
         if (!p.vis || p.size < 0.0001) continue;
         if (budget.n <= 0 || budget.area <= 0) break;
         if (p.world) _w.copy(p.p); else _w.copy(p.p).applyMatrix4(M);
+        // fading into the scene's fog (0x705191: the renderer's linear fog start / end), gone beyond its end
+        const de = _w.distanceTo(eye);
+        let fade = 1;
+        if (fog && de > fog.near) { if (de >= fog.far) continue; fade = (fog.far - de) / (fog.far - fog.near); }
         const size = p.size / 4 * ws;                                  // (a quarter of "size" high)
-        const px = Math.min(maxPx, size * scale / Math.max(0.5, _w.distanceTo(eye)));
+        const px = Math.min(maxPx, size * scale / Math.max(0.5, de));
         budget.n--; budget.area -= px * px;
         let rot = p.rot;
         if (x.F & F.ALONG_VEL) {
-          // pointing the way it flies on the screen (0x707e30: the screen angle of pos -> pos + v, plus "rotate")
-          _d.copy(p.v); if (!p.world) _d.applyMatrix3(_n3);
-          _d.applyMatrix3(_view);
-          rot = (_d.x || _d.y ? Math.atan2(-_d.x, _d.y) : 0) + (x.P.rotate || 0);
+          // pointing the way it flies on the screen (0x707e30: the screen angle of pos -> pos + v, plus "rotate"); a
+          // ground quad: the heading on the ground. A source that turns its particles (src_rot_speed): that motion.
+          _d.copy(x.P.src_rot_speed ? p.dv : p.v); if (!p.world) _d.applyMatrix3(_n3);
+          if (x.F & F.GROUND) rot = (_d.x || _d.z ? Math.atan2(_d.x, _d.z) : 0) + (x.P.rotate || 0);
+          else { _d.applyMatrix3(_view); rot = (_d.x || _d.y ? Math.atan2(-_d.x, _d.y) : 0) + (x.P.rotate || 0); }
         }
-        _draw.size = size; _draw.a = p.a; _draw.c = p.c; _draw.tx = p.tx; _draw.ty = p.ty; _draw.rot = rot;
+        _draw.size = size; _draw.a = p.a * fade; _draw.c = p.c; _draw.tx = p.tx; _draw.ty = p.ty; _draw.rot = rot;
         b.b.push(_draw, x);
       }
     }
@@ -289,7 +309,22 @@ export class Particles {
   step(x, dt, M, emit) {
     dt = Math.min(1, dt);
     if (dt < 0.001) return;
-    const P = x.P, max = Math.max(1, x.e.max || 1);
+    const P = x.P, max = Math.max(1, x.e.max || 1), fl = x.F;
+    // (the client also sprays nothing from an emitter below its model's origin without flag 0x40000 - Process
+    // 0x704a91 - but in which frame is unclear: a linked model's emitters, the SEAS turret's muzzle flashes, sit 4 m
+    // below their own model's origin and do flash in the game. Not ported: docs/spec/particles.md.)
+    // the emitter's movement since the last frame, in its own frame (SetMatrix 0x703f70: moveDelta), and the
+    // model's speed in the world (srcVel, for particles that live in the world)
+    _w.setFromMatrixPosition(M);
+    if (!x.lastW) x.lastW = _w.clone();
+    x.md = x.md || new THREE.Vector3();
+    x.md.copy(_w).sub(x.lastW).applyMatrix3(_n3.setFromMatrix4(M).invert());
+    if (fl & F.WORLD) {
+      const v = _d.copy(_w).sub(x.lastW).divideScalar(dt), f = 12.5 * dt;
+      x.sv = x.sv || new THREE.Vector3();
+      if (dt >= 0.5) x.sv.set(0, 0, 0); else if (f < 1) x.sv.multiplyScalar(1 - f).addScaledVector(v, f); else x.sv.copy(v);
+    }
+    x.lastW.copy(_w);
     let can = emit;
     if (P.emit_timer > 0) {
       can = false;
@@ -301,17 +336,31 @@ export class Particles {
       if (!emit) return;
       x.started = true;
       x.parts = [];
-      for (let i = 0; i < max; i++) { const p = { p: new THREE.Vector3(), v: new THREE.Vector3(), c: [1, 1, 1], base: [1, 1, 1] }; this.init(x, p, false, M); x.parts.push(p); }
-      x.live = max;
+      for (let i = 0; i < max; i++) {
+        const p = { p: new THREE.Vector3(), v: new THREE.Vector3(), dv: new THREE.Vector3(), inh: new THREE.Vector3(), c: [1, 1, 1], base: [1, 1, 1] };
+        this.init(x, p, false, M);
+        if (P.emit_per_meter > 0) { p.vis = false; p.emitted = false; }    // (constructor 0x707dbe)
+        x.parts.push(p);
+      }
+      x.carry = 0;
+      x.live = x.parts.filter((p) => p.vis).length;
       return;
     }
     this.gravity(x, M, dt);
-    for (const p of x.parts) {
+    // emit_per_meter: one particle per so many metres the emitter moved (ship wakes, arrow trails)
+    const mpp = P.emit_per_meter > 0 ? 1 / P.emit_per_meter : 0;
+    let dist = mpp ? x.md.length() + (x.carry || 0) : 0;
+    const lod = x.lod ?? max;
+    for (let i = 0; i < x.parts.length; i++) {
+      const p = x.parts[i];
+      const ok = can && i < lod && (!mpp || dist >= mpp);
       let re = false;
-      if (!this.proc(x, p, dt)) { this.init(x, p, true, M); re = true; if (!can) { p.vis = false; p.emitted = false; } }
-      if ((x.F & F.BURST) && can && !p.emitted) { this.init(x, p, false, M); re = true; }
+      if (!this.proc(x, p, dt)) { this.init(x, p, true, M); re = true; if (!ok) { p.vis = false; p.emitted = false; } }
+      if ((fl & F.BURST) && ok && !p.emitted) { this.init(x, p, false, M); re = true; }
+      if (ok && re && mpp) dist -= mpp;
       if (!re) this.look(x, p);
     }
+    if (mpp) x.carry = dist % mpp;
     x.live = 0;
     for (const p of x.parts) if (p.vis) x.live++;
     // nothing left in flight and nothing to emit: it starts afresh when it may emit again
@@ -342,7 +391,17 @@ export class Particles {
         if (P.suck_vel > 0) _d.addScaledVector(p.v, -P.suck_vel);
         p.v.addScaledVector(_d, P.center_suck * dt);
       }
+      if (P.src_rot_speed) {
+        // turning about the emitter's axis (0x7080cb): R = -theta about z; about the emitter E + 2e - R e (to first order
+        // +theta, slowly spiralling out), about the model's origin R pos (here: the emitter's - no model uses it)
+        const th = -P.src_rot_speed * dt, c = Math.cos(th), sn = Math.sin(th), px = p.p.x, py = p.p.y;
+        const rx = c * px - sn * py, ry = sn * px + c * py;
+        const nx = fl & F.ROT_ORIGIN ? rx : 2 * px - rx, ny = fl & F.ROT_ORIGIN ? ry : 2 * py - ry;
+        p.dv.set(nx - px, ny - py, 0);
+        p.p.x = nx; p.p.y = ny;
+      }
       p.p.addScaledVector(p.v, dt);
+      if (p.world) { p.inh.multiplyScalar(1 - Math.min(1, 0.5 * dt)); p.p.addScaledVector(p.inh, dt); }
     }
     if (P.rotate > 0) { const s = (P.rotate + p.rv * (P.rotation_var || 0)) * dt; p.rot += p.rot > 0 ? s : -s; if (p.rot > 6.2832) p.rot -= 6.2832; else if (p.rot < -6.2832) p.rot += 6.2832; }
     if (P.size_increase) p.size += dt * P.size_increase * (P.size_inc_exp ? Math.pow(p.age, P.size_inc_exp) : 1);
@@ -383,6 +442,8 @@ export class Particles {
       else if (fl & F.HEMI) p.p.set(A, B, Math.abs(C));
       else if (fl & F.RING) { const l = Math.hypot(sx, cy) || 1; p.p.set(sx / l * sc[0], cy / l * sc[0], 0); }
       else p.p.set(sx, cy, 0);
+      // EmitPos 0x703ac0: somewhere along the way the emitter moved this frame
+      if (x.md && !(fl & F.NO_SPREAD)) p.p.addScaledVector(x.md, -Math.random());
       p.world = false;
     }
     // the "unturned" velocities are along the model's axes: into the emitter's frame with its inverse turn
@@ -407,7 +468,7 @@ export class Particles {
       p.base[k] = Math.max(0, (P['color_' + c] ?? 255) - (vr > 0 ? Math.floor(Math.random() * 32768) % vr : 0)) / 255;
     }
     if (P.speed_var > 0) p.v.multiplyScalar(1 + Math.random() * P.speed_var);
-    if (fl & F.WORLD) { p.p.applyMatrix4(M); p.v.applyMatrix3(_n3.setFromMatrix4(M)); p.world = true; }
+    if (fl & F.WORLD) { p.p.applyMatrix4(M); p.v.applyMatrix3(_n3.setFromMatrix4(M)); p.world = true; if (x.sv) p.inh.copy(x.sv).multiplyScalar(0.5); else p.inh.set(0, 0, 0); }
     p.rv = Math.random();
     if (!P.rotate) p.rot = 0;
     else if (!(re && (fl & F.KEEP_ROT))) p.rot = P.emit_rot_inc ? (x.rotAcc = (x.rotAcc || 0) + P.emit_rot_inc * Math.PI / 180) : (Math.random() - 0.5) * 2 * Math.PI;

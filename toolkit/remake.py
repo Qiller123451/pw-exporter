@@ -14,7 +14,8 @@ URL layout below /remake/ and /remake/mod/<id>/ (the game only uses relative URL
     ai.json                       built data: the computer player's tables (remake/pipeline/build_ai.py; made on
                                   first use when the data was built before that step existed)
     forest.json                   built data: tree layouts of forest blocks (remake/pipeline/build_forest.py; likewise)
-    assets/snd/<path>             Data/<mod>/Audio/Sound/<path> of the installation (or built data)
+    assets/snd/<path>             Data/<mod>/Audio/Sound/<path> of the installation (or built data; speech kept only
+                                  in a language pack: Data/locale/<lang>/Audio/..., pwexport.install.audio_file)
     assets/music/<file>           Data/<mod>/Audio/Music/<file>
     assets/SeqSounds/<path>       Data/<mod>/Audio/SeqSounds/<path> (speech of dialogue scenes and sequences)
     assets/...                    built data
@@ -244,11 +245,11 @@ class Remake:
             if os.path.isfile(p):
                 return p
             if inst and rel.startswith('assets/snd/'):
-                return inst.file('Audio/Sound/' + rel[len('assets/snd/'):])
+                return inst.audio_file('Audio/Sound/' + rel[len('assets/snd/'):], self._lang())
             # speech of dialogue scenes and sequences: dialogsounds.txt names '../SeqSounds/<..>.mp3' relative to Audio/Sound,
             # so the browser asks for assets/snd/../SeqSounds/<..> = assets/SeqSounds/<..> (remake/src/ui/mission.js)
             if inst and rel.lower().startswith('assets/seqsounds/'):
-                return inst.file('Audio/SeqSounds/' + rel[len('assets/seqsounds/'):])
+                return inst.audio_file('Audio/SeqSounds/' + rel[len('assets/seqsounds/'):], self._lang())
             if inst and rel.startswith('assets/music/'):
                 return inst.file('Audio/Music/' + rel[len('assets/music/'):])
             return None

@@ -8,7 +8,8 @@ import { buffsOf } from '../game/buffs.js';
 //   - a unit with buffs (FightingObj "BuffDecals") shows the decal of the first of them in the order of
 //     buffdecals.txt - if the viewer may see that one (its own units: all; else by the buff's visibility 1 all,
 //     2 enemies, 3 allies): its tile of Effects/UnitDecals.tga (4 x 4 tiles; assets/ui/unitdecals.png), 3 m around
-//     the unit; a buff without a tile (-1: poisoned, invisible, held ...) shows the ring of the heroes in white.
+//     the unit. Buffs without a tile (poisoned, invisible, held ...) are skipped when the client loads the table
+//     (0x484abf): they never get a decal and never hide another one.
 // Only characters, animals and vehicles have them; each is a 3 x 3 vertex grid laid on the ground 0.2 m above it.
 // (The client also gives a 1.4 m ring to units with a list at object +0x29c whose meaning is unknown: not done.)
 const HERO = /^(stina_|special_eusmilus_|bela_|cole_|babbage_|hermit_|tesla_|lovelace_|mayor_|darwin_|schliemann_|livingstone_)/i;
@@ -74,7 +75,7 @@ export class UnitDecals {
     let tile = null;
     if (have.size) {
       const own = e.owner === G.me, rel = e.owner && !own ? G.me.relation(e.owner) : -1;
-      const b = table.find((x) => have.has(x.attrib));
+      const b = table.find((x) => x.tile >= 0 && have.has(x.attrib));      // (only buffs with a tile compete: 0x484abf)
       if (b && (own || b.vis === 1 || (b.vis === 2 && rel === 0) || (b.vis === 3 && rel === 2))) tile = b.tile;
     }
     this.cache.set(e, c = { t: W.time, tile });
@@ -95,10 +96,6 @@ export class UnitDecals {
         if (tile != null && tile >= 0 && !this.missing.buff) {
           const u = (tile % 4) * 0.25, v = 1 - (Math.floor(tile / 4) + 1) * 0.25;
           this.lay(this.mesh('buff'), e.pos.x, e.pos.z, SIZE, [u, v, u + 0.25, v + 0.25]);
-        } else if (tile === -1 && !this.missing.hero) {
-          const m = this.mesh('hero');
-          m.material.color.setHex(0xffffff);
-          this.lay(m, e.pos.x, e.pos.z, SIZE, [0.02, 0.02, 0.98, 0.98]);
         }
       }
     }

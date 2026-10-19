@@ -14,13 +14,15 @@
 //   * On skirmish maps, when the trade route is ready or the village defends, the fighters of the outposts go home
 //     (CheckNumUnitsInOutpost, BO:670-703).
 //   * Island surveillance (every ~100 s; skirmish, epoch 2+, not a Turtle, not "Single 09"): the neutral stone
-//     nearest the start location without own objects within 60 m gets an OP_ResAll outpost - one on the home island
-//     (others need the transfer by ship: not done) - when nothing foreign is within 60 m, or 1-9 foreign objects of
-//     which the first is an enemy's (then a suicide attack is asked for them too, IS:157-231).
+//     nearest the start location without own objects within 60 m gets an OP_ResAll outpost - one on the home island,
+//     one on another land (maps with harbours; its crew crosses by ship: outpostTransfer) - when nothing foreign is
+//     within 60 m, or 1-9 foreign objects of which the first is an enemy's (then a suicide attack is asked for them
+//     too, IS:157-231).
 //   * The attack outpost (BA:128-140): on skirmish maps from epoch 2, once, 45 % of the way to the enemy on the home
 //     island [?engine GetPossibleAtkOutpostPosition]; every 10th think it wants its 3 rows (arena, farm, 2 towers).
 //   * Campaign triggers start RessourceOutpost / AttackOutpost at their position (FM:918-921).
 import * as DATA from './data.js';
+import { Attack } from './attack.js';
 
 const rnd = (n) => Math.floor(Math.random() * n);
 const MAX_OUTPOSTS = 5, R_OUT = 60;
@@ -99,7 +101,8 @@ export const OutpostsAI = {
           const extra = this.queryPool(S, 1, 2, null, true) || [];
           this.joinOutpost(o, extra.slice(0, 1 + rnd(2)));
           const all = this.outpostUnits(o);
-          if (o.island !== W.landIsland(S.home.x, S.home.z)) { o.state = 'supervising'; break; }   // (the transfer by ship: not done)
+          // an outpost on another land: the units cross in transports (BO:301 RequestTransfer -> the area module)
+          if (o.island !== W.landIsland(S.home.x, S.home.z)) { this.outpostTransfer(S, o, all.filter((u) => W.landIsland(u.pos.x, u.pos.z) !== o.island)); o.state = 'supervising'; break; }
           for (const u of all) W.order([u], { type: u.isWorker ? 'move' : 'attackmove', x: o.pos.x + (Math.random() - 0.5) * 12, z: o.pos.z + (Math.random() - 0.5) * 12, auto: true });
           o.state = 'supervising';
           break;
@@ -176,9 +179,10 @@ export const OutpostsAI = {
       const foreign = near(pt, (e) => e.owner !== this.p && (e.kind === 'building' || /CHTR|ANML|VHCL/.test(e.cls || '')));
       const isle = W.landIsland(pt.x, pt.z);
       const kind = isle === home ? 'inner' : 'outer';
-      if (kind === 'outer') continue;                     // (other islands need the transfer by ship)
+      // (another land: only with harbours on the map - the crew crosses by ship -, one such outpost: IS:204-207)
+      if (kind === 'outer' && (!W.waterNav || !this.mapOptions.harbour)) continue;
       if (!foreign.length) {
-        if ((this.outposts || []).some((o) => o.type === 'OP_ResAll' && o.island === isle)) continue;
+        if ((this.outposts || []).some((o) => o.type === 'OP_ResAll' && (kind === 'outer' ? o.island !== home : o.island === isle))) continue;
         this.startOutpost(pt, 'OP_ResAll');
         return;
       }
@@ -188,6 +192,17 @@ export const OutpostsAI = {
         return;
       }
     }
+  },
+  // the crew of an outpost on another land goes there by ship: a crossing of its own (ai/naval.js, as the area
+  // module's transfers)
+  outpostTransfer(S, o, units) {
+    if (!units.length) return;
+    const W = this.W;
+    const a = new Attack(this, { type: 'transfer', goal: 'quick', pos: { x: o.pos.x, z: o.pos.z }, hunt: true });
+    this.attacks.push(a);
+    this.launched.push({ id: a.id, t: Math.round(W.time), type: 'transfer', goal: 'quick', scripted: false, hunt: true, n: units.length });
+    a.add(units);
+    this.attackGo(S, a, units);
   },
   // AiGoalBuildArmy: the attack outpost (BA:128-140)
   attackOutpostThink(S) {

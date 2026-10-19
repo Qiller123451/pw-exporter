@@ -181,7 +181,7 @@ export const MISSIONS = [
       setup(M) {
         M.state.need = [3, 5, 6][M.difficulty];
         M.state.through = 0;
-        M.building('seas_fence', 'me', -170, 138, 0);
+        M.pen('pen', -150, 70);
         M.mark(-170, 150, 'pen', 0x7dff6a);
         M.objective('capture', 'Capture horned dinosaurs: tranquilize them, haul them to the pen', { of: M.state.need });
         M.objective('town', 'Keep the herd out of Flagstaff (no more than 6 may reach it)', {});
@@ -329,6 +329,7 @@ export const MISSIONS = [
     zones: [{ name: 'pen', x: -200, z: 120, r: 16, kind: 'pen' }, { name: 'shelter', x: -190, z: 210, r: 16, kind: 'evac' }],
     on: {
       setup(M) {
+        M.pen('pen', -160, 186);
         M.mark(-200, 120, 'pen', 0x7dff6a);
         civilians(M, 10, -10, 10, 120);
         M.state.boss = M.spawn('sq_big_tooth', 'outbreak', 160, -170, 1)[0];
@@ -341,7 +342,7 @@ export const MISSIONS = [
         M.say('taslov', 'My nets will hold it for fifteen seconds. In those fifteen seconds every dart you have goes into it.');
         M.after(60, 'roam');
       },
-      roam(M) { const b = M.state.boss; if (alive(b)) M.send([b], [0, 0]); M.after(45, 'roam'); },
+      roam(M) { const b = M.state.boss; if (alive(b) && !b.sqAsleep) M.send([b], [0, 0]); M.after(45, 'roam'); },   // (not while she sleeps)
       evacuated(M, { n }) { M.progress('people', n); },
       tick(M) {
         const b = M.state.boss;

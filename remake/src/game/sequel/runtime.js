@@ -258,6 +258,27 @@ export class Sequel {
     }
     return this.lvMemo.get(k);
   }
+  // a pen of the player's: a square ring of fence pieces on the 8 m wall grid around a zone, with a gate in the
+  // middle of the side facing (tx, tz) - the trucks drive in through it (AUTO: it opens for the player's units)
+  pen(zone, tx, tz, fence = 'seas_fence', gate = 'seas_gate') {
+    const W = this.W, M = W.wallMap, z = this.zones[zone], me = this.player('me');
+    if (!M || !z) return [];
+    const [ci, cj] = M.tileOf(z.x, z.z), N = Math.max(2, Math.ceil((z.r + 4) / 8));
+    const sides = [[0, -1], [0, 1], [-1, 0], [1, 0]];
+    const [sx, sz] = sides.reduce((b, s) => (Math.hypot(z.x + s[0] * N * 8 - tx, z.z + s[1] * N * 8 - tz) < Math.hypot(z.x + b[0] * N * 8 - tx, z.z + b[1] * N * 8 - tz) ? s : b));
+    const gi = ci + sx * N, gj = cj + sz * N, out = [];
+    for (let j = cj - N; j <= cj + N; j++) for (let i = ci - N; i <= ci + N; i++) {
+      if (Math.max(Math.abs(i - ci), Math.abs(j - cj)) !== N || (i === gi && j === gj)) continue;
+      const [x, zz] = M.centre(i, j);
+      const b = W.placeBuilding(fence, me, x, zz, 0, true);
+      if (b) out.push(b);
+    }
+    const [x, zz] = M.centre(gi, gj);
+    const d = sz ? 3 : 5;                 // along the side: east-west on a north / south side, else north-south
+    const g = W.placeBuilding(gate, me, x, zz, M.gateRot(d), true);
+    if (g) out.push(g);
+    return out;
+  }
   building(cls, role, x, z, rot = 0) {
     const b = this.W.placeAdapted(cls, this.player(role), x, z, rot, true);      // (the ground levels to it)
     if (b && role === 'me') this.W.recomputeCaps(this.me);
@@ -472,8 +493,10 @@ export class Sequel {
     V.untargetable = true;
     W.trap(V, sec, 'asleep');
     W.releaseTask(V); V.task = { type: 'idle' }; V.path = [];
+    // it lies down and keeps lying (the lying part of its rest clip loops: MickDundeeMove.usl:99-109, Sleep.usl:62-67)
+    // until it gets up as the sleep ends (wakeTick)
     const a = V.anim && V.anim.pick('rest', 'sleep', 'idle_rest', 'dying', 'die_simple');
-    if (a) { V.busyAnim = true; V.anim.play(a, { loop: false, fade: 0.3 }); }
+    if (a) { V.busyAnim = true; V.sqWaking = false; V.anim.play(a, /^(rest|sleep|idle_rest)$/.test(a) ? { restart: true, fade: 0.3 } : { loop: false, fade: 0.3 }); }
     // nobody goes on hitting a sleeper (its attackers turn to other work or the next enemy)
     for (const u of W.units) if (u.alive && u !== V && u.task && u.task.target === V) { W.releaseTask(u); u.task = { type: 'idle' }; u.path = []; }
     this.call('asleep', { u: V });
@@ -481,7 +504,14 @@ export class Sequel {
   wake(V) {
     V.sqAsleep = 0; V.untargetable = false; V.busyAnim = false;
     if (V.st) V.st.t.trapped = 0;
-    if (V.anim && V.idleAnim) V.anim.play(V.idleAnim);
+    if (V.anim && V.idleAnim && !V.sqWaking) V.anim.play(V.idleAnim);
+    V.sqWaking = false;
+  }
+  // a sleeper gets up the length of its rest clip's end part before the sleep is over (held where it lies till then)
+  wakeTick(V) {
+    if (V.sqWaking || !V.anim || !V.idleAnim) return;
+    const e = V.anim.duration(V.anim.curName + '#e');
+    if (e && V.sqAsleep - this.time <= e) { V.sqWaking = true; V.anim.play(V.idleAnim); }
   }
   // electrified nets: a creature of the outbreak that walks onto one is held 15 s (tranquilizers work 5x as fast on
   // it: damageHook); a net needs 30 s to charge again
@@ -523,7 +553,7 @@ export class Sequel {
   }
   captureTick() {
     const W = this.W, me = this.me;
-    for (const u of W.units) if (u.sqAsleep && u.sqAsleep <= this.time && !u.parked) this.wake(u);
+    for (const u of W.units) if (u.sqAsleep && !u.parked) { if (u.sqAsleep <= this.time) this.wake(u); else this.wakeTick(u); }
     // the pens of the mission; where it has none, the garage or the headquarters takes the animal in
     let pens = Object.values(this.zones).filter((z) => z.kind === 'pen');
     if (!pens.length) pens = W.buildings.filter((b) => b.alive && b.built && b.owner === me && /^seas_(garage|headquarters)$/.test(b.name)).map((b) => ({ x: b.pos.x, z: b.pos.z, r: b.radius + 10 }));
@@ -666,6 +696,6 @@ export class Sequel {
       if (this.G.fx) this.G.fx.explosion(p, 1.4);
       W.areaDamage(null, p, 8, 260, 60, { owner: me, direct: true, size: 7 });
     }
-    if (this.G.rtscam) this.G.rtscam.shake = 0.8;
+    if (this.G.rtscam && this.G.rtscam.addShake) this.G.rtscam.addShake(1.0, 10, 100, this.G.rtscam.target, 60);   // (the sequel's own: a strength-10 shake)
   }
 }

@@ -31,12 +31,22 @@ try {
     const li = sq.lines.findIndex((l) => /cole_01$/.test(l.key));
     check('speech file of a subtitle line', M.lineSound(sq, sq.lines[li]) === '../SeqSounds/Level_1/1040/1040_Cole_01.mp3', M.lineSound(sq, sq.lines[li]));
     M.manual = false;
-    M.playSequence({ ...sq, lines: [sq.lines[li]] }, {}, () => ended++);
+    M.playSequence({ ...sq, play: null, lines: [sq.lines[li]] }, {}, () => ended++);     // (a sequence without its timeline: line by line)
     M.update(0.016); await sleep(600);
     const sb = await G.audio.buffer(M.lineSound(sq, sq.lines[li]));
     check('cutscene line lasts as long as its speech', !!M.cine && !!M.cine.sound && !!sb && Math.abs(M.cine.len - (sb.duration + 0.4)) < 0.3, { len: M.cine && M.cine.len, sound: sb && sb.duration });
     M.skip(); M.manual = true;
     check('cutscene ended', ended === 3 && !G.paused);
+    // its timeline (ui/cutscene.js): Cole's line is spoken at its item's time (7.8 s)
+    M.manual = false;
+    M.playSequence(sq, {}, () => ended++);
+    M.update(0.016);
+    for (let i = 0; i < 160 && M.cine; i++) M.update(0.05);
+    await sleep(800);
+    const pl = M.cine && M.cine.player;
+    check('timeline: the speech plays at its time', !!pl && pl.t >= 7.8 && pl.sounds.length > 0 && /Cole/.test(M.cineEl.querySelector('.cname').textContent), pl && { t: +pl.t.toFixed(2), sounds: pl.sounds.length, who: M.cineEl.querySelector('.cname').textContent });
+    M.skip(); M.manual = true;
+    check('timeline ended', ended === 4 && !G.paused);
   }
 } catch (e) { check('exception', false, String(e && e.stack || e)); }
 return out.join('\n');
