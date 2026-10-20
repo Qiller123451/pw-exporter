@@ -27,6 +27,11 @@ Edit > Preferences > Add-ons > (drop-down) Install from Disk… and choose `io_s
      scene when you save.
    - **Remove** leaves the ticked models out of the saved archive.
    - **Keep** writes a model exactly as it is in the source file.
+   - The arrows beside the list move the active model up, down, to the top or to the bottom (with a filter they step
+     over the hidden models). Once the list has been rearranged, the archive is saved in its order; models added
+     with *New model from selection* go where their entry stands. An archive whose list was not touched keeps the
+     file's own order.
+   - An edited model replaces the one of the same name in its place: it keeps its single entry and position.
 3. **Add models.** Select objects (meshes, an armature, empties for links) and press **New model from selection**.
 4. **Animations.** Select any object of a model. In the GSF tab, the *GSF Model* panel lists its animations:
    - ▶ plays one: assigns its actions and sets the frame range.

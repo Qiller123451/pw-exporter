@@ -194,4 +194,46 @@ check(lk.v['link_fourcc'] == 'HndR' and abs(abs(lk.v['pos'][0]) - 0.5) < 1e-5 an
 # read the new archive back into Blender
 r = bpy.ops.import_scene.paraworld_gsf(filepath=out3, textures=False)
 check(r == {'FINISHED'}, 'new archive imports again')
+
+# ------------------------------------------------------------------ 4. rearranging the models (the list's arrow buttons)
+src4 = os.path.join(gsf_dir, 'all_misc.gsf')
+bpy.ops.import_scene.paraworld_gsf(filepath=src4, open_only=True, textures=False)
+col4 = next(c for c in bpy.data.collections if c.gsf_archive.is_archive and c.gsf_archive.file_name == 'all_misc')
+bpy.context.scene['gsf_active_archive'] = col4.name
+bpy.context.view_layer.objects.active = None          # (the panel shows the active object's archive)
+g4 = col4.gsf_archive
+names0 = [e.name for e in g4.entries]
+check(not g4.order_changed, 'a freshly opened archive keeps its own order')
+g4.entry_index = len(g4.entries) - 1
+bpy.ops.gsf.entry_move(direction='TOP')
+check(g4.entries[0].name == names0[-1] and g4.entry_index == 0, 'last model moved to the top')
+g4.entry_index = 6
+bpy.ops.gsf.entry_move(direction='UP')
+bpy.ops.gsf.entry_move(direction='UP')
+check(g4.entries[4].name == names0[5] and g4.entry_index == 4, 'a model moved up twice')
+# an edited model moved down
+g4.entry_index = 10
+edited = g4.entries[10].name
+bpy.ops.gsf.import_entries()
+bpy.ops.gsf.entry_move(direction='DOWN')
+check(g4.entries[11].name == edited and g4.entries[11].state == 'SCENE', 'an edited model moved down')
+# with a filter the arrows step over the hidden models
+pref = names0[20].split('_')[0] + '_'
+shown = [k for k, e in enumerate(g4.entries) if pref in e.name.lower()]
+if len(shown) >= 2:
+    g4.filter = pref
+    g4.entry_index = shown[1]
+    moved = g4.entries[shown[1]].name
+    bpy.ops.gsf.entry_move(direction='UP')
+    check(g4.entries[shown[0]].name == moved, 'with a filter: past the hidden models to the shown one above (%s)' % pref)
+    g4.filter = ''
+want = [e.name for e in g4.entries if e.state != 'REMOVE']
+out4 = os.path.join(out_dir, 'reordered_all_misc.gsf')
+r = bpy.ops.export_scene.paraworld_gsf(filepath=out4, archive=col4.name)
+D4, E4 = GsfArchive.load(src4), GsfArchive.load(out4)
+check(r == {'FINISHED'} and E4.names() == want, 'saved in the order of the list')
+check([m.name for m in E4.models] == want, 'model infos in the same order')
+from roundtrip import Canon, compare as cmp_canon  # noqa: E402
+same = [n for n in want if n != edited and not cmp_canon(Canon()(D4.model(n)), Canon()(E4.model(n)))]
+check(len(same) == len(want) - 1, 'every kept model unchanged by the move (%d of %d)' % (len(same), len(want) - 1))
 print('FAILURES:', fails or 'none')

@@ -27,6 +27,14 @@ LANGS = {
 }
 
 
+def junk(name):
+    """files that are not part of the game: the metadata a Mac writes next to every file on a non-Mac disk or into a
+    zip ("._cards_boosterpack01.tga" next to the real one - not an image), Finder's .DS_Store, Windows' Thumbs.db /
+    desktop.ini. Every scan of the game folders skips them."""
+    n = os.path.basename(name)
+    return n.startswith('._') or n.lower() in ('.ds_store', 'thumbs.db', 'desktop.ini')
+
+
 def _ci_join(base, rel):
     """case-insensitive path join (Windows doesn't care; Linux/macOS copies of the game do)"""
     p = base
@@ -134,6 +142,8 @@ class Install:
                 continue
             for dp, _, fs in os.walk(base):
                 for f in fs:
+                    if junk(f):
+                        continue
                     p = os.path.join(dp, f)
                     out[os.path.relpath(p, base).replace(os.sep, '/').lower()] = p
         return dict(sorted(out.items()))
@@ -148,7 +158,7 @@ class Install:
                 continue
             for dp, _, fs in os.walk(base):
                 for f in sorted(fs):
-                    if f.lower().endswith('.ula'):
+                    if f.lower().endswith('.ula') and not junk(f):
                         full = os.path.join(dp, f)
                         out.append({'pack': m, 'rel': os.path.relpath(full, base).replace(os.sep, '/'), 'path': full,
                                     'size': os.path.getsize(full)})
@@ -160,6 +170,8 @@ class Install:
         for m in mods or self.mods:
             base = os.path.join(self.data, m)
             for p in glob.glob(os.path.join(base, pattern), recursive=True):
+                if junk(p):
+                    continue
                 out[os.path.relpath(p, base).lower()] = p
         return [out[k] for k in sorted(out)]
 
@@ -178,7 +190,7 @@ class Install:
             if not g:
                 continue
             for f in sorted(os.listdir(g)):
-                if f.lower().endswith('.gsf'):
+                if f.lower().endswith('.gsf') and not junk(f):
                     out[os.path.splitext(f)[0].lower()] = os.path.join(g, f)
         return out
 
@@ -192,7 +204,7 @@ class Install:
             if not g:
                 continue
             for f in sorted(os.listdir(g)):
-                if f.lower().endswith('.gsf'):
+                if f.lower().endswith('.gsf') and not junk(f):
                     out.append({'mod': m, 'name': os.path.splitext(f)[0].lower(), 'path': os.path.join(g, f)})
         return out
 
@@ -239,7 +251,7 @@ class Install:
             if not dd or not os.path.isdir(dd):
                 continue
             for f in os.listdir(dd):
-                if os.path.isfile(os.path.join(dd, f)):
+                if os.path.isfile(os.path.join(dd, f)) and not junk(f):
                     out[f.lower()] = os.path.join(dd, f)
         return dict(sorted(out.items()))
 

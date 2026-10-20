@@ -126,6 +126,7 @@ class Exporter:
         for e in ga.entries:
             if e.state == 'SCENE' and (e.root is None or e.root not in roots) and e.name in by_name:
                 self.warnings.append('%s is marked "Edited" but its root object is gone - kept from the file' % e.name)
+        placed, placed_root = {}, {}     # entry name, root object name -> the model built from the scene
         for root in roots:
             g = root.gsf_model
             name = g.name or root.name
@@ -142,7 +143,23 @@ class Exporter:
                 by_name.pop(old.name, None)
             else:
                 a.add_model(model)
+            placed[g.source_name or name] = placed_root[root.name] = model
             self._anim_infos(model, root)
+        # a rearranged list: the archive takes its order (model infos and table of contents alike); models without
+        # an entry stay behind them in their order
+        if ga.order_changed:
+            kept = {m.name: m for m in a.models}
+            order, seen = [], set()
+            for e in ga.entries:
+                if e.state == 'REMOVE':
+                    continue
+                m = (placed_root.get(e.root.name) if e.root is not None else None) or placed.get(e.name) or kept.get(e.name)
+                if m is not None and id(m) not in seen:
+                    order.append(m)
+                    seen.add(id(m))
+            order += [m for m in a.models if id(m) not in seen]
+            a.models = order
+            a.toc_order = None
         # dust trails
         models = {m.name: m for m in a.models}
         a.dusttrails = []

@@ -321,6 +321,7 @@ def main(out=None, log=print):
     script, classgfx = {}, {}
     for mod in game.mods:
         for f in sorted(glob.glob(os.path.join(paths.data('%s/Scripts/Server/classes' % mod), '**', '*.txt'), recursive=True)):
+            if os.path.basename(f).startswith('._'): continue      # Mac metadata (install.junk)
             try: root = sounddb.parse(open(f, encoding='latin1').read()).get('Root', {})
             except Exception: continue
             if not isinstance(root, dict): continue

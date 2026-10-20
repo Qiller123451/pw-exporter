@@ -32,6 +32,8 @@ def classes(install):
     for mod in install.mods:
         base = os.path.join(install.data, mod)
         for f in sorted(glob.glob(os.path.join(base, 'Scripts', 'Server', 'classes', '**', '*.txt'), recursive=True)):
+            if os.path.basename(f).startswith('._'):      # Mac metadata, not a class file (install.junk)
+                continue
             try:
                 with open(f, encoding='latin-1') as fh:
                     root = tree.parse(fh.read(), inherit=True).get('Root', {})

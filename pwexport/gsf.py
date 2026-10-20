@@ -1677,7 +1677,7 @@ def main():
     for p in a.inputs:
         if os.path.isdir(p):
             for dp, _, fs in os.walk(p):
-                files += [os.path.join(dp, f) for f in sorted(fs) if f.lower().endswith('.gsf')]
+                files += [os.path.join(dp, f) for f in sorted(fs) if f.lower().endswith('.gsf') and not f.startswith('._')]
         else:
             files.append(p)
     total = []

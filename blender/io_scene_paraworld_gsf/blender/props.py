@@ -407,6 +407,8 @@ GSF_PG_archive = make_group('GSF_PG_archive', HEADER2, 'archive', {
     'walk_transitions': CollectionProperty(type=GSF_PG_name),
     'entries': CollectionProperty(type=GSF_PG_entry),
     'entry_index': IntProperty(),
+    'order_changed': BoolProperty(name='Order changed', default=False,
+                                  description='The model list was rearranged: the archive is saved in its order'),
     'filter': StringProperty(name='Filter', description='Show only models whose name contains this text'),
 })
 

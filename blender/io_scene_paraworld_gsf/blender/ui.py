@@ -109,9 +109,15 @@ class GSF_PT_archive(bpy.types.Panel):
         lay.prop(g, 'data_dir')
         lay.prop(g, 'mirror')
         lay.prop(g, 'filter', icon='VIEWZOOM')
-        lay.template_list('GSF_UL_entries', '', g, 'entries', g, 'entry_index', rows=8)
+        row = lay.row()
+        row.template_list('GSF_UL_entries', '', g, 'entries', g, 'entry_index', rows=8)
+        col_b = row.column(align=True)
+        for d, ic in (('TOP', 'TRIA_UP_BAR'), ('UP', 'TRIA_UP'), ('DOWN', 'TRIA_DOWN'), ('BOTTOM', 'TRIA_DOWN_BAR')):
+            col_b.operator('gsf.entry_move', text='', icon=ic).direction = d
         if 0 <= g.entry_index < len(g.entries):
             lay.label(text=g.entries[g.entry_index].info)
+        if g.order_changed:
+            lay.label(text='Saved in the order of the list', icon='SORTSIZE')
         row = lay.row(align=True)
         row.operator('gsf.import_entries', text='Import', icon='IMPORT')
         row.operator('gsf.entry_state', text='Keep').state = 'FILE'

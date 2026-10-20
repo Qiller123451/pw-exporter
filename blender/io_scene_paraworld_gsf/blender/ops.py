@@ -224,6 +224,42 @@ class GSF_OT_entry_state(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class GSF_OT_entry_move(bpy.types.Operator):
+    """Move the active model in the list. The saved archive lists its models in this order"""
+    bl_idname = 'gsf.entry_move'
+    bl_label = 'Move model'
+    bl_options = {'REGISTER', 'UNDO'}
+    direction: EnumProperty(items=[('UP', 'Up', 'One place up'), ('DOWN', 'Down', 'One place down'),
+                                   ('TOP', 'To the top', 'To the start of the list'),
+                                   ('BOTTOM', 'To the bottom', 'To the end of the list')])
+
+    def execute(self, context):
+        col = active_archive(context)
+        if col is None:
+            return {'CANCELLED'}
+        g = col.gsf_archive
+        n, i = len(g.entries), g.entry_index
+        if not 0 <= i < n:
+            return {'CANCELLED'}
+        # with a filter: past the hidden models to the next shown one
+        flt = g.filter.lower()
+        shown = [k for k, e in enumerate(g.entries) if not flt or flt in e.name.lower()]
+        if self.direction == 'TOP':
+            j = 0
+        elif self.direction == 'BOTTOM':
+            j = n - 1
+        elif self.direction == 'UP':
+            j = max([k for k in shown if k < i], default=i)
+        else:
+            j = min([k for k in shown if k > i], default=i)
+        if j == i:
+            return {'CANCELLED'}
+        g.entries.move(i, j)
+        g.entry_index = j
+        g.order_changed = True
+        return {'FINISHED'}
+
+
 class GSF_OT_archive_new(bpy.types.Operator):
     """Create an empty GSF archive collection (for new models)"""
     bl_idname = 'gsf.archive_new'
@@ -532,7 +568,7 @@ def frame_handler(scene, depsgraph=None):
                 o.data = me
 
 
-CLASSES = [IMPORT_SCENE_OT_paraworld_gsf, EXPORT_SCENE_OT_paraworld_gsf, GSF_OT_import_entries, GSF_OT_entry_state,
+CLASSES = [IMPORT_SCENE_OT_paraworld_gsf, EXPORT_SCENE_OT_paraworld_gsf, GSF_OT_import_entries, GSF_OT_entry_state, GSF_OT_entry_move,
            GSF_OT_archive_new, GSF_OT_model_new, GSF_OT_set_kind, GSF_OT_anim_apply, GSF_OT_anim_clear, GSF_OT_anim_add,
            GSF_OT_anim_remove, GSF_OT_collection_edit, GSF_OT_toggle_bit, GSF_OT_rebuild_material]
 

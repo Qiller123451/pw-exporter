@@ -63,6 +63,8 @@ def _listdir(rel):
         d = paths.ci(os.path.join(paths.DATA, m, 'Scripts', rel))
         if os.path.isdir(d):
             for n in os.listdir(d):
+                if n.startswith('._'):                  # Mac metadata next to the real file (install.junk)
+                    continue
                 out[n.lower()] = os.path.join(d, n)
     return out
 

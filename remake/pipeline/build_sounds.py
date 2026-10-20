@@ -91,7 +91,7 @@ def atmo(game):
         return {}
     out = {}
     for f in sorted(os.listdir(folder)):
-        if not f.lower().endswith('.txt'):
+        if not f.lower().endswith('.txt') or f.startswith('._'):
             continue
         root = sounddb.parse(open(os.path.join(folder, f), encoding='latin-1').read()).get('Root', {})
         states = [None] * 36

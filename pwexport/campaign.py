@@ -120,19 +120,19 @@ class TextTable:
             if not d:
                 continue
             for f in sorted(os.listdir(d)):
-                if f.lower().endswith('.ltf'):
+                if f.lower().endswith('.ltf') and not f.startswith('._'):
                     self._ltf(os.path.join(d, f))
             q = _ci_join(d, 'Quests')
             if q:
                 for f in sorted(os.listdir(q)):
-                    if f.lower().endswith('.seml'):
+                    if f.lower().endswith('.seml') and not f.startswith('._'):
                         self._seml(os.path.join(q, f))
         for mod in install.mods:
             d = _ci_join(os.path.join(install.data, mod), 'Texts')
             if not d:
                 continue
             for f in sorted(os.listdir(d)):
-                if f.lower().endswith('.lmf'):
+                if f.lower().endswith('.lmf') and not f.startswith('._'):
                     self._ltf(os.path.join(d, f), master=True)
 
     def _ltf(self, path, master=False):
