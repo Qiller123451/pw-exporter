@@ -122,7 +122,9 @@ class GSF_PT_archive(bpy.types.Panel):
         row.operator('gsf.import_entries', text='Import', icon='IMPORT')
         row.operator('gsf.entry_state', text='Keep').state = 'FILE'
         row.operator('gsf.entry_state', text='Remove', icon='X').state = 'REMOVE'
-        lay.operator('gsf.model_new', icon='EMPTY_AXIS')
+        row = lay.row(align=True)
+        row.operator('gsf.model_new', icon='EMPTY_AXIS')
+        row.operator('gsf.sort_lods', text='', icon='OUTLINER_COLLECTION').all_models = True
         lay.operator('export_scene.paraworld_gsf', text='Save archive', icon='EXPORT')
 
 
@@ -187,7 +189,9 @@ class GSF_PT_model(bpy.types.Panel):
         root = model_root(context.active_object)
         g = root.gsf_model
         lay = self.layout
-        lay.label(text=root.name, icon='EMPTY_AXIS')
+        row = lay.row(align=True)
+        row.label(text=root.name, icon='EMPTY_AXIS')
+        row.operator('gsf.sort_lods', text='', icon='OUTLINER_COLLECTION').all_models = False
         row = lay.row()
         row.template_list('GSF_UL_anims', '', g, 'anims', g, 'anim_index', rows=6)
         col = row.column(align=True)

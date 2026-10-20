@@ -236,4 +236,44 @@ check([m.name for m in E4.models] == want, 'model infos in the same order')
 from roundtrip import Canon, compare as cmp_canon  # noqa: E402
 same = [n for n in want if n != edited and not cmp_canon(Canon()(D4.model(n)), Canon()(E4.model(n)))]
 check(len(same) == len(want) - 1, 'every kept model unchanged by the move (%d of %d)' % (len(same), len(want) - 1))
+# ------------------------------------------------------------------ 5. LOD and kind collections
+from io_scene_paraworld_gsf.blender import lods  # noqa: E402
+src5 = os.path.join(gsf_dir, 'aje_buildings.gsf')
+bpy.ops.import_scene.paraworld_gsf(filepath=src5, models='aje_cook_house', textures=False)
+root5 = next(o for o in bpy.data.objects if o.gsf_model.is_root and o.gsf_model.name == 'aje_cook_house')
+mcol5 = lods.model_collection(root5)
+
+
+def _tree(c):
+    return [c] + [x for ch in c.children for x in _tree(ch)]
+
+
+def placed_right(root, mcol):
+    inside = set(_tree(mcol))
+    for o in lods.components(root, mcol):
+        cs = [c for c in o.users_collection if c in inside]
+        lod = lods.best_lod(o)
+        lcol = [p for p in mcol.children if len(cs) == 1 and cs[0].name in p.children]
+        if len(cs) != 1 or cs[0].get('gsf_value') != lods.kind_key(o) or len(lcol) != 1 or \
+                lcol[0].get('gsf_value') != (-1 if lod is None else lod):
+            return False
+    return list(mcol.objects) == [root]
+
+
+check(placed_right(root5, mcol5), 'every component in the collection of its best LOD and its kind, the root on top')
+lod_names = [c.name for c in mcol5.children]
+check(lod_names == sorted(lod_names), 'LOD collections in order (%s)' % ', '.join(lod_names))
+m5 = next(o for o in lods.components(root5) if o.gsf.kind == 'MESH' and lods.best_lod(o) == 0)
+for k in range(5):
+    m5.gsf.attributes[k] = k in (2, 3)
+bpy.context.view_layer.objects.active = root5
+bpy.ops.gsf.sort_lods()
+check(placed_right(root5, mcol5) and m5.users_collection[0].name == 'aje_cook_house Lod2 Mesh',
+      'a mesh shown on LOD 2 and 3 goes to Lod2 after sorting again')
+root_new = next(o for o in bpy.data.objects if o.gsf_model.is_root and o.gsf_model.name == 'my_pillar')
+check(emit.users_collection[0].name == 'my_pillar Lod0 Link', 'new model: components sorted (the emitter was a link then)')
+bpy.ops.object.select_all(action='DESELECT')
+emit.select_set(True)
+bpy.ops.gsf.set_kind(kind='PARTICLE')
+check(placed_right(root_new, lods.model_collection(root_new)), 'a new model from a selection is sorted too')
 print('FAILURES:', fails or 'none')

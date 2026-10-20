@@ -11,6 +11,7 @@ from ..core import GsfArchive, GsfError
 from ..core.archive import WALKSET_SLOTS
 from . import props as P
 from . import compat
+from . import lods
 from .space import MIRRORS
 
 _cache = {}
@@ -335,6 +336,31 @@ class GSF_OT_model_new(bpy.types.Operator):
         e.state = 'SCENE'
         e.root = root
         e.info = 'new model'
+        lods.sort_model(root, mcol)
+        return {'FINISHED'}
+
+
+class GSF_OT_sort_lods(bpy.types.Operator):
+    """Sort the model's components into LOD collections (best LOD bit shown) and kind collections inside them.
+Only the outliner changes: the LOD bits of the components decide where they go"""
+    bl_idname = 'gsf.sort_lods'
+    bl_label = 'Sort into LOD collections'
+    bl_options = {'REGISTER', 'UNDO'}
+    all_models: BoolProperty(name='All models of the archive', default=False)
+
+    def execute(self, context):
+        if self.all_models:
+            col = active_archive(context)
+            from .exp import model_roots
+            roots = model_roots(col) if col is not None else []
+        else:
+            r = model_root(context.active_object)
+            roots = [r] if r is not None else []
+        if not roots:
+            self.report({'WARNING'}, 'No GSF model selected')
+            return {'CANCELLED'}
+        n = sum(lods.sort_model(r) for r in roots)
+        self.report({'INFO'}, '%d components of %d models sorted' % (n, len(roots)))
         return {'FINISHED'}
 
 
@@ -347,8 +373,14 @@ class GSF_OT_set_kind(bpy.types.Operator):
                                                 for i in P.GSF_PG_chunk.bl_rna.properties['kind'].enum_items])
 
     def execute(self, context):
+        roots = []
         for o in context.selected_objects:
             o.gsf.kind = self.kind
+            r = model_root(o)
+            if r is not None and r not in roots:
+                roots.append(r)
+        for r in roots:
+            lods.sort_model(r)
         return {'FINISHED'}
 
 
@@ -569,7 +601,7 @@ def frame_handler(scene, depsgraph=None):
 
 
 CLASSES = [IMPORT_SCENE_OT_paraworld_gsf, EXPORT_SCENE_OT_paraworld_gsf, GSF_OT_import_entries, GSF_OT_entry_state, GSF_OT_entry_move,
-           GSF_OT_archive_new, GSF_OT_model_new, GSF_OT_set_kind, GSF_OT_anim_apply, GSF_OT_anim_clear, GSF_OT_anim_add,
+           GSF_OT_archive_new, GSF_OT_model_new, GSF_OT_sort_lods, GSF_OT_set_kind, GSF_OT_anim_apply, GSF_OT_anim_clear, GSF_OT_anim_add,
            GSF_OT_anim_remove, GSF_OT_collection_edit, GSF_OT_toggle_bit, GSF_OT_rebuild_material]
 
 

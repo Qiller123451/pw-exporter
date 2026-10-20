@@ -16,6 +16,7 @@ and walk sets) and one object per chunk:
     collision volume  empty (cube / sphere) - the model's pathfinder / hit volumes
 Animations become actions (bone animations on armatures, mesh / emitter / speed line paths on the objects); the root
 lists every model animation with the action of each animated component.
+Inside the model collection the components are sorted into collections per LOD and kind (see lods.py).
 """
 import os
 
@@ -32,6 +33,7 @@ from . import props as P
 from . import compat
 from . import bonemath as BM
 from .space import Space
+from . import lods
 from .materials import TextureFinder, to_blender as material_to_blender, guess_data_dir
 
 FPS = 25
@@ -199,6 +201,7 @@ class Importer:
         if self.animations:
             self._animations(m, ctx)
         self._walksets(m, g)
+        lods.sort_model(root, col)
         # entry state
         for e in self.col.gsf_archive.entries:
             if e.name == m.name:

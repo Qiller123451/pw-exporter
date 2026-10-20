@@ -22,6 +22,14 @@ Edit > Preferences > Add-ons > (drop-down) Install from Disk… and choose `io_s
    - Tick *Only open the archive* to list the models without importing any.
    - Enter names in *Models* (patterns like `seas_*` work) to import only those.
    - The archive becomes a collection named `GSF <name>`. The GSF tab lists every model in it.
+   - Each imported model gets its own collection holding the root empty, with the components sorted into
+     `<model> Lod0` … `<model> Lod4` collections, each split by kind (`<model> Lod0 Mesh`, `… Link`,
+     `… Collision volume` …). A component shown on several LODs goes into the best one: LOD bits 2 and 3 → Lod2.
+     Components with no LOD bit go into `<model> No LOD`.
+   - These collections only organise the outliner. The LOD bits in each component's properties decide what the game
+     shows, and moving an object to another collection does not change them. After editing LOD bits, press the
+     collection button beside the model name (GSF Model panel), or beside *New model from selection* for every
+     model of the archive, to sort again.
 2. **Choose what to edit.** In the GSF tab:
    - Tick models and press **Import** to bring them into the scene. They are now *Edited* and are written from the
      scene when you save.
@@ -125,7 +133,7 @@ io_scene_paraworld_gsf/
     vertex.py           13-bit positions, normal index, UV, bones, extra byte
     normals.py          the lookup sphere and SEK's normal computation
     names.py            names of attribute / material / particle bits, known bone and wall part names
-  blender/              props (generated), imp (import), exp (export), anim, materials, ops, ui
+  blender/              props (generated), imp (import), exp (export), anim, materials, lods (LOD collections), ops, ui
 tests/
   roundtrip.py          read -> write -> read every archive, compare everything (no Blender)
   compare.py            compare models of two archives in game terms
