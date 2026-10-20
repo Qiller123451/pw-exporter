@@ -555,13 +555,15 @@ def export_mesh_anim(exp, act, obj, chunk_obj_matrix, warn):
             a.keys = np.array(keys, dtype=np.float32).reshape(-1, 7)
             a.key_index = np.array(index, dtype=np.uint16)
     cv = Curves(act)
-    if len(g.frame_meshes):
+    refs, slot = _valid_frames(g, act, warn)
+    if refs:
         idx = cv.get1('["gsf_mesh_frame"]', np.arange(nf, dtype=np.float64))
-        a.mesh_index = np.clip(np.rint(idx if idx is not None else np.zeros(nf)), 0, len(g.frame_meshes) - 1).astype(np.uint16)
+        k = np.clip(np.rint(idx if idx is not None else np.zeros(nf)), 0, len(slot) - 1).astype(np.int64)
+        a.mesh_index = slot[k].astype(np.uint16)
         mats = [m.material for m in g.materials]
         a.meshes = []
         ff = FrameFlags(a.v['flags'])
-        for ref in g.frame_meshes:
+        for ref in refs:
             # frame meshes index the animation's own material list
             md, used = exp.mesh_data_from_mesh(ref.mesh, obj, list(ref.mesh.materials) or [None], chunk=ff, skin=None, warn=warn,
                                                material_index=lambda bm: _index_in(mats, bm),
@@ -575,6 +577,21 @@ def export_mesh_anim(exp, act, obj, chunk_obj_matrix, warn):
     return a
 
 
+def _valid_frames(g, act, warn):
+    """frame mesh entries that have a mesh, and for every entry the one written in its place (an empty entry takes
+    the mesh of the entry before it)"""
+    refs, slot, last = [], [], 0
+    for ref in g.frame_meshes:
+        if ref.mesh is not None:
+            last = len(refs)
+            refs.append(ref)
+        slot.append(last)
+    if len(refs) < len(g.frame_meshes):
+        warn('%s: %d frame mesh entries have no mesh - the frames that pick them show the mesh before them'
+             % (act.name, len(g.frame_meshes) - len(refs)))
+    return refs, np.array(slot, dtype=np.int64)
+
+
 def export_billboard_anim(exp, act, obj, warn):
     g = act.gsf
     a = BillboardAnimChunk()
@@ -586,14 +603,16 @@ def export_billboard_anim(exp, act, obj, warn):
     if Ms is not None and g.storage != 'NONE':
         a.matrices = np.array([exp.space.matrix_back(Matrix(m.tolist())) for m in Ms], dtype=np.float32)
     cv = Curves(act)
-    for ref in g.frame_meshes:
+    refs, slot = _valid_frames(g, act, warn)
+    for ref in refs:
         cl = BillboardCloud()
         cl.v['vertex_size'] = int(ref.mesh.get('gsf_vertex_size', 5))
         cl.raw, cl.v['bounding_box'] = exp.points_raw(ref.mesh, cl.v['vertex_size'], None)
         a.clouds.append(cl)
-    if len(g.frame_meshes):
+    if refs:
         idx = cv.get1('["gsf_cloud_frame"]', np.arange(nf, dtype=np.float64))
-        a.cloud_index = np.clip(np.rint(idx if idx is not None else np.zeros(nf)), 0, len(a.clouds) - 1).astype(np.uint16)
+        k = np.clip(np.rint(idx if idx is not None else np.zeros(nf)), 0, len(slot) - 1).astype(np.int64)
+        a.cloud_index = slot[k].astype(np.uint16)
     if g.has_material_list:
         a.material_list = exp.material_list_for([m.material for m in g.materials])
     return a

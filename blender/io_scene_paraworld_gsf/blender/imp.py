@@ -113,9 +113,11 @@ class Importer:
         g.mirror = self.mirror
         g.materials_capacity = self.a.materials_capacity
         P.to_props(g, P.GSF_PG_archive.STRUCT, self.a.h2, 'archive')
-        for s in self.a.sounds:
+        g.lists_tracked = True
+        for k, s in enumerate(self.a.sounds):
             it = g.sounds.add()
             it.name, it.group = s.name, s.group
+            it.orig_index = k
             P.to_props(it.v, SOUND, s.v, 'sound')
         for d in self.a.dusttrails:
             it = g.dusttrails.add()
@@ -127,10 +129,12 @@ class Importer:
             for k, v in d.entries:
                 e = it.entries.add()
                 e.name, e.value = k, v
-        for s in self.a.anim_groups:
-            g.anim_groups.add().name = s
-        for s in self.a.walk_transitions:
-            g.walk_transitions.add().name = s
+        for k, s in enumerate(self.a.anim_groups):
+            it = g.anim_groups.add()
+            it.name, it.orig_index = s, k
+        for k, s in enumerate(self.a.walk_transitions):
+            it = g.walk_transitions.add()
+            it.name, it.orig_index = s, k
         for m in (self.a.toc_order or self.a.models):
             e = g.entries.add()
             e.name = m.name

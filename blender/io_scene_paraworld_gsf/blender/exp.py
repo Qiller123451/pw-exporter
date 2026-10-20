@@ -47,6 +47,18 @@ def fit_bbox(points, hint=None):
     return tight
 
 
+def remap_bits(flags, pos):
+    """move bit k to bit pos[k] (dropped when pos[k] is None); bits without an entry in pos stay"""
+    out = 0
+    for k in range(32):
+        if flags >> k & 1:
+            if k not in pos:
+                out |= 1 << k
+            elif pos[k] is not None and pos[k] < 32:
+                out |= 1 << pos[k]
+    return out
+
+
 def descendants(obj):
     out = []
     for c in obj.children:
@@ -104,8 +116,20 @@ class Exporter:
         a.file_name = ga.file_name or a.file_name
         a.materials_capacity = ga.materials_capacity
         P.from_props(ga, P.GSF_PG_archive.STRUCT, a.h2, 'archive')
-        # sounds (models kept from the file refer to them by position)
+        # Sounds, animation groups and walk transitions: the models kept from the file refer to them by their
+        # position in the source archive, so they follow the entries that were moved, added or removed in Blender.
+        # (Models written from the scene already refer to the new positions.)
+        def new_pos(items, n_old):
+            """{position in the source: position now} (None when removed)"""
+            if not ga.lists_tracked:            # archives imported by add-on versions before 1.3: by position
+                return {i: (i if i < len(items) else None) for i in range(n_old)}
+            m = {i: None for i in range(n_old)}
+            for k, it in enumerate(items):
+                if 0 <= it.orig_index < n_old:
+                    m[it.orig_index] = k
+            return m
         old_index = {id(s): i for i, s in enumerate(a.sounds)}
+        snd_map = new_pos(ga.sounds, len(a.sounds))
         sounds = []
         for it in ga.sounds:
             s = Sound(it.name, it.group)
@@ -113,8 +137,21 @@ class Exporter:
             sounds.append(s)
         for m in a.models:
             for e in m.anim_names:
-                e.sounds = [sounds[old_index[id(s)]] for s in e.sounds if id(s) in old_index and old_index[id(s)] < len(sounds)]
+                e.sounds = [sounds[snd_map[old_index[id(s)]]] for s in e.sounds
+                            if snd_map.get(old_index.get(id(s), -1)) is not None]
         a.sounds = sounds
+        grp_map = new_pos(ga.anim_groups, len(a.anim_groups))
+        if any(k != v for k, v in grp_map.items()):
+            for m in a.models:
+                for e in m.anim_names:
+                    e.v['anim_flags'] = remap_bits(e.v['anim_flags'], grp_map)
+        wt_map = new_pos(ga.walk_transitions, len(a.walk_transitions))
+        if any(k != v for k, v in wt_map.items()):
+            for m in a.models:
+                for ws in m.walksets:
+                    v = ws.slots[WALK_TRANSITION_SLOT] or 0      # 1-based, 0 = none
+                    if 0 < v <= len(wt_map):
+                        ws.slots[WALK_TRANSITION_SLOT] = 0 if wt_map[v - 1] is None else wt_map[v - 1] + 1
         a.anim_groups = [x.name for x in ga.anim_groups]
         a.walk_transitions = [x.name for x in ga.walk_transitions]
         # models

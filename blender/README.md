@@ -47,7 +47,15 @@ Edit > Preferences > Add-ons > (drop-down) Install from Disk… and choose `io_s
    - **+** makes a new animation from the actions the model's objects currently have.
    - **−** removes the selected animation.
    - Walk sets refer to animations by name; they are edited on the model root's Object properties.
-5. **Save.** *Save archive* in the GSF tab (or *File > Export > ParaWorld GSF*) writes the archive. Models marked
+5. **Archive data** (GSF tab > *Archive data*): sound events, dust trails, animation groups and walk transitions each
+   have **+ / − / ▲ / ▼** beside their list. Dust trails add or remove key/value parameters below the list.
+   - Animations refer to sounds and groups by position (the *Sounds* list of an animation, the bits of *Groups*), and
+     walk sets refer to walk transitions by position. When an entry is removed or moved, those references are
+     renumbered so they keep pointing at the same entries; references to a removed entry are dropped. Models marked
+     *Keep* get the same renumbering when the archive is saved.
+   - A list of entries elsewhere (animated components, material lists, walk sets, emitter tiles and parameters, an
+     action's tracks, frame meshes and materials) has an **X** on each row and an *Add* button below.
+6. **Save.** *Save archive* in the GSF tab (or *File > Export > ParaWorld GSF*) writes the archive. Models marked
    *Keep* are copied from the source file unchanged.
 
 Save to a new file and keep the game's originals. The game reads archives from `Data/<mod>/GSF`.

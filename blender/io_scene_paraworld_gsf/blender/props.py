@@ -356,6 +356,7 @@ class GSF_PG_sound(PropertyGroup):
     name: StringProperty(name='Sound', description='Path of the .wav below the Audio folder')
     group: StringProperty(name='Group', description='Sounds of one group are alternatives')
     v: PointerProperty(type=GSF_PG_sound_fields)
+    orig_index: IntProperty(default=-1, description='Position in the source archive (-1 = added in Blender)')
 
 
 class GSF_PG_kv(PropertyGroup):
@@ -374,6 +375,7 @@ class GSF_PG_dusttrail(PropertyGroup):
 
 class GSF_PG_name(PropertyGroup):
     name: StringProperty(name='Name')
+    orig_index: IntProperty(default=-1, description='Position in the source archive (-1 = added in Blender)')
 
 
 class GSF_PG_entry(PropertyGroup):
@@ -403,8 +405,13 @@ GSF_PG_archive = make_group('GSF_PG_archive', HEADER2, 'archive', {
     'sound_index': IntProperty(),
     'dusttrails': CollectionProperty(type=GSF_PG_dusttrail),
     'dusttrail_index': IntProperty(),
+    'dust_entry_index': IntProperty(),
     'anim_groups': CollectionProperty(type=GSF_PG_name),
+    'anim_group_index': IntProperty(),
     'walk_transitions': CollectionProperty(type=GSF_PG_name),
+    'walk_transition_index': IntProperty(),
+    'lists_tracked': BoolProperty(default=False, description='Sounds, animation groups and walk transitions know their '
+                                  'position in the source archive (models kept from the file are renumbered on save)'),
     'entries': CollectionProperty(type=GSF_PG_entry),
     'entry_index': IntProperty(),
     'order_changed': BoolProperty(name='Order changed', default=False,

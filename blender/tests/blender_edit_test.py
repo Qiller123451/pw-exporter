@@ -276,4 +276,83 @@ bpy.ops.object.select_all(action='DESELECT')
 emit.select_set(True)
 bpy.ops.gsf.set_kind(kind='PARTICLE')
 check(placed_right(root_new, lods.model_collection(root_new)), 'a new model from a selection is sorted too')
+# ------------------------------------------------------------------ 6. archive lists: sounds, groups, transitions, dust trails
+from io_scene_paraworld_gsf.core.archive import WALK_TRANSITION_SLOT  # noqa: E402
+src6 = os.path.join(gsf_dir, 'all_animals.gsf')
+bpy.ops.import_scene.paraworld_gsf(filepath=src6, models='stegosaurus', textures=False)
+col6 = next(c for c in bpy.data.collections if c.gsf_archive.is_archive and c.gsf_archive.file_name == 'all_animals')
+bpy.context.scene['gsf_active_archive'] = col6.name
+bpy.context.view_layer.objects.active = None
+g6 = col6.gsf_archive
+D6 = GsfArchive.load(src6)
+
+
+def meaning(a):
+    """what every animation refers to, by name: {model: [(anim, sounds, groups), ...] + walk transitions}"""
+    out = {}
+    for m in a.models:
+        pos = {id(x): k for k, x in enumerate(a.sounds)}
+        anims = [(e.name, [pos[id(x)] for x in e.sounds],
+                  sorted(a.anim_groups[k] if k < len(a.anim_groups) else 'bit%d' % k
+                         for k in range(32) if e.v['anim_flags'] >> k & 1)) for e in m.anim_names]
+        wts = [a.walk_transitions[ws.slots[WALK_TRANSITION_SLOT] - 1] if ws.slots[WALK_TRANSITION_SLOT] else None
+               for ws in m.walksets]
+        out[m.name] = (anims, wts)
+    return out
+
+
+before = meaning(D6)
+brach = D6.model('brachiosaurus')
+gone_snd = next(x for e in brach.anim_names for x in e.sounds)             # a sound of a kept model
+gone_i = D6.sounds.index(gone_snd)
+stego_root = next(o for o in bpy.data.objects if o.gsf_model.is_root and o.gsf_model.name == 'stegosaurus')
+
+
+def op6(which, action, index=-1):
+    return bpy.ops.gsf.archive_list(which=which, action=action, index=index)
+
+
+check(op6('sounds', 'REMOVE', gone_i) == {'FINISHED'} and len(g6.sounds) == len(D6.sounds) - 1, 'sound removed')
+g6.sound_index = len(g6.sounds) - 1
+op6('sounds', 'ADD')
+g6.sounds[-1].name = 'test\\new_sound.wav'
+stego_root.gsf_model.anims[0].sounds = (stego_root.gsf_model.anims[0].sounds + ',%d' % (len(g6.sounds) - 1)).strip(',')
+op6('walk_transitions', 'DOWN', 0)
+op6('anim_groups', 'REMOVE', 0)
+g6.anim_group_index = len(g6.anim_groups) - 1
+op6('anim_groups', 'ADD')
+g6.anim_groups[-1].name = 'swim'
+g6.dusttrail_index = len(g6.dusttrails) - 1
+op6('dusttrails', 'ADD')
+d6 = g6.dusttrails[-1]
+d6.name, d6.model, d6.anim = 'CLevelUpFX', 'stegosaurus', stego_root.gsf_model.anims[0].name
+op6('dust_entries', 'ADD')
+d6.entries[0].name, d6.entries[0].value = 'force', '2'
+out6 = os.path.join(out_dir, 'lists_all_animals.gsf')
+r = bpy.ops.export_scene.paraworld_gsf(filepath=out6, archive=col6.name)
+E6 = GsfArchive.load(out6)
+after = meaning(E6)
+check(r == {'FINISHED'} and E6.anim_groups == ['walk', 'fight', 'work', 'swim'], 'groups saved: %s' % E6.anim_groups)
+check(E6.walk_transitions == [D6.walk_transitions[1], D6.walk_transitions[0]] + D6.walk_transitions[2:],
+      'walk transitions saved in the new order')
+check(len(E6.sounds) == len(D6.sounds) and E6.sounds[-1].name == 'test\\new_sound.wav', 'sound added at the end')
+
+
+def expected(name):
+    """sound positions: the removed one gone, the ones behind it one place up"""
+    anims, wts = before[name]
+    anims = [(n, [k if k < gone_i else k - 1 for k in snd if k != gone_i], [x for x in grp if x != 'idle'])
+             for n, snd, grp in anims]
+    return anims, wts
+
+
+kept6 = [e.name for e in g6.entries if e.state == 'FILE']       # (allosaurus was edited in scenario 2)
+bad = [n for n in kept6 if after.get(n) != expected(n)]
+check(not bad, 'kept models refer to the same sounds, groups and walk transitions (%d models, wrong: %s)'
+      % (len(kept6), bad[:5]))
+ea, ewt = expected('stegosaurus')
+ea[0] = (ea[0][0], ea[0][1] + [len(E6.sounds) - 1], ea[0][2])
+check(after['stegosaurus'] == (ea, ewt), 'the edited model too, plus its new sound')
+dt = [d for d in E6.dusttrails if d.name == 'CLevelUpFX' and d.model is E6.model('stegosaurus')]
+check(len(E6.dusttrails) == len(D6.dusttrails) + 1 and dt and dt[0].entries == [('force', '2')], 'dust trail added')
 print('FAILURES:', fails or 'none')

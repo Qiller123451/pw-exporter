@@ -78,12 +78,31 @@ class GSF_UL_named(bpy.types.UIList):
         layout.prop(item, 'name', text='%d' % index, emboss=False)
 
 
-def list_buttons(layout, path, index):
+def _edit_op(layout, path, action, index=-1, owner=None, text='', icon='ADD'):
+    op = layout.operator('gsf.collection_edit', text=text, icon=icon)
+    op.path, op.action, op.index = path, action, index
+    if owner is not None:
+        op.id_type = 'ACTION' if isinstance(owner, bpy.types.Action) else 'OBJECT'
+        op.id_name = owner.name
+    return op
+
+
+def remove_button(row, path, index, owner=None):
+    """an X that removes entry `index` of the list at `path`"""
+    _edit_op(row, path, 'REMOVE', index, owner, icon='X')
+
+
+def add_button(layout, path, text, owner=None):
+    _edit_op(layout, path, 'ADD', -1, owner, text=text, icon='ADD')
+
+
+def archive_list_buttons(layout, which, move=True):
     col = layout.column(align=True)
-    op = col.operator('gsf.collection_edit', text='', icon='ADD')
-    op.path, op.action = path, 'ADD'
-    op = col.operator('gsf.collection_edit', text='', icon='REMOVE')
-    op.path, op.action, op.index = path, 'REMOVE', index
+    for action, icon in (('ADD', 'ADD'), ('REMOVE', 'REMOVE')) + ((('UP', 'TRIA_UP'), ('DOWN', 'TRIA_DOWN')) if move else ()):
+        if action == 'UP':
+            col.separator()
+        op = col.operator('gsf.archive_list', text='', icon=icon)
+        op.which, op.action = which, action
 
 
 # ============================================================================================ 3D view sidebar
@@ -142,14 +161,12 @@ class GSF_PT_archive_data(bpy.types.Panel):
             return
         g = col.gsf_archive
         lay = self.layout
-        base = 'scene.collection' if False else None
-        path = 'bpy.data.collections["%s"].gsf_archive' % col.name
         lay.prop(g, 'materials_capacity')
         draw_struct(lay, g, P.GSF_PG_archive.STRUCT, 'archive')
         lay.label(text='Sound events (position = index used by animations)')
         row = lay.row()
         row.template_list('GSF_UL_named', 'snd', g, 'sounds', g, 'sound_index', rows=4)
-        _ = base, path
+        archive_list_buttons(row, 'sounds')
         if 0 <= g.sound_index < len(g.sounds):
             s = g.sounds[g.sound_index]
             box = lay.box()
@@ -157,22 +174,33 @@ class GSF_PT_archive_data(bpy.types.Panel):
             box.prop(s, 'group')
             draw_struct(box, s.v, P.GSF_PG_sound_fields.STRUCT, 'sound')
         lay.label(text='Dust trails / effects')
-        lay.template_list('GSF_UL_named', 'dust', g, 'dusttrails', g, 'dusttrail_index', rows=3)
+        row = lay.row()
+        row.template_list('GSF_UL_named', 'dust', g, 'dusttrails', g, 'dusttrail_index', rows=3)
+        archive_list_buttons(row, 'dusttrails')
         if 0 <= g.dusttrail_index < len(g.dusttrails):
             d = g.dusttrails[g.dusttrail_index]
             box = lay.box()
-            for k in ('name', 'model', 'anim', 'anim_index', 'start_frame'):
+            box.prop(d, 'name')
+            box.prop_search(d, 'model', g, 'entries')
+            for k in ('anim', 'anim_index', 'start_frame'):
                 box.prop(d, k)
-            for kv in d.entries:
-                r = box.row()
+            box.label(text='Parameters (key, value)')
+            for k, kv in enumerate(d.entries):
+                r = box.row(align=True)
                 r.prop(kv, 'name', text='')
                 r.prop(kv, 'value', text='')
-        lay.label(text='Animation groups')
-        for it in g.anim_groups:
-            lay.prop(it, 'name', text='')
-        lay.label(text='Walk transitions')
-        for it in g.walk_transitions:
-            lay.prop(it, 'name', text='')
+                op = r.operator('gsf.archive_list', text='', icon='X')
+                op.which, op.action, op.index = 'dust_entries', 'REMOVE', k
+            op = box.operator('gsf.archive_list', text='Add parameter', icon='ADD')
+            op.which, op.action, op.index = 'dust_entries', 'ADD', len(d.entries) - 1
+        lay.label(text='Animation groups (bit k of an animation\'s groups = group k)')
+        row = lay.row()
+        row.template_list('GSF_UL_named', 'grp', g, 'anim_groups', g, 'anim_group_index', rows=3)
+        archive_list_buttons(row, 'anim_groups')
+        lay.label(text='Walk transitions (walk set value k = entry k - 1)')
+        row = lay.row()
+        row.template_list('GSF_UL_named', 'wt', g, 'walk_transitions', g, 'walk_transition_index', rows=3)
+        archive_list_buttons(row, 'walk_transitions')
 
 
 class GSF_PT_model(bpy.types.Panel):
@@ -207,15 +235,13 @@ class GSF_PT_model(bpy.types.Panel):
             box.prop(it, 'sounds')
             box.prop(it, 'info_name')
             box.label(text='Animated components')
+            path = 'gsf_model.anims[%d].tracks' % g.anim_index
             for k, tr in enumerate(it.tracks):
                 r = box.row(align=True)
                 r.prop(tr, 'target', text='')
                 r.prop(tr, 'action', text='')
-            r = box.row(align=True)
-            op = r.operator('gsf.collection_edit', text='Add component', icon='ADD')
-            op.path, op.action = 'object.gsf_model.anims[%d].tracks' % g.anim_index, 'ADD'
-            if root is not context.active_object:
-                box.label(text='(select the model root to add components)')
+                remove_button(r, path, k, root)
+            add_button(box, path, 'Add component', root)
 
 
 class GSF_PT_action(bpy.types.Panel):
@@ -250,17 +276,35 @@ class GSF_PT_action(bpy.types.Panel):
             lay.prop(g, 'root_flags')
             box = lay.box()
             box.label(text='Tracks (bone, format, flags, parent)')
-            for t in g.tracks:
+            box.label(text='Animated bones get a track anyway; listed bones keep their format')
+            arm = context.active_object.data
+            for k, t in enumerate(g.tracks):
                 r = box.row(align=True)
-                r.prop(t, 'bone', text='')
+                r.prop_search(t, 'bone', arm, 'bones', text='')
                 r.prop(t, 'format', text='')
                 r.prop(t, 'flags', text='')
-                r.prop(t, 'parent', text='')
+                r.prop_search(t, 'parent', arm, 'bones', text='')
+                remove_button(r, 'gsf.tracks', k, act)
+            add_button(box, 'gsf.tracks', 'Add track', act)
         if kind in ('mesh_anim', 'billboard_anim'):
             lay.prop(g, 'storage')
-            lay.label(text='Frame meshes: %d' % len(g.frame_meshes))
-            for m in g.materials:
-                lay.prop(m, 'material', text='')
+            box = lay.box()
+            box.label(text='Frame meshes (%s picks one per frame)' % (
+                'gsf_mesh_frame' if kind == 'mesh_anim' else 'gsf_cloud_frame'))
+            for k, m in enumerate(g.frame_meshes):
+                r = box.row(align=True)
+                r.label(text='%d' % k)
+                r.prop(m, 'mesh', text='')
+                remove_button(r, 'gsf.frame_meshes', k, act)
+            add_button(box, 'gsf.frame_meshes', 'Add frame mesh', act)
+            box = lay.box()
+            box.prop(g, 'has_material_list')
+            box.label(text='Material list of the animation')
+            for k, m in enumerate(g.materials):
+                r = box.row(align=True)
+                r.prop(m, 'material', text='')
+                remove_button(r, 'gsf.materials', k, act)
+            add_button(box, 'gsf.materials', 'Add material', act)
         draw_attributes(lay, g, _fourcc_of(context.active_object))
 
 
@@ -315,20 +359,23 @@ class GSF_PT_object(bpy.types.Panel):
         box.label(text='Texture tiles')
         for k, t in enumerate(g.tiles):
             b = box.box()
-            b.prop(t, 'material')
+            r = b.row(align=True)
+            r.prop(t, 'material')
+            remove_button(r, 'gsf.tiles', k, o)
             grid = b.grid_flow(columns=2, align=True)
             for key in ('tiles_w_log2', 'tiles_h_log2', 'tile_start', 'tile_last', 'tile_border_width',
                         'tile_border_left', 'mid_x', 'mid_y'):
                 grid.prop(t, key)
-        list_buttons(box, 'object.gsf.tiles', len(g.tiles) - 1)
+        add_button(box, 'gsf.tiles', 'Add tile set', o)
         box = lay.box()
-        box.label(text='Particle source parameters')
-        for p in g.params:
+        box.label(text='Particle source parameters (in file order)')
+        for k, p in enumerate(g.params):
             r = box.row(align=True)
             r.prop(p, 'pname', text='')
             r.prop(p, 'ptype', text='')
             r.prop(p, {'f': 'f', 'i': 'i', 'x': 'x'}[p.ptype], text='')
-        list_buttons(box, 'object.gsf.params', len(g.params) - 1)
+            remove_button(r, 'gsf.params', k, o)
+        add_button(box, 'gsf.params', 'Add parameter', o)
 
     def draw_root(self, lay, o):
         g = o.gsf_model
@@ -344,14 +391,18 @@ class GSF_PT_object(bpy.types.Panel):
             lay.prop(g, 'bbox')
         box = lay.box()
         box.label(text='Material list (order = indices used by sprites and emitters)')
-        for m in g.materials:
-            box.prop(m, 'material', text='')
-        list_buttons(box, 'object.gsf_model.materials', len(g.materials) - 1)
+        for k, m in enumerate(g.materials):
+            r = box.row(align=True)
+            r.prop(m, 'material', text='')
+            remove_button(r, 'gsf_model.materials', k, o)
+        add_button(box, 'gsf_model.materials', 'Add material', o)
         box = lay.box()
         box.label(text='Walk sets')
         for k, ws in enumerate(g.walksets):
             b = box.box()
-            b.prop(ws, 'name')
+            r = b.row(align=True)
+            r.prop(ws, 'name')
+            remove_button(r, 'gsf_model.walksets', k, o)
             for i, s in enumerate(ws.slots):
                 r = b.row()
                 name = WALKSET_SLOTS[i] if i < len(WALKSET_SLOTS) else 'slot %d' % i
@@ -359,7 +410,7 @@ class GSF_PT_object(bpy.types.Panel):
                     r.prop(s, 'value', text=name)
                 else:
                     r.prop_search(s, 'anim', g, 'anims', text=name)
-        list_buttons(box, 'object.gsf_model.walksets', len(g.walksets) - 1)
+        add_button(box, 'gsf_model.walksets', 'Add walk set', o)
 
 
 class GSF_PT_material(bpy.types.Panel):

@@ -6,7 +6,7 @@ blender/   properties, import, export, panels
 bl_info = {
     'name': 'ParaWorld GSF format',
     'author': 'Kacper, with Claude',
-    'version': (1, 2, 0),
+    'version': (1, 3, 0),
     'blender': (4, 2, 0),
     'location': 'File > Import / Export > ParaWorld GSF; 3D View > Sidebar > GSF',
     'description': 'Import, edit and export ParaWorld .gsf model archives (meshes, skeletons, animations, effects)',

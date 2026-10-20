@@ -277,6 +277,7 @@ class GSF_OT_archive_new(bpy.types.Operator):
         context.scene.collection.children.link(col)
         g = col.gsf_archive
         g.is_archive = True
+        g.lists_tracked = True
         g.file_name = self.name
         g.mirror = self.mirror
         context.scene['gsf_active_archive'] = col.name
@@ -520,14 +521,20 @@ class GSF_OT_collection_edit(bpy.types.Operator):
     bl_idname = 'gsf.collection_edit'
     bl_label = 'Edit list'
     bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
-    path: StringProperty()
+    path: StringProperty(description='Path of the list, from the data-block named by id_name, else from the context')
+    id_type: EnumProperty(items=[('OBJECT', 'Object', ''), ('ACTION', 'Action', '')], default='OBJECT')
+    id_name: StringProperty()
     action: EnumProperty(items=[('ADD', 'Add', ''), ('REMOVE', 'Remove', '')])
     index: IntProperty(default=-1)
 
     def execute(self, context):
         try:
-            coll = context.path_resolve(self.path)
-        except ValueError:
+            if self.id_name:
+                base = {'OBJECT': bpy.data.objects, 'ACTION': bpy.data.actions}[self.id_type][self.id_name]
+                coll = base.path_resolve(self.path)
+            else:
+                coll = context.path_resolve(self.path)
+        except (ValueError, KeyError):
             return {'CANCELLED'}
         if self.action == 'ADD':
             it = coll.add()
@@ -535,7 +542,107 @@ class GSF_OT_collection_edit(bpy.types.Operator):
                 for _ in range(len(WALKSET_SLOTS)):
                     it.slots.add()
         elif 0 <= self.index < len(coll):
+            n = len(coll)
             coll.remove(self.index)
+            # per-entry custom properties kept on the object follow their entries
+            if self.id_name and self.id_type == 'OBJECT' and self.path == 'gsf.tiles':
+                o = bpy.data.objects[self.id_name]
+                key = 'gsf_tile_material_raw_%d'
+                o.pop(key % self.index, None)
+                for k in range(self.index + 1, n):
+                    if key % k in o:
+                        o[key % (k - 1)] = o.pop(key % k)
+        return {'FINISHED'}
+
+
+ARCHIVE_LISTS = {
+    # list: (index property, what refers to its positions)
+    'sounds': ('sound_index', 'sounds'),
+    'dusttrails': ('dusttrail_index', None),
+    'anim_groups': ('anim_group_index', 'groups'),
+    'walk_transitions': ('walk_transition_index', 'transitions'),
+}
+
+
+def renumber_scene_refs(col, what, pos):
+    """after a sound / animation group / walk transition moved or was removed: fix the references of the models in
+    the scene. pos = {old position: new position or None}"""
+    from .exp import model_roots, remap_bits
+    for root in model_roots(col):
+        g = root.gsf_model
+        for an in g.anims:
+            if what == 'sounds':
+                out = []
+                for t in an.sounds.replace(';', ',').split(','):
+                    t = t.strip()
+                    if t.isdigit() and int(t) in pos:
+                        if pos[int(t)] is not None:
+                            out.append(str(pos[int(t)]))
+                    elif t:
+                        out.append(t)
+                an.sounds = ','.join(out)
+            elif what == 'groups':
+                an.anim_flags = P.hexs(remap_bits(P.parse_hex(an.anim_flags), pos))
+        if what == 'transitions':
+            from ..core.archive import WALK_TRANSITION_SLOT
+            for ws in g.walksets:
+                if WALK_TRANSITION_SLOT < len(ws.slots):
+                    s = ws.slots[WALK_TRANSITION_SLOT]
+                    if 0 < s.value and s.value - 1 in pos:
+                        s.value = 0 if pos[s.value - 1] is None else pos[s.value - 1] + 1
+
+
+class GSF_OT_archive_list(bpy.types.Operator):
+    """Add, remove or move an entry of an archive-wide list. Animations that refer to sounds, animation groups or walk
+transitions by position are renumbered, so they keep pointing at the same entries"""
+    bl_idname = 'gsf.archive_list'
+    bl_label = 'Edit archive list'
+    bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
+    which: EnumProperty(items=[(k, k, '') for k in list(ARCHIVE_LISTS) + ['dust_entries']])
+    action: EnumProperty(items=[('ADD', 'Add', 'Add an entry after the active one'),
+                                ('REMOVE', 'Remove', 'Remove the active entry'),
+                                ('UP', 'Up', 'Move the active entry up'), ('DOWN', 'Down', 'Move the active entry down')])
+    index: IntProperty(default=-1, description='Entry to act on (-1 = the active one)')
+
+    def execute(self, context):
+        col = active_archive(context)
+        if col is None:
+            return {'CANCELLED'}
+        g = col.gsf_archive
+        if self.which == 'dust_entries':
+            if not 0 <= g.dusttrail_index < len(g.dusttrails):
+                return {'CANCELLED'}
+            owner, coll, idx_prop, what = g, g.dusttrails[g.dusttrail_index].entries, 'dust_entry_index', None
+        else:
+            idx_prop, what = ARCHIVE_LISTS[self.which]
+            owner, coll = g, getattr(g, self.which)
+        n = len(coll)
+        i = self.index if self.index >= 0 else getattr(owner, idx_prop)
+        if self.action == 'ADD':
+            if what == 'groups' and n >= 32:
+                self.report({'ERROR'}, 'An animation belongs to groups through 32 bits: no more than 32 groups')
+                return {'CANCELLED'}
+            coll.add()
+            j = min(max(i + 1, 0), n) if n else 0
+            coll.move(n, j)          # after the active entry; the ones behind it move down
+            pos = {k: (k if k < j else k + 1) for k in range(n)}
+            setattr(owner, idx_prop, j)
+        elif not 0 <= i < n:
+            return {'CANCELLED'}
+        elif self.action == 'REMOVE':
+            coll.remove(i)
+            pos = {k: (k if k < i else (None if k == i else k - 1)) for k in range(n)}
+            setattr(owner, idx_prop, min(i, n - 2) if n > 1 else 0)
+        else:
+            j = i - 1 if self.action == 'UP' else i + 1
+            if not 0 <= j < n:
+                return {'CANCELLED'}
+            coll.move(i, j)
+            pos = {k: k for k in range(n)}
+            pos[i], pos[j] = j, i
+            setattr(owner, idx_prop, j)
+        if what is not None:
+            renumber_scene_refs(col, what, pos)
         return {'FINISHED'}
 
 
@@ -602,7 +709,7 @@ def frame_handler(scene, depsgraph=None):
 
 CLASSES = [IMPORT_SCENE_OT_paraworld_gsf, EXPORT_SCENE_OT_paraworld_gsf, GSF_OT_import_entries, GSF_OT_entry_state, GSF_OT_entry_move,
            GSF_OT_archive_new, GSF_OT_model_new, GSF_OT_sort_lods, GSF_OT_set_kind, GSF_OT_anim_apply, GSF_OT_anim_clear, GSF_OT_anim_add,
-           GSF_OT_anim_remove, GSF_OT_collection_edit, GSF_OT_toggle_bit, GSF_OT_rebuild_material]
+           GSF_OT_anim_remove, GSF_OT_collection_edit, GSF_OT_archive_list, GSF_OT_toggle_bit, GSF_OT_rebuild_material]
 
 
 def menu_import(self, context):
