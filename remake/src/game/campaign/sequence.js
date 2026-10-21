@@ -2,8 +2,9 @@
 // which world objects take part, where each one is at a moment of the timeline, and where they are left.
 //
 //   * Binding (client 0x52dc24): the actor's object by GUID (the map object of that GUID); else the first world
-//     object of the binding's class, owner (-1 none, -2 any), level (-1 any) and name ('' any) that no other actor
-//     took; else the actor is temporary - drawn for the scene only (ui/cutscene.js).
+//     object of the binding's class (or its equivalent of the player's tribe), owner (-1 none, -2 any), level (-1
+//     any) and name ('' any) that no other actor took; else the actor is temporary - drawn for the scene only, with
+//     the attachments of its state (weapons, shields: ui/cutscene.js).
 //   * Pose at time t: its start pose, then every walk / recorded path / beam that began by t (a walk or path between
 //     its keys; heading from the path's turns, else from the direction of the walk); a turn adds its angle. A walk is
 //     straight from waypoint to waypoint (the server's walk of a cutscene does no path finding, PWServer 0x464ed0 ->
@@ -34,7 +35,10 @@ export class SeqActors {
       if (!live(rec) || taken.has(rec)) rec = null;
       if (!rec) {
         const b = a.bind || {}, owner = b.owner >= 0 ? C.player(b.owner) : null;
-        rec = recs.find((r) => !taken.has(r) && live(r) && lc(r.cls) === lc(b.cls || a.cls) &&
+        // the class, or its equivalent of the player's tribe: an object given to the player in a mission played with
+        // another tribe became that tribe's (setup.js convert) - mission 1's freed spearmen in sc_1040
+        const cls = lc(b.cls || a.cls), own = C.ownClass ? lc(C.ownClass(b.cls || a.cls)) : cls;
+        rec = recs.find((r) => !taken.has(r) && live(r) && (lc(r.cls) === cls || lc(r.cls) === own) &&
           (b.owner === -2 || (objOf(r) ? (objOf(r).owner || null) === owner : b.owner < 0)) &&
           (!(b.level >= 0) || !objOf(r) || (objOf(r).level || 1) - 1 === b.level) &&
           (!b.name || lc(r.name) === lc(b.name))) || null;

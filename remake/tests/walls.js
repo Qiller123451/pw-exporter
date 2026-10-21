@@ -35,8 +35,23 @@ const at = (i, j) => WM.at(ci + i, cj + j);
 const mask = (i, j) => { const t = at(i, j); return t && t.wall ? t.wall.armMask : -1; };
 // 1. straight line of 5 tiles W-E
 const r1 = place([0, 0], [4, 0]);
-check('straight line: 5 pieces on the grid, never rotated', r1.n === 5 && [0, 1, 2, 3, 4].every((i) => at(i, 0) && at(i, 0).wall && at(i, 0).wall.rot === 0), { n: r1.n, states: r1.tiles.map((t) => t.state) });
+// (never turned: every piece stands as the map's rotation 0, the engine's own frame - entities.js WALL_ROT = pi)
+check('straight line: 5 pieces on the grid, never rotated', r1.n === 5 && [0, 1, 2, 3, 4].every((i) => at(i, 0) && at(i, 0).wall && Math.abs(at(i, 0).wall.rot - Math.PI) < 1e-9 && Math.abs(at(i, 0).wall.obj.rotation.y - Math.PI) < 1e-9), { n: r1.n, states: r1.tiles.map((t) => t.state) });
 check('arms: ends one arm, middle E+W', mask(0, 0) === 1 && mask(4, 0) === 16 && mask(2, 0) === 17, [mask(0, 0), mask(2, 0), mask(4, 0)]);
+// the model parts are the engine's own (the piece stands in the map's frame): the mesh of part "3b" - the engine's
+// arm towards the east - lies east of the post, "7b" west (a piece turned half round showed the same arms with the
+// other part's meshes: stone and decoration on the wrong side)
+const partX = (b, comp) => {
+  b.updateVisual(); b.obj.updateMatrixWorld(true);
+  let lo = Infinity, hi = -Infinity;
+  b.obj.traverse((o) => {
+    if (!o.isMesh || o.userData.comp !== comp || !o.visible || !o.geometry.attributes.position) return;
+    const P = o.geometry.attributes.position, e = o.matrixWorld.elements;
+    for (let k = 0; k < P.count; k++) { const x = e[0] * P.getX(k) + e[4] * P.getY(k) + e[8] * P.getZ(k) + e[12]; if (x < lo) lo = x; if (x > hi) hi = x; }
+  });
+  return lo > hi ? null : Math.round(((lo + hi) / 2 - b.pos.x) * 10) / 10;
+};
+{ const m = at(2, 0).wall, e = partX(m, '3b'), w = partX(m, '7b'); check('the model parts point the engine\'s way: part 3b east of the post, 7b west', e > 0.5 && w < -0.5, [e, w]); }
 // no gaps: the points between pieces are blocked
 const gaps = [0, 1, 2, 3].filter((i) => { const [x, z] = T(i, 0); return W.nav.isFree(x + 4, z); });
 check('no gaps between pieces', gaps.length === 0, gaps);

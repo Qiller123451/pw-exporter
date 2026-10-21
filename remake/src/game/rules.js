@@ -30,15 +30,17 @@ const strs = (n) => list(n).map(scalar).filter((x) => typeof x === 'string');
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 // Gates the maps place that the tech tree does not list (the campaign's seas_endboss_gate, seas_hq_gate: script class
-// CGate in classes/buildings/*.txt, a model, nothing else). The engine makes them gates with the class's defaults; the
+// CGate in classes/buildings/*.txt, a model, nothing else; a listed CGate class without the gate flag is a gate too,
+// Rules.def). The engine makes them gates with the class's defaults; the
 // remake gives them the node of the tribe's own gate (SEAS: seas_gate) with their model, so they open and close
 // (their GateState, the triggers' Open / Close Gate) instead of standing as closed scenery.
 function scriptedGates(tt, extra) {
-  const O = tt && tt.StartTT && tt.StartTT.Objects, S = extra.script || {}, gfx = extra.classgfx || {};
+  const O = tt && tt.StartTT && tt.StartTT.Objects, S = extra.script || {}, gfx = extra.classgfx || {}, P = extra.classParents || {};
+  const isGate = (c) => { for (let k = 0; c && k < 20; k++, c = P[c]) if (c === 'CGate') return true; return false; };
   if (!O) return;
   const has = (n) => Object.values(O).some((t) => t && t.BLDG && t.BLDG[n]);
   for (const [n, cls] of Object.entries(S)) {
-    if (cls !== 'CGate' || !gfx[n] || has(n)) continue;
+    if (!isGate(cls) || !gfx[n] || has(n)) continue;
     const tribe = /^seas_/.test(n) ? 'SEAS' : /^hu_/.test(n) ? 'Hu' : /^aje_/.test(n) ? 'Aje' : /^ninigi_/.test(n) ? 'Ninigi' : 'SEAS';
     const tpl = { SEAS: 'seas_gate', Hu: 'hu_palisade_gate', Aje: 'aje_bone_palisade_gate', Ninigi: 'ninigi_palisade_gate' }[tribe];
     const src = O[tribe] && O[tribe].BLDG && O[tribe].BLDG[tpl];
@@ -136,7 +138,11 @@ export class Rules {
         density: num(scalar(o.density)), growup: num(scalar(o.growup_duration)), nightactive: num(scalar(o.nightactive)) === 1,
         maxworkers: num(scalar(o.maxworkers)), caste: scalar(o.caste) || null, standanim: scalar(o.standanim), fx: scalar(o.fx_class),
         formationPos: num(scalar(o.formation_pos), -1),
-        wall: bool(scalar(o.wall)), gate: bool(scalar(o.gate)), coastal: bool(scalar(o.coastal)),
+        // a gate: the tech tree's gate flag, or a script class derived from CGate - the engine makes every such object
+        // a gate, and a mod may list one without the flag (MIRAGE's seas_endboss_gate, ship_chain: mission 16's gates
+        // stood shut as scenery and the player's units could not leave the start) or give it its own class (MIRAGE's
+        // seas_hq_gate: CGateFOWVIsible)
+        wall: bool(scalar(o.wall)), gate: bool(scalar(o.gate)) || this.isA(name, 'CGate'), coastal: bool(scalar(o.coastal)),
         wallKind: null,
         // resources an "unlimited" building produces (CUnlimitedBuilding: Objects/../unlimited/<res> = 1)
         unlimited: flagList(o.unlimited),

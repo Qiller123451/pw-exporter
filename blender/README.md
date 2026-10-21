@@ -7,6 +7,8 @@ lights. Every value stored in the file can be edited in Blender. Values whose pu
 
 Blender 4.2 LTS or newer (tested with 5.2).
 
+**[User manual with screenshots](docs/MANUAL.md)**: a walk through the interface and common tasks.
+
 ## Install
 
 Build the zip from the repository, then install it:

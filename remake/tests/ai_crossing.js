@@ -54,7 +54,9 @@ const a2 = B.attacks.find((x) => x.type === 'transfer' && us2.every((u) => x.uni
 let k = 0;
 for (; k < 40 && a2.ferry && a2.ferry.phase !== 'board'; k++) run(1);
 run(3);
-W.damage(ship2, 20, null);
+// (the crossing takes the first free transport of the fleet - the earlier one when it is back, not always ship2)
+const hitShips = a2.ferry && a2.ferry.ships.length ? a2.ferry.ships.slice() : [ship2];
+for (const s of hitShips) W.damage(s, 20, null);
 for (k = 0; k < 20 && B.attacks.includes(a2); k++) run(1);
 run(10);
 ok(!B.attacks.includes(a2) && us2.every((u) => !u.inside && W.landIsland(u.pos.x, u.pos.z) === home), 'a transport attacked while boarding: everybody stays home', { left: !B.attacks.includes(a2), where: us2.map((u) => [u.inside ? 'in' : 'out', W.landIsland(u.pos.x, u.pos.z)]) });

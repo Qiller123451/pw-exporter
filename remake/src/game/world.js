@@ -594,6 +594,13 @@ export class World {
   }
   deadUnitUpdate(u, dt) {
     u.deadT += dt;
+    // a ship's wreck (combat.js shipWreck): its sink animation, then gone (CUniversalCorpse: 10 s)
+    if (u.wreck) {
+      const W = u.wreck;
+      if (W.anim) W.anim.update(dt);
+      if (u.deadT > 10 && !u.removed) { this.scene.remove(W.obj); if (W.anim) W.anim.dispose(); this.scene.remove(u.obj); if (u.comp) u.comp.dispose(); u.removed = true; }
+      return;
+    }
     u.anim.update(dt);
     if (u.finish) this.finishedUpdate(u);              // the victim of a finishing move (systems/finishing.js)
     const stay = u.corpseNode ? (u.corpseGone ? 0 : 1e9) : 12;

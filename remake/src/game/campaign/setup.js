@@ -267,7 +267,7 @@ export class Campaign {
         continue;
       }
       // (and the gates of nobody - mission 16's seas_hq_gate: a CGate opens and closes whoever owns it)
-      if (ix && ix.type === 'BLDG' && type === 'BLDG' && ((o.owner != null && data.players[o.owner] && data.players[o.owner].present) || (o.owner == null && D.script(rule) === 'CGate'))) {
+      if (ix && ix.type === 'BLDG' && type === 'BLDG' && ((o.owner != null && data.players[o.owner] && data.players[o.owner].present) || (o.owner == null && D.isA(rule, 'CGate')))) {
         pl.kind = 'building'; pl.cls = rule; this.skip.add(o.name);
         this.classModels(rule);
         continue;

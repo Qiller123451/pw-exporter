@@ -11,6 +11,8 @@
 import * as THREE from 'three';
 import { Projectile, headingTo, wrap } from '../entities.js';
 import { DELAYED } from '../delayed.js';
+import { AnimCtl } from '../anim.js';
+import { applyState } from '../../engine/parts.js';
 import { attackBoni, tempDef, tempRangedDef, rangeBonus, active } from './effects.js';
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -745,6 +747,22 @@ export const Combat = {
     else if (e.kind === 'building') this.buildingDestroyed(e, att);
     this.dead.push(e);
   },
+  shipWreck(e) {
+    if (!this.data.isA(e.name, 'CShip') || ['CAmphibian', 'CMuraenoSubmarine', 'CAjeCronosaurus', 'CTorpedoTurtle', 'CWaterMine'].some((c) => this.data.isA(e.name, c))) return;
+    const gfx = e.stats && e.stats.gfx, tpl = gfx && this.template((gfx + '_dest').toLowerCase(), true);
+    if (!tpl) return;
+    const w = this.cloneModel(tpl, e.party);
+    w.traverse((o) => { if (o.isMesh) this.applyFow(o.material); });
+    applyState(w, 4, 2, 1);
+    w.position.copy(e.obj.position);
+    w.rotation.y = e.obj.rotation.y;
+    this.scene.add(w);
+    const anim = tpl.clips && tpl.clips.length ? new AnimCtl(w, tpl.clips) : null;
+    const clip = anim && anim.pick('destroy', 'dying');
+    if (clip) anim.play(clip, { loop: false });
+    e.wreck = { obj: w, anim, t: 0 };
+    e.obj.visible = false;
+  },
   unitDied(e, att) {
     this.releaseTask(e);
     this.uHash.remove(e);
@@ -766,6 +784,10 @@ export const Combat = {
     // (on a wall: "hit_rotate_s", CH:2310)
     else e.anim.play((e.onWall && e.anim.pick('hit_rotate_s')) || e.anim.pick('dying', 'die_simple', 'hit_die_simple') || e.idleAnim, { loop: false, fade: 0.1 });
     e.attachTool(null);
+    // a ship leaves its wreck (Ship.usl Die -> CreateShipCorpse): the model "<gfx>_dest" at destruction level 2,
+    // playing its sink animation "destroy" once, gone after 10 s; the ship itself is out at once. Ships that are
+    // animals (turtles, the submarine, the cronosaurus) and mines keep their own model and dying animation.
+    if (e.naval && !e.silentDeath) this.shipWreck(e);
     e.wjump = null; e.climbing = false; if (e.wallH != null) { e.pos.y = e.wallH; e.wallH = null; }
     // owned characters and animals leave a spirit that an Aje shaman can resurrect (not illusions, summons; heroes
     // and the special eusmilus only on multiplayer levels - skirmish -, FightingObj.usl:5566-5571)

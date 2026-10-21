@@ -355,4 +355,26 @@ ea[0] = (ea[0][0], ea[0][1] + [len(E6.sounds) - 1], ea[0][2])
 check(after['stegosaurus'] == (ea, ewt), 'the edited model too, plus its new sound')
 dt = [d for d in E6.dusttrails if d.name == 'CLevelUpFX' and d.model is E6.model('stegosaurus')]
 check(len(E6.dusttrails) == len(D6.dusttrails) + 1 and dt and dt[0].entries == [('force', '2')], 'dust trail added')
+# ------------------------------------------------------------------ 7. "Keep" on an imported, edited model
+src7 = os.path.join(gsf_dir, 'hu_tools.gsf')
+bpy.ops.import_scene.paraworld_gsf(filepath=src7, models='hu_knife', textures=False)
+col7 = next(c for c in bpy.data.collections if c.gsf_archive.is_archive and c.gsf_archive.file_name == 'hu_tools')
+g7 = col7.gsf_archive
+knife = next(e.root for e in g7.entries if e.name == 'hu_knife' and e.root is not None)
+for o in knife.children_recursive:
+    if o.type == 'MESH':
+        for v in o.data.vertices:
+            v.co.z += 0.5
+bpy.context.scene['gsf_active_archive'] = col7.name
+bpy.context.view_layer.objects.active = None
+for e in g7.entries:
+    e.select = e.name == 'hu_knife'
+bpy.ops.gsf.entry_state(state='FILE')
+for e in g7.entries:
+    e.select = False
+out7 = os.path.join(out_dir, 'keep_hu_tools.gsf')
+bpy.ops.export_scene.paraworld_gsf(filepath=out7, archive=col7.name)
+D7, E7 = GsfArchive.load(src7), GsfArchive.load(out7)
+check(not cmp_canon(Canon()(D7.model('hu_knife')), Canon()(E7.model('hu_knife'))),
+      'an imported model set back to Keep is written from the file, not from the edited objects')
 print('FAILURES:', fails or 'none')

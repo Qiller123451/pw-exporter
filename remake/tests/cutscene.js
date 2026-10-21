@@ -10,10 +10,13 @@ const path = Object.keys(C.data.sequences || {}).find((k) => /sc_1040\.seq$/i.te
 const seq = C.data.sequences[path];
 ok(!!seq && !!seq.play && seq.play.actors.length > 10 && seq.play.cuts.length > 5, 'sc_1040 comes with its timeline', seq && seq.play && { actors: seq.play.actors.length, cuts: seq.play.cuts.length, end: seq.play.end });
 ok(seq.lines.length === 4 && seq.lines.every((l) => l.t >= 0 && l.mp3), 'its subtitles are its speech items, timed', seq.lines.map((l) => [l.t, l.key]));
-const spear = ['hu_spearman_14', 'hu_spearman_15', 'hu_spearman_16', 'hu_spearman_17'].map((n) => C.objects.byName(n)).map((r) => r && r.entity);
+const SPEAR = ['hu_spearman_14', 'hu_spearman_15', 'hu_spearman_16', 'hu_spearman_17'];
+let spear = SPEAR.map((n) => C.objects.byName(n)).map((r) => r && r.entity);
 ok(spear.every((u) => u && u.alive), 'the four spearmen are there');
 // (freed: the mission gives them to the player before the scene - "bela_worker_ready" and the prison triggers)
-for (const n of ['hu_spearman_14', 'hu_spearman_15', 'hu_spearman_16', 'hu_spearman_17']) C.setOwner(C.objects.byName(n), 0);
+for (const n of SPEAR) C.setOwner(C.objects.byName(n), 0);
+// (played with another tribe, "&tribe=SEAS": they become the tribe's equivalents - new world objects, same records)
+spear = SPEAR.map((n) => C.objects.byName(n)).map((r) => r && r.entity);
 const cole0 = W.units.find((u) => u.alive && /^cole/i.test(u.name));
 for (const u of spear) W.teleport(u, cole0.pos.x + 4, cole0.pos.z + 4);
 const stina = W.units.find((u) => u.alive && /^stina/i.test(u.name)), cole = W.units.find((u) => u.alive && /^cole/i.test(u.name));
@@ -23,6 +26,8 @@ const before = spear.map((u) => +d(u, stina).toFixed(1));
 E.playSequence({ path, quit: false, snapBack: false, snapActors: false, camera: null, fow: false, trigger: E.triggers[0] });
 for (let i = 0; i < 10 && (E.seqRunning || E.seqQueue.length); i++) G.step(1, 0.05);
 const after = spear.map((u) => +d(u, stina).toFixed(1));
+{ const A = E.seqActors, sp = A ? A.list.filter((x) => /spear/i.test(x.a.cls || '')) : [];
+  ok(sp.length === 4 && sp.every((x) => !x.temp && spear.includes(x.e)), 'the scene\'s four spearmen are the freed ones (also as another tribe\'s equivalents)', sp.map((x) => [x.a.name, x.temp, x.e && x.e.name])); }
 ok(after.every((x) => x < 12) && before.every((x) => x > 20), 'skipped: the spearmen end down by Stina (they were up with Cole)', { before, after });
 const rock = C.objects.byName('rolling_stone_2');
 ok(!rock || !rock.prop || d(rock.prop, cole) < 30, 'the rolling stone lies in the path below Cole', rock && rock.prop && +d(rock.prop, cole).toFixed(1));

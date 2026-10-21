@@ -8,6 +8,7 @@ import { SPEED_FALLBACK } from './rules.js';
 import { Composite, attach, activeParts, partGfx } from './compose.js';
 import { newStatus } from './systems/effects.js';
 import { LocalTree } from './techtree.js';
+import { mapHeading } from './maps/frame.js';
 
 const TAU = Math.PI * 2;
 export function wrap(a) { a = (a + Math.PI) % TAU; if (a < 0) a += TAU; return a - Math.PI; }
@@ -438,30 +439,19 @@ export function footBoxes(tpl) {
 // neighbours). A straight segment uses the hub plus the east and west arms: 8 m long, on the 8 m wall grid.
 export const WALL_BOXES = [[0, 0, 1.9, 1.9]];      // a lone wall post: the hub box (the arms come from the WallMap)
 // The pathfinder boxes of a wall piece for its PFMask (wallmap.js pfMask: the model's pf boxes whose direction / hub
-// bit - attr bits 5..15 - is in the mask; GSF space, mirrored like footBoxes). The model parts face the other way in
-// the remake's world (its model root turns GSF space by 180 degrees): the WallMap's engine directions are flipped
-// to model directions (flipPf / flipParts below).
+// bit - attr bits 5..15 - is in the mask; GSF space, mirrored like footBoxes). Wall pieces stand turned by WALL_ROT,
+// so the model's directions are the engine's.
 export function wallPfBoxes(tpl, mask) {
   const pf = (tpl.info && tpl.info.pf) || (tpl.extras && tpl.extras.pf);
   const out = [];
   if (pf) for (const r of pf) if (r[0] === 1 && r[4] > 0.5 && r[5] > 0.5 && ((r[7] >>> 0) & 0xffe0 & mask)) out.push([-(r[1] + r[4] / 2), -(r[2] + r[5] / 2), r[4] / 2, r[5] / 2]);
   return out.length ? out : WALL_BOXES;
 }
-// engine direction d -> the model part pointing there in the remake's world
-export const PART_FLIP = 4;
-const flipD = (d) => (d + PART_FLIP) & 7;
-export function flipParts(list) {
-  return list.map((c) => {
-    if (/^x\d\d$/.test(c)) { const a = flipD(+c[1]), b = flipD(+c[2]); return 'x' + Math.min(a, b) + Math.max(a, b); }
-    if (/^\d[a-h]$/.test(c)) return flipD(+c[0]) + c[1];
-    return c;
-  });
-}
-export function flipPf(mask) {
-  let m = mask & ~(0xff << 5);
-  for (let k = 0; k < 8; k++) if (mask & (1 << (5 + k))) m |= 1 << (5 + ((k + PART_FLIP) & 7));
-  return m;
-}
+// Wall pieces never turn: they stand as the map's rotation 0 (maps/frame.js mapHeading(0)), so the model's parts,
+// pf boxes and look are the engine's - part "3b" points east, the stone side of a palisade faces where it does in
+// the game. (A piece turned by 0 instead stood half a turn round: the arms were swapped back, the look stayed
+// mirrored - stone and decoration on the wrong side.)
+export const WALL_ROT = mapHeading(0);
 export function placeFootprint(tpl, x, z, rot, margin = 0, boxesOverride = null) {
   const c = Math.cos(rot), s = Math.sin(rot);
   const src = boxesOverride || footBoxes(tpl);
@@ -490,7 +480,8 @@ export class Building extends Entity {
     this.stats = D.stats(name, 1, owner);
     this.maxHp = this.stats.hp;
     this.behaviour = world.behaviourOf ? world.behaviourOf(this) : null;
-    this.rot = this.def.wallKind === 'wall' ? 0 : rot;      // wall pieces never turn (their arms follow the wall grid)
+    if (this.def.wallKind === 'wall') rot = WALL_ROT;        // wall pieces never turn (their arms follow the wall grid)
+    this.rot = rot;
     this.progress = built ? 1 : 0;
     this.built = built;
     this.hp = built ? this.maxHp : 1;
@@ -702,7 +693,7 @@ export class Building extends Entity {
       this.model.userData.armMask = this.armMask || 0;
       // the model parts the WallMap named (BuildName): hub and one piece per direction; their variants A..P are the
       // construction and damage states, picked by applyState
-      this.model.userData.parts = this.wallParts ? new Set(flipParts(this.wallParts)) : new Set(['x2', '0f', '1f', '2f', '3f', '4f', '5f', '6f', '7f']);
+      this.model.userData.parts = this.wallParts ? new Set(this.wallParts) : new Set(['x2', '0f', '1f', '2f', '3f', '4f', '5f', '6f', '7f']);
     }
     const night = !!this.night;          // its lights (World.nightCheck; parts.js applyNight)
     const key = L + '|' + dmg + '|' + this.age + '|' + (this.armMask || 0) + '|' + (this.wallParts ? this.wallParts.join('.') : '') + '|' + (this.gateEnds ? 1 : 0) + '|' + night;
@@ -795,7 +786,7 @@ export class Building extends Entity {
   // footprint boxes and nav cells for the current position (after sailing)
   relocate() {
     const W = this.world;
-    const F = placeFootprint(this.tpl, this.origin.x, this.origin.z, this.rot, 0, this.def.wallKind === 'wall' ? wallPfBoxes(this.tpl, flipPf(this.pfMask || 0)) : null);
+    const F = placeFootprint(this.tpl, this.origin.x, this.origin.z, this.rot, 0, this.def.wallKind === 'wall' ? wallPfBoxes(this.tpl, this.pfMask || 0) : null);
     this.boxes = F.boxes;
     const was = this.blocking;
     if (was) this.setBlocking(false);

@@ -12,7 +12,7 @@
 //     sounds, particle effects, fades to and from black, the wide-screen bars and the time skips of cut items.
 // Objects inside the scene's region are hidden while it plays when the file asks for it.
 import * as THREE from 'three';
-import { cloneModel } from '../engine/assets.js';
+import { cloneModel, toLinkFrame } from '../engine/assets.js';
 import { AnimCtl } from '../game/anim.js';
 import { SeqActors } from '../game/campaign/sequence.js';
 
@@ -155,6 +155,16 @@ export class Cutscene {
       G.scene.add(obj);
       A.tobj = obj;
       A.tanim = tpl.clips && tpl.clips.length ? new AnimCtl(obj, tpl.clips) : null;
+      // its attachments (the actor state's slot -> model: the spear in HndR, the buckler on Shld)
+      const links = {};
+      obj.traverse((o) => { if (o.name.startsWith('link_')) links[o.name.slice(5)] = o; });
+      for (const [slot, model] of A.a.attach || []) {
+        const at = W.template(String(model).toLowerCase(), true) || W.template(model, true);
+        if (!links[slot] || !at) continue;
+        const m = cloneModel(at);
+        toLinkFrame(m);
+        links[slot].add(m);
+      }
       A.tidle = A.tanim && A.tanim.pick('standanim', 'idle_0', 'idle');
       if (A.tidle) A.tanim.play(A.tidle);
     }

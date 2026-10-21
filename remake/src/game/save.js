@@ -67,7 +67,7 @@ const SPECS = [
   { cls: Stats, name: 'Stats', keep: ['p', 'series', 'nextT'] },                      // the statistics (game/stats.js)
   { cls: Prop, name: 'Prop', skip: ['world', 'obj', 'anim', 'tpl', 'rec'], make: (f, X) => new Prop(X.W, X.plain(f.spec)), revive: reviveProp },
   { cls: Campaign, name: 'Campaign', keep: ['variables', 'timers', 'questionMarks', 'props', 'resourceRecs', 'evAt', 'boni', 'human', 'players', 'groups'] },
-  { cls: TriggerEngine, name: 'TriggerEngine', skip: ['C', 'W', 'G', 'triggers', 'byGuid', 'byName', 'quests', 'profile', 'debug', 'random', 'queue', 'unknownTypes', 'stats', 'trace', 'log', 'fxObjs'] },
+  { cls: TriggerEngine, name: 'TriggerEngine', skip: ['C', 'W', 'G', 'triggers', 'byGuid', 'byName', 'quests', 'profile', 'debug', 'random', 'queue', 'unknownTypes', 'stats', 'trace', 'log', 'fxObjs', 'seqActors'] },
   { cls: MissionUI, name: 'MissionUI', keep: ['read', 'unread', 'bar', 'markers'] },
   { cls: Sequel, name: 'Sequel', keep: SEQUEL_SAVED, revive: (M) => { M.setNight(M.nightOn); M.started = true; } },
 ];
@@ -192,6 +192,12 @@ export function snapshot(G) {
   const nav = W.nav;
   const root = {
     world: W, brains: G.brains ? [...G.brains.values()] : [], campaign: C || null, engine: C ? C.engine : null, mission: C ? G.mission : null, sequel: G.sequel || null,
+    // the triggers and their conditions (anchored by GUID): switched on or off, fired, waiting - nothing else refers to
+    // a trigger, so without these a loaded mission had every trigger off and its script stood still
+    triggers: C && C.engine ? C.engine.triggers : null, conds: C && C.engine ? C.engine.triggers.flatMap((t) => t.conds) : null,
+    // the object records (the objects the mission made since: heroes, waves) and the regions (switched on and off,
+    // moved) - the campaign object keeps neither, so a loaded mission's queries found only the map's own records
+    registry: C ? C.objects : null, regions: C && C.regions ? [C.regions.world, ...C.regions.list] : null,
     me: G.me, ai: G.ai || null, nextId: nextEntityId(),
     quests: C ? (C.data.quests || []).map((q) => ({ visible: q.visible, accomplished: q.accomplished, unaccomplishable: q.unaccomplishable })) : null,
     nav: { block: nav.block, reserved: W.reserved, wblock: W.waterNav ? W.waterNav.block : null, gateAt: nav.gateAt },

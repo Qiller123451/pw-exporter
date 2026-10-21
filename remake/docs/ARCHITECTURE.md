@@ -486,7 +486,9 @@ The interface for the trigger engine, the mission UI and the campaign AI is **do
 game data configuration) and as `.pwsave` files. Menu: Save game / Load game in game, Load game on the title screen;
 F5 quick save, F8 quick load. A save made with another configuration (MIRAGE ...) loads on that configuration's page.
 
-* **Saving** walks the object graph from a few roots (World, brains, Campaign, trigger engine, mission UI) and
+* **Saving** walks the object graph from a few roots (World, brains, Campaign, trigger engine, mission UI, and the
+  campaign's triggers with their conditions, object registry and regions - nothing else refers to them: before
+  2026-10-20 a loaded mission had every trigger off and only the map's own records, its script stood still) and
   writes every object once into a table; references are table indices (shared objects and cycles survive). Per
   class `SPECS` say which fields are left out (drawn or derived: models, animations, rules read from the tech tree,
   lookup tables) or which are the only ones kept. What is drawn is never saved, and a function in the state is an
@@ -507,4 +509,6 @@ F5 quick save, F8 quick load. A save made with another configuration (MIRAGE ...
 * Entity ids stay the same (`nextEntityId` / `setNextEntityId`).
 
 Test: `tests/save_load.py "<url options>" [seconds before] [seconds after]` plays, saves, loads the save in a fresh
-page, compares the whole state object by object with the saved one (`tests/save_diff.js`) and plays on.
+page, compares the whole state object by object with the saved one (`tests/save_diff.js`) and plays on (it compares
+what the snapshot holds, so it cannot see what is left out of it); `tests/save_campaign_flow.py` saves mission 9 in
+the middle of its script and checks the loaded mission goes on.

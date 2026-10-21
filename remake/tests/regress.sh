@@ -34,9 +34,12 @@ run controls python3 tests/evaljs.py tests/controls.js "&tribe=Hu&enemy=Aje"
 run zeppelin python3 tests/evaljs.py tests/zeppelin.js "&campaign=3&notriggers"
 run ai_mines python3 tests/evaljs.py tests/ai_mines.js "&tribe=Hu&enemy=Ninigi&map=maps/Base/Multiplayer/multi_2_jun_001.ula"
 run ai_crossing python3 tests/evaljs.py tests/ai_crossing.js "&tribe=Hu&enemy=Aje&map=maps/Base/Multiplayer/forsaken_islands.ula"
+# a destroyed ship leaves its sinking wreck (combat.js shipWreck, Ship.usl CreateShipCorpse)
+run ship_wreck python3 tests/evaljs.py tests/ship_wreck.js "&tribe=Hu&enemy=Aje&map=maps/Base/Multiplayer/multi_2_jun_001.ula"
 run tree_fall python3 tests/evaljs.py tests/tree_fall.js ""
 run gates_campaign python3 tests/evaljs.py tests/gates_campaign.js "&campaign=1&notriggers&tribe=SEAS"
 run gates_m16 python3 tests/evaljs.py tests/gates_m16.js "&campaign=16&notriggers"
+run gates_m16_mirage env PWR_PORT=${SEQ_PORT:-8412} python3 tests/evaljs.py tests/gates_m16.js "&campaign=16&notriggers"     # (MIRAGE data)
 run pathing python3 tests/evaljs.py tests/pathing.js
 # cliffs: the original maps' pathfinder grid, the slope rule of the sequel's maps (tests/cliffs.js)
 run cliffs python3 tests/evaljs.py tests/cliffs.js "&campaign=13&notriggers"
@@ -65,6 +68,7 @@ run deliver_anim python3 tests/evaljs.py tests/deliver_anim.js "&tribe=Hu&enemy=
 # the floating harbour in the unit limit and the pyramid; the right-click cursors; autosave; the help (F1)
 run pyramid_harbour python3 tests/evaljs.py tests/pyramid_harbour.js "&tribe=Aje&enemy=Hu"
 run cursors python3 tests/evaljs.py tests/cursors.js "&tribe=Hu&enemy=Aje"
+run nest_cursor python3 tests/evaljs.py tests/nest_cursor.js "&campaign=1&notriggers"
 run autosave python3 tests/evaljs.py tests/autosave.js "&tribe=Hu&enemy=Aje"
 run helpbook python3 tests/evaljs.py tests/helpbook.js "&tribe=Hu&enemy=Aje"
 # healing wells, lakes of healing / damage, the weather (systems/landmarks.js); the ambience (engine/atmo.js)
@@ -99,6 +103,7 @@ run engine python3 tests/evaljs.py tests/campaign_engine.js "&campaign=11"
 run play_11 python3 tests/evaljs.py tests/campaign_play_11.js "&campaign=11"
 run play_01 python3 tests/evaljs.py tests/campaign_play_01.js "&campaign=1"
 run cutscene python3 tests/evaljs.py tests/cutscene.js "&campaign=1"
+run cutscene_seas python3 tests/evaljs.py tests/cutscene.js "&campaign=1&tribe=SEAS"
 run cutscene_all_08 python3 tests/evaljs.py tests/cutscene_all.js "&campaign=8"
 run cutscene_all_15 python3 tests/evaljs.py tests/cutscene_all.js "&campaign=15"
 run seq_export python3 tests/seq_export.py
@@ -122,6 +127,7 @@ run fit_12_seas python3 tests/evaljs.py tests/campaign_fit.js "&campaign=12&trib
 # saved games (game/save.js): a skirmish and a campaign mission saved, loaded in a fresh page and compared
 run save_skirmish python3 tests/save_load.py "&tribe=Aje&enemy=Hu&aivai" 300 30
 run save_campaign_13 python3 tests/save_load.py "&campaign=13" 120 30
+run save_campaign_flow python3 tests/save_campaign_flow.py
 # a skirmish of four in two teams with diplomacy, tribute, chat, statistics and the end screen; the game types; the
 # army budget with "My Army" and a campaign mission's army screen; a 4-player game saved and loaded
 run skirmish4 python3 tests/evaljs.py tests/skirmish4.js "&players=Hu,Aje,Ninigi,SEAS&teams=1,2,1,2&levels=5,5,5"

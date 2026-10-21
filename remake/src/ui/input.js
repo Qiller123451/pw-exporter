@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { cloneModel } from '../engine/assets.js';
 import { applyState } from '../engine/parts.js';
 import { DIRS, DX as DXW, DZ as DZW } from '../game/wallmap.js';
-import { flipParts } from '../game/entities.js';
+import { WALL_ROT } from '../game/entities.js';
 const REASON_PLACE = 'The wall cannot be built here';
 import { formationSlots, SPACING } from '../game/formation.js';
 
@@ -472,7 +472,8 @@ export class Input {
     if (h.kind === 'item') return I.units.some((u) => W.canCarry(u)) ? 'trade' : '';
     // a healing well: characters, animals, vehicles and ships may drink (GetAction FNTN)
     if (h.kind === 'well') return I.units.some((u) => W.canUseWell(u, h)) ? 'healing' : '';
-    const enemy = h.wild || (h.owner && W.hostileTo(G.me, h));
+    // (a nest belongs to nobody: IsEnemy holds for it as for the wild animals - GetAction, GameInputController.usl:1111)
+    const enemy = h.wild || h.isNest || (h.owner && W.hostileTo(G.me, h));
     if (enemy) {
       if (h.wild && h.cls === 'ANML' && I.worker) return 'attack_harvest';
       if (!I.attack) return '';
@@ -839,7 +840,7 @@ export class Input {
         if (seen.has(k)) return;
         seen.add(k);
         const [x, z] = WM.centre(i, j);
-        ghosts.push({ i, j, x, z, state, gateOK, name, parts: w.type === 0 ? flipParts(WM.partsOf(i, j)) : null, y: w.type === 3 ? W.height(x, z) : WM.zOf(i, j) });
+        ghosts.push({ i, j, x, z, state, gateOK, name, parts: w.type === 0 ? WM.partsOf(i, j) : null, y: w.type === 3 ? W.height(x, z) : WM.zOf(i, j) });
       };
       for (const t of list) add(t.i, t.j, t.state, t.gateOK, null);
       if (w.type === 0) for (const t of list) for (let d = 0; d < 8; d++) {
@@ -866,6 +867,7 @@ export class Input {
       if (t.parts) p.obj.userData.parts = new Set(t.parts);
       applyState(p.obj, 4, 0, G.me.epoch());
       p.obj.position.set(t.x, t.y, t.z);
+      p.obj.rotation.y = t.parts ? WALL_ROT : 0;
       p.obj.visible = true;
     });
     for (let k = ghosts.length; k < gh.pool.length; k++) gh.pool[k].obj.visible = false;

@@ -462,6 +462,7 @@ export class TriggerEngine {
     // its actors (game/campaign/sequence.js): bound now; at the end they stay where the scene leaves them
     let actors = null;
     if (seq && seq.play) try { actors = new SeqActors(C, seq.play); } catch (e) { this.error(o.trigger, 'SQNZ', e); }
+    this.seqActors = actors;                 // (the running sequence's actors: tests)
     let done = false;
     const end = () => {
       if (done) return;

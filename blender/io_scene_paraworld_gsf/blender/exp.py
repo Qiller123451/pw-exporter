@@ -167,6 +167,9 @@ class Exporter:
         for root in roots:
             g = root.gsf_model
             name = g.name or root.name
+            own = next((e for e in ga.entries if e.root == root), None)
+            if own is not None and own.state == 'FILE':
+                continue        # set back to "Keep": the file's model is written, the objects in the scene are not
             try:
                 model = self.build_model(root)
             except GsfError as ex:

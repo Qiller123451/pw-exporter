@@ -616,8 +616,10 @@ scan done (±3), each of the 9 tiles stores Placeable() for the grid colours. Er
   letter A–P) and writes it as the node's `part`; `engine/assets.js` keeps the component on the merged meshes and
   `engine/parts.js applyState` shows exactly the meshes whose component is in the piece's part list. The construction
   and damage states choose among the letters as for every other building.
-* **Mirror.** The remake's models face the other way round than the map: engine part d is model part (d + 4) & 7
-  (`entities.js PART_FLIP`, `flipParts`, `flipPf`).
+* **Frame.** Wall pieces stand as the map's rotation 0 (`entities.js WALL_ROT` = `mapHeading(0)`), so the model's
+  parts, pf boxes and look are the engine's own: part `3b` points east. (Until 2026-10-20 they stood turned by 0 -
+  half a turn round - with the part names swapped back by (d + 4) & 7: the arms met, but every piece was mirrored, the
+  stone side and the decoration on the wrong side; mission 1's walls.)
 * **Pathfinding.** A wall piece's nav cells are the model's own `pf` boxes whose direction / hub bit is in its PFMask
   (`entities.js wallPfBoxes`); when its mask changes, units standing in the new boxes step out.
 * **Old callers.** `WallMap.mask(i, j)` still returns the visual arms in the old direction order (r = (3 − d) & 7) for

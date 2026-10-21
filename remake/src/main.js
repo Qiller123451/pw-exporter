@@ -930,6 +930,7 @@ function updateFow(force) {
   for (const u of G.world.units) {
     if (!u.obj) continue;
     if (u.inside || u.parked) { u.obj.visible = false; continue; }
+    if (u.wreck) { u.obj.visible = false; u.wreck.obj.visible = sees(u.owner) || G.fow.explored_(u.pos.x, u.pos.z); continue; }      // (a ship's wreck stands in for it)
     if (sees(u.owner)) { u.obj.visible = true; continue; }
     u.obj.visible = !u.alive ? u.obj.visible && G.fow.visible(u.pos.x, u.pos.z) || u.deadT > 0 && G.fow.explored_(u.pos.x, u.pos.z) : G.fow.visible(u.pos.x, u.pos.z) && !G.world.hiddenFrom(u, G.me);
   }
