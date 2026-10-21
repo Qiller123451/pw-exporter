@@ -5,9 +5,10 @@ GSF bone local transform (column vectors), sg = -1 for a mirrored bone (rest sca
     animated  L = T(sg * (pos + offset)) * R(conj rest q) * R(conj key q) * S(s')
               offset = (dx, 0, 0) for trans / trans_scale tracks, the position offset for root tracks
               s' = key scale (trans_scale / root_scale), -|s| for mirrored bones, -1 / 1 without scale
-World = parent world * L. Blender bone matrix (armature space) = M @ World @ M @ D @ A, with M the handedness mirror,
-D = -I where the world matrix is a reflection (mirrored bones and their children) and A the axis change
-(GSF bones run along x, Blender bones along y).
+World = parent world * L. Blender bone matrix (armature space) = M @ World @ M @ D @ A_b, with M the handedness mirror,
+D = -I where the world matrix is a reflection (mirrored bones and their children) and A_b the axis change: GSF bones
+run along +x towards their children, Blender bones along y. A_b is chosen per bone so that the Blender bone points to
+its children whatever the mirror and D (add-on 1.4; armatures imported before keep the old, fixed A - see `legacy`).
 """
 import numpy as np
 
@@ -16,6 +17,26 @@ AXIS = np.array([[0.0, 1.0, 0.0, 0.0],      # Rz(-90 deg): Blender bone y -> GSF
                  [0.0, 0.0, 1.0, 0.0],
                  [0.0, 0.0, 0.0, 1.0]])
 AXIS_INV = AXIS.T.copy()
+FLIP = np.diag([-1.0, -1.0, 1.0, 1.0])     # half turn about the bone's z axis
+AXIS_VERSION = 2                          # stored on imported armatures as "gsf_bone_axis"
+
+
+def bone_axes(det, M, legacy=False):
+    """axis matrices A_b (..., 4, 4) for bones with world determinant det (+-1, any shape) under the mirror M.
+    The Blender bone's y axis is M @ World @ M @ D @ A_b @ y = M @ World @ (m_x * det_b * s) x with A_b y = s x and
+    m_x = M[0][0] (M is diagonal). It points along the GSF bone's +x (towards the children) when s = m_x * det_b:
+    the plain AXIS (s = 1) or AXIS @ FLIP (s = -1). legacy: always AXIS (armatures
+    imported by add-on versions before 1.4)."""
+    det = np.asarray(det, dtype=np.float64)
+    A = np.broadcast_to(AXIS, det.shape + (4, 4)).copy()
+    if not legacy:
+        mx = np.sign(np.asarray(M, dtype=np.float64)[0, 0])       # -1 when the mirror flips the x axis
+        A[det * mx < 0] = AXIS @ FLIP
+    return A
+
+
+def _sk_axis(sk, b, M):
+    return bone_axes(sk.det[b], M, getattr(sk, 'legacy', False))
 KEY_FLOATS = {0: 10, 1: 13, 2: 4, 3: 5, 4: 8}
 
 
@@ -197,23 +218,23 @@ def world_of(local, parent):
     return world
 
 
-def to_blender(W, det, M):
+def to_blender(W, det, M, legacy=False):
     """GSF world matrices (..., 4, 4) of bones -> Blender bone matrices. det: +-1 per matrix (broadcast)"""
     D = np.ones(np.shape(det) + (4,))
     D[..., :3] = np.asarray(det)[..., None]
     Dm = np.zeros(np.shape(det) + (4, 4))
     for k in range(4):
         Dm[..., k, k] = D[..., k]
-    return M @ W @ M @ Dm @ AXIS
+    return M @ W @ M @ Dm @ bone_axes(det, M, legacy)
 
 
-def from_blender(B, det, M):
+def from_blender(B, det, M, legacy=False):
     D = np.ones(np.shape(det) + (4,))
     D[..., :3] = np.asarray(det)[..., None]
     Dm = np.zeros(np.shape(det) + (4, 4))
     for k in range(4):
         Dm[..., k, k] = D[..., k]
-    return M @ B @ AXIS_INV @ Dm @ M
+    return M @ B @ np.swapaxes(bone_axes(det, M, legacy), -1, -2) @ Dm @ M
 
 
 # ----------------------------------------------------------------------------------------- import: keys -> local
@@ -295,7 +316,7 @@ def auto_format(sk, bone, L):
 
 
 # ------------------------------------------------------------------------------------------- pose basis <-> local
-# Blender bone b: B_b = M W_b M D_b A. Then B_p^-1 B_b = A^-1 D_p M L_b M D_b A, so the pose basis (relative to the rest
+# Blender bone b: B_b = M W_b M D_b A_b. Then B_p^-1 B_b = A_p^-1 D_p M L_b M D_b A_b, so the pose basis (relative to the rest
 # relation C_b = Brest_p^-1 Brest_b) follows from the GSF local matrix alone - no inverse of animated matrices (bones
 # that scale to zero to hide a part stay exact).
 def _D(det):
@@ -306,10 +327,11 @@ def local_to_basis(sk, Brest, b, L, M):
     """GSF local matrices (n,4,4) of bone b -> Blender pose basis matrices (n,4,4)"""
     p = sk.parent[b]
     Db = _D(sk.det[b])
+    Ab = _sk_axis(sk, b, M)
     if p < 0:
-        Bb = M[None] @ L @ M[None] @ Db[None] @ AXIS[None]
+        Bb = M[None] @ L @ M[None] @ Db[None] @ Ab[None]
         return np.linalg.inv(Brest[b])[None] @ Bb
-    X = AXIS_INV[None] @ _D(sk.det[p])[None] @ M[None] @ L @ M[None] @ Db[None] @ AXIS[None]
+    X = _sk_axis(sk, p, M).T[None] @ _D(sk.det[p])[None] @ M[None] @ L @ M[None] @ Db[None] @ Ab[None]
     C = np.linalg.inv(Brest[p]) @ Brest[b]
     return np.linalg.inv(C)[None] @ X
 
@@ -318,9 +340,10 @@ def basis_to_local(sk, Brest, b, basis, M):
     """Blender pose basis matrices (n,4,4) of bone b -> GSF local matrices"""
     p = sk.parent[b]
     Db = _D(sk.det[b])
+    Ab_inv = _sk_axis(sk, b, M).T
     if p < 0:
         Bb = Brest[b][None] @ basis
-        return M[None] @ Bb @ AXIS_INV[None] @ Db[None] @ M[None]
+        return M[None] @ Bb @ Ab_inv[None] @ Db[None] @ M[None]
     C = np.linalg.inv(Brest[p]) @ Brest[b]
     X = C[None] @ basis
-    return M[None] @ _D(sk.det[p])[None] @ AXIS[None] @ X @ AXIS_INV[None] @ Db[None] @ M[None]
+    return M[None] @ _D(sk.det[p])[None] @ _sk_axis(sk, p, M)[None] @ X @ Ab_inv[None] @ Db[None] @ M[None]

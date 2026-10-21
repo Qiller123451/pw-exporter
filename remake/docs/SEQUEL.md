@@ -1,6 +1,6 @@
 # ParaWorld: Containment - the sequel campaign (design)
 
-A new campaign of ten missions for the remake, written for it (not converted from the original). The premise: the
+A new campaign of eleven missions for the remake, written for it (not converted from the original). The premise: the
 original game ends with the fabric between the worlds torn; in this campaign the tear reaches our world. It is
 1964, and dinosaurs come through rifts all over North America. The player commands SEAS - in this story the
 Strategic Extradimensional Anomaly Service, the government agency that grew out of the remains of Babbit's
@@ -39,10 +39,15 @@ halves SEAS production times ...).
 | 4 | The Bayou | Atchafalaya Basin, Louisiana | three rifts across the water, swimming creatures, a village to evacuate |
 | 5 | Countdown at the Cape | Cape Canaveral, Florida | protect Launch Complex 34 for a 15 min count; the rocket lifts off |
 | 6 | Big Tooth | Bellingham, Washington | a giant Gigantosaurus: build electrified nets, stun it, put it to sleep, capture it (or kill it) |
-| 7 | Crane's Ark | Kuskokwim Mountains, Alaska | storm Crane's base, free Taslov from the jail, release the menagerie, destroy the HQ |
-| 8 | The Dustriders | Monument Valley, Arizona | find Tala's Aje camp (they ally when met), destroy Crane's hunter base |
-| 9 | Through the Rift | ParaWorld | bring Taslov to the temple of the Gate, hold it 3 min, get back to the rift |
-| 10 | Containment | Copper Basin again | the Gate machine charges for 20 min; four rifts and Crane's last assaults; epilogue |
+| 7 | The Society | London, the Victoria Embankment, Bonfire Night 1964 (night) | the city of the original's opening film: get the townsfolk over the iron bridge, bring Taslov to the tear by the great wheel and seal it, hold the Society while he reads Babbit's archive against Crane's landing from the river; Crane's steamer takes Taslov away |
+| 8 | Crane's Ark | Kuskokwim Mountains, Alaska | storm Crane's base, free Taslov from the jail, release the menagerie, destroy the HQ |
+| 9 | The Dustriders | Monument Valley, Arizona | find Tala's Aje camp (they ally when met), destroy Crane's hunter base |
+| 10 | Through the Rift | ParaWorld | bring Taslov to the temple of the Gate, hold it 3 min, get back to the rift |
+| 11 | Containment | Copper Basin again | the Gate machine charges for 20 min; four rifts and Crane's last assaults; epilogue |
+
+"The Society" came in as mission 7 (the user's wish, 2026-10-21: "recreate the buildings of the opening film's city
+and make a map of it for the sequel"): the later missions moved up by one. Settings and saved games of the earlier
+numbering are moved over (`missions.js SEQUEL_ORDER, renumbered, migrateSettings`; a game's config carries `sqOrder`).
 
 ## What each mission brings in
 
@@ -59,7 +64,7 @@ what is new, and a few seconds into the mission the radio says what each new thi
 | 4 | Water Wheel, Radar Station |
 | 5 | Flak Halftrack |
 | 6 | Electrified Net, Tesla Coil |
-| 7 | Arc Halftrack |
+| 8 | Arc Halftrack |
 
 ## Rifts, townsfolk, searchlights
 
@@ -119,6 +124,40 @@ four). It is stockpiled like skulls (no storage limit) and spent on the electric
 highways, cars, school buses, army camps and trucks, a generating station, a dam, a launch site - and SEAS' own
 machines. Dinosaurs, SEAS units and ParaWorld's landscape come from the original game.
 
+London (mission 7) is the city of the original campaign's opening film (`Data/locale/<lang>/Video/hs_1000.bik`: a
+bird flies over the city at night, along the river past the great wheel to Babbit's Society, then the meeting in his
+office). None of it is in the game's data - the film was rendered from models that were not shipped (the `seq_*`
+archives hold only a city wall, gates, watchtowers and the telescope tower) - so the city was modelled anew after the
+film's frames (`art/sequel/london.py`):
+
+* terraces of three town houses in five fronts (cream stucco with porticos, Portland stone, London stock brick, red
+  brick, grey stone): four storeys, a slate mansard with dormers, chimney stacks, steps over the area railings;
+  corner houses with a rounded corner under a dome (the film's);
+* the Society, measured on the film (a camera and the proportions fitted together to points marked on the frame at
+  33.8 s - the domes' tops, the towers' cornices and corners, the door, the cornice, a dormer's top - and checked on
+  the frame at 26.8 s): five bays of sandstone on every side, banded pilasters, pedimented windows below, paired
+  round-arched windows above (the great arched window over the door), a pink frieze, a slate mansard with a dormer
+  under a curved gable over every bay and a hipped roof above, four slim corner towers standing out from both walls,
+  two storeys over the eaves, with pediments, a drum with blind arches and a tall dome; the forecourt wall of brick
+  piers and railings with a hedge;
+* the great wheel (an A-frame and a rim with 32 lit capsules that turns: a set piece), its landing pier with the
+  orange roof, the iron suspension bridge, the embankment wall with river stairs and lamps, stalls, a passenger boat,
+  a lighter and a tug.
+
+The film's dusk (mission 7's `dusk`, `Sequel.setNight`): a blue-grey cloudy sky instead of the dark night, more sun
+and sky light than a night's, warm floodlights (point lights: `Renderer.floodlights`) on the Society's front and on
+the embankment by the wheel and the bridge.
+
+The map (`maps.js`): the river across it with embankment walls (`quay`), paved promenades and tree-lined verges
+(`avenue`), London streets (road kind `city`: asphalt, kerbs, flagged pavements; `pave` the promenades), blocks of
+terraces round their edges with corner houses (`block`), the bridge on a causeway (`strip`) so units walk over it.
+The houses block along their walls: a model's pathfinder boxes come with it (`kit.set_pf`). Where London streets
+meet (`junctions`), asphalt patches carry each carriageway through the other's pavements; lamps are not put down on
+a street's surface (where a side street meets the one they line).
+
+The exporter's map viewer shows every mission's map (`src/tools/sequel_maps.js`: the same `sequelSource` run in the
+viewer, bundled by `build.sh` into `game/sequelmaps.js`; docs/EXPORTER.md "Maps").
+
 ## Models
 
 The sequel's models are made in Blender by code (`art/sequel`: `kit.py` the tools, `town.py`, `vehicles.py`,
@@ -163,8 +202,12 @@ their own (a bolt, a dart), drawn by the step from the converted cards. Every cl
   anything that can build, and his class is looked up as `<tribe>_worker` (CommandBar.usl "tesla can build stuff too").
 * Workers at a power plant show the power symbol on their pyramid card (the original has no task layer for it).
 * `src/game/sequel/power.js` - electricity: plants, pole lines, the grid.
-* `src/game/sequel/missions.js` - the ten missions: map, start, and a script of named handlers (`setup`, `tick`, ...)
-  called by the runtime's timers (`M.after(seconds, name)`), so a saved game resumes them.
+* `src/game/sequel/missions.js` - the eleven missions: map, start, and a script of named handlers (`setup`, `tick`, ...)
+  called by the runtime's timers (`M.after(seconds, name)`), so a saved game resumes them. Set pieces
+  (`M.piece(id, model, x, z, y, rot, {spin})`, `M.sail(id, path, speed, remove)`; `def.pieces`, `def.props` the
+  models to load): models the scene moves that nothing can touch - London's wheel rim, Crane's boats; the handler
+  `arrived_<id>` runs when one reaches the end of its path. `crane: {ai: false}`: Crane's people move only by the
+  script (no computer player).
 * `src/game/sequel/cast.js` - names, colours and portraits (cards of the game's portrait atlas: the heroes' own, SEAS
   soldiers' and other characters' faces); `src/ui/sequel_ui.js` - briefing, objectives, radio,
   powers, timer, effects (rift glow and sealing, searchlight lamps, beams and lit ground, the rocket), minimap markers.

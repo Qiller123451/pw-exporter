@@ -584,3 +584,23 @@ def _post(path, name, kind, glow):
     open(path, 'wb').write(b'glTF' + struct.pack('<II', 2, 12 + len(body)) + body)
     tris = sum(j['accessors'][p['indices']]['count'] for p in mesh['primitives']) // 3
     return lo, hi, tris
+
+
+def set_pf(path, rects, scale=1.0):
+    """the model's pathfinder boxes, as the exporter writes a GSF model's (root node extras "pf": [type 1, min x, y, z,
+    size x, y, z, attr] in GSF space, which the game turns into its frame: game/prop.js pfCells), from rectangles in
+    Blender's axes [(x0, y0, x1, y1), ...] (the glb's x is Blender's x, its z is Blender's -y)"""
+    d = open(path, 'rb').read()
+    n = struct.unpack('<I', d[12:16])[0]
+    j = json.loads(d[20:20 + n])
+    rest = d[20 + n:]
+    pf = []
+    for x0, y0, x1, y1 in rects:
+        cx, cz = (x0 + x1) / 2 * scale, -(y0 + y1) / 2 * scale
+        hx, hz = abs(x1 - x0) / 2 * scale, abs(y1 - y0) / 2 * scale
+        pf.append([1, round(-cx - hx, 3), round(-cz - hz, 3), 0, round(2 * hx, 3), round(2 * hz, 3), 10, 0])
+    j['nodes'][0].setdefault('extras', {})['pf'] = pf
+    js = json.dumps(j, separators=(',', ':')).encode()
+    js += b' ' * ((-len(js)) % 4)
+    body = struct.pack('<I', len(js)) + b'JSON' + js + rest
+    open(path, 'wb').write(b'glTF' + struct.pack('<II', 2, 12 + len(body)) + body)

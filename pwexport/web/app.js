@@ -696,7 +696,25 @@ function renderExport() {
 async function loadMaps() {
   $('#busy').classList.remove('hidden'); $('#busy-text').textContent = S.readingMaps;
   try { MAPS = await api.get('/api/maps'); } catch (e) { toast(String(e.message || e)); MAPS = []; }
+  // the sequel's maps (ParaWorld: Containment): made in the browser by the remake's own map code
+  try {
+    const SQ = await sequelMaps();
+    for (const m of SQ.list()) MAPS.push({ ...m, sequel: true, rel: `Containment/${m.mission}`, pack: 'ParaWorld: Containment', players: 1 });
+  } catch (e) { console.warn('sequel maps', e); }
   $('#busy').classList.add('hidden');
+}
+// the remake's sequel maps module (remake/src/tools/sequel_maps.js, bundled to remake/game/sequelmaps.js)
+let sequelModule = null;
+function sequelMaps() { return sequelModule || (sequelModule = import('/api/sequel/sequelmaps.js')); }
+// a sequel map as the viewer takes a map: every model of the installation and the sequel's own may be placed
+async function sequelMapInfo(m) {
+  const SQ = await sequelMaps();
+  if (!MODELS) MODELS = await api.get('/api/models');
+  const own = await api.get('/api/sequel/manifest.json');
+  const models = {};
+  for (const r of MODELS) models[r.name.toLowerCase()] = {};
+  for (const n of Object.keys(own.models || {})) models[n] = {};
+  return SQ.build(m.mission, models, '/api/sequel/tex/');
 }
 function leaveMap() {
   if (mapView) { mapView.dispose(); mapView = null; }
@@ -711,7 +729,7 @@ async function selectMap(m) {
   $('#player').classList.add('hidden'); $('#empty').classList.add('hidden');
   $('#busy').classList.remove('hidden'); $('#busy-text').textContent = S.loadingMap;
   let info;
-  try { info = await api.get('/api/map?id=' + encodeURIComponent(m.id)); } catch (e) { $('#busy').classList.add('hidden'); toast(String(e.message || e)); return; }
+  try { info = m.sequel ? await sequelMapInfo(m) : await api.get('/api/map?id=' + encodeURIComponent(m.id)); } catch (e) { $('#busy').classList.add('hidden'); toast(String(e.message || e)); return; }
   if (my !== mapToken) return;
   cur.map = info;
   cur.mapExp.name = (m.rel.split('/').pop() || 'map').replace(/\.ula$/i, '');
@@ -771,12 +789,13 @@ function renderMapDetails() {
   if (M.preview) head.append(el('img', { class: 'preview', src: '/api/map/preview?id=' + encodeURIComponent(M.id), alt: '' }));
   const facts = el('div', { class: 'facts' });
   const fact = (k, v) => { if (v !== '' && v != null) facts.append(el('div', {}, el('span', { text: k }), el('b', { text: String(v) }))); };
-  fact(S.mapSize, `${M.w} × ${M.h} m`); fact(S.mapSetting, M.setting); fact(S.mapPlayers, M.players); fact(S.mapWater, M.water + ' m');
+  fact(S.mapSize, `${M.w} × ${M.h} m`); fact(S.mapSetting, M.setting); fact(S.mapPlayers, M.players); fact(S.mapWater, M.water != null ? M.water + ' m' : '');
   fact(S.mapAuthor, M.author); fact(S.mapGameType, M.game_type); fact(S.mapObjects, M.objects); fact(S.mapPlants, M.plants);
   const F = M.forest || {};
   if (F.blocks) fact(S.mapForest, F.patterns ? S.mapForestTrees(F.blocks, F.trees.length / 5) : S.mapForestBlocks(F.blocks));
   head.append(facts);
   if (M.description) head.append(el('p', { text: M.description }));
+  if (M.local) head.append(el('div', { class: 'note', text: S.mapSequel }));
   const types = Object.entries(M.types || {}).sort((a, b) => b[1] - a[1]);
   if (types.length) head.append(el('div', { class: 'note', text: types.map(([t, n]) => `${S.objTypes[t] || t} ${n}`).join(' · ') }));
   if (F.blocks && !F.patterns) head.append(el('div', { class: 'note warn', id: 'forest-note', text: S.mapForestNoExe }));
@@ -794,7 +813,7 @@ function renderMapDetails() {
   }
   s.append(cb('plants', S.mapLayerPlants, (on) => { if (on) loadMapModels('plants', mapToken); }));
   s.append(cb('water', S.mapLayerWater));
-  s.append(cb('tiles', S.mapLayerTiles));
+  if (!M.local) s.append(cb('tiles', S.mapLayerTiles));
   // the game's ground detail levels (ScapeTexture1 .. 5 of the setting): which one the tiles are drawn with
   const G = (mapView && mapView.ground) || {};
   if ((G.qualities || []).length > 1) {
@@ -817,6 +836,7 @@ function renderMapExport() {
   const s = $('#s-export'); s.innerHTML = '';
   const X = cur.mapExp;
   s.append(el('h3', { text: S.export }));
+  if (cur.map.local) { s.append(el('div', { class: 'note', text: S.mapSequelNoExport })); return; }
   const fmt = el('select', { onchange: (ev) => { X.format = ev.target.value; } });
   fmt.append(el('option', { value: 'none', selected: X.format === 'none' }, S.mapNo3d));
   for (const f of CAT.formats.filter((f) => !f.blender)) fmt.append(el('option', { value: f.id, selected: f.id === X.format }, f.label));

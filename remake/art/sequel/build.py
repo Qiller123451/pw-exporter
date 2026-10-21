@@ -5,7 +5,7 @@ default folder, art/sequel/built, is the copy in the repository that the pipelin
 data (pipeline/sequel_assets.py): building needs Blender's Python module and the materials (fetch.py), the game
 does not."""
 import os, sys, json, time
-from . import kit, town, vehicles, works, roads
+from . import kit, town, vehicles, works, roads, london
 
 # name -> (builder, kind, texture size, scale: ParaWorld's larger-than-life proportions)
 CATALOGUE = {}
@@ -72,7 +72,24 @@ CATALOGUE.update({
     'sq_waterwheel': (works.waterwheel, 'prop', 256, 1.0),
     'sq_tesla_coil': (works.tesla_coil, 'building', 512, 1.0),
     'sq_arc_halftrack': (vehicles.arc_halftrack, 'unit', 1024, 1.3),
+    # London by night (london.py, the mission "The Society"): the film's city
+    'sq_society': (london.society, 'prop', 2048, 1.3),
+    'sq_terrace_corner': (london.corner, 'prop', 1024, 1.2),
+    'sq_terrace_corner_red': (lambda: london.corner('red', 5), 'prop', 1024, 1.2),
+    'sq_wheel_frame': (london.wheel_frame, 'prop', 1024, 1.0),
+    'sq_wheel_rim': (london.wheel_rim, 'prop', 1024, 1.0),
+    'sq_pier': (london.pier, 'prop', 1024, 1.0),
+    'sq_bridge': (london.bridge, 'prop', 2048, 1.0),
+    'sq_quay': (london.quay, 'prop', 512, 1.0),
+    'sq_quay_steps': (lambda: london.quay(True), 'prop', 512, 1.0),
+    'sq_lamp_london': (london.lamp_post, 'prop', 128, 1.0),
+    'sq_stall': (london.stall, 'prop', 256, 1.0),
+    'sq_riverboat': (london.riverboat, 'prop', 1024, 1.0),
+    'sq_barge': (london.barge, 'prop', 512, 1.0),
+    'sq_tug': (london.tug, 'prop', 512, 1.0),
 })
+for k, st in enumerate(london.TERRACE):
+    CATALOGUE[f'sq_terrace_{st}'] = (lambda st=st, k=k: london.terrace(st, 3, 20 + k), 'prop', 1024, 1.2)
 
 
 
@@ -86,8 +103,10 @@ def build(out, only=None):
             continue
         t0 = time.time()
         kit.reset(); kit._mats.clear()
-        fn()
+        foot = fn()
         lo, hi, tris = kit.finish(name, out, kind, size, scale=scale)
+        if foot:            # the walls the model stands in the way with (london.py): its pathfinder boxes
+            kit.set_pf(os.path.join(out, 'models', name + '.glb'), foot, scale)
         e = {'arch': 'sequel', 'anims': None, 'foliage': False, 'nanims': 0, 'speeds': {}, 'sequel': kind,
              'size': [round(hi[i] - lo[i], 2) for i in range(3)]}
         if kind == 'building':

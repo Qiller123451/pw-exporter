@@ -14,7 +14,9 @@ LIB = os.environ.get('PW_ART_LIB', os.path.join(HERE, '_lib'))
 W, H = 256, 1024
 LENGTH = 48.0                    # metres of road in one texture (v 0..1)
 # kind -> road width (m) and the shoulder each side; maps.js widens the strip by the shoulders
-ROADS = {'highway': (9.0, 1.6), 'street': (7.0, 1.0), 'dirt': (6.0, 1.4)}
+ROADS = {'highway': (9.0, 1.6), 'street': (7.0, 1.0), 'dirt': (6.0, 1.4),
+         'city': (15.0, 0.3), 'pave': (24.0, 0.4)}       # London (london.py): a street with kerbs and pavements, a paved embankment
+CITY_ROAD = 9.0                  # the roadway of a 'city' street; the rest the pavements
 
 
 def load(lib, size_m, px_per_m, out_w, out_h, tint=None, strength=1.0):
@@ -38,7 +40,53 @@ def noise(rng, cells_x, cells_y, w=W, h=H):
     return np.asarray(im, dtype=np.float32)[h:2 * h, w:2 * w] / 255
 
 
+def flags(px_per_m, w, h, rng, size=0.9):
+    """stone flags: a grid of slabs, each a little lighter or darker, dark joints"""
+    base = load('Concrete034', 3.0, px_per_m, w, h, tint=(0.52, 0.51, 0.49), strength=0.7)
+    t = max(4, int(round(size * px_per_m)))
+    ny, nx = h // t + 2, w // t + 2
+    shade = rng.uniform(0.86, 1.10, (ny, nx)).astype(np.float32)
+    grid = np.kron(shade, np.ones((t, t), dtype=np.float32))[:h, :w][..., None]
+    yy, xx = np.mgrid[0:h, 0:w]
+    joint = (((yy % t) < 1) | ((xx % t) < 1)).astype(np.float32)[..., None]
+    return base * grid * (1 - 0.35 * joint)
+
+
+def london(kind, seed=5):
+    """a London street (asphalt between granite kerbs, flagged pavements) or the flagged embankment"""
+    rng = np.random.default_rng(seed)
+    width, sh = ROADS[kind]
+    total = width + 2 * sh
+    vpm = H / LENGTH
+    u = (np.arange(W) + 0.5) / W * total - total / 2
+    au = np.abs(u)[None, :, None]
+    if kind == 'pave':
+        img = flags(vpm, W, H, rng, size=1.6) * 0.92
+        img *= 0.9 + 0.2 * noise(rng, 6, 30)[..., None]
+    else:
+        asphalt = load('Asphalt031', 4.0, vpm, W, H, tint=(0.27, 0.27, 0.28), strength=0.85)
+        pave = flags(vpm, W, H, rng)
+        kerb = load('Concrete034', 1.0, vpm, W, H, tint=(0.62, 0.62, 0.62), strength=0.8)
+        r = CITY_ROAD / 2
+        on = np.clip((r - au) * 6.0, 0, 1)
+        k = np.clip(1 - np.abs(au - r - 0.15) * 6.0, 0, 1)
+        img = asphalt * on + pave * (1 - on)
+        img = img * (1 - k) + kerb * k
+        gutter = np.exp(-((au - r + 0.25) / 0.2) ** 2)
+        img *= 1 - 0.25 * gutter
+        for c in (-CITY_ROAD / 4, CITY_ROAD / 4):
+            img *= 1 - 0.10 * np.exp(-((u[None, :, None] - c) / 0.6) ** 2) * noise(rng, 6, 40)[..., None]
+    blot = noise(rng, 4, 16)[..., None]
+    img = 0.55 * kuwahara(img.astype(np.float32), 1) + 0.45 * img
+    img = grade(img * (0.9 + 0.2 * blot), contrast=1.1, sat=0.9)
+    fade = np.broadcast_to(np.clip((total / 2 - au) / max(0.05, sh), 0, 1), img.shape[:2] + (1,))
+    rgba = np.concatenate([img, fade], -1)
+    return Image.fromarray((np.clip(rgba, 0, 1) * 255 + 0.5).astype(np.uint8), 'RGBA')
+
+
 def road(kind, seed=3):
+    if kind in ('city', 'pave'):
+        return london(kind)
     rng = np.random.default_rng(seed)
     width, sh = ROADS[kind]
     total = width + 2 * sh

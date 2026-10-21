@@ -1,6 +1,6 @@
 // The sequel's own classes show their own texts (game/sequel/texts.js) - in the build card's tooltip too, although
 // their build action is a copy of the original's (a SEAS tower's location and description key: Rules.actionText).
-//   PWR_PORT=8412 python3 tests/evaljs.py tests/sequel_texts.js "&sequel=10"
+//   PWR_PORT=8412 python3 tests/evaljs.py tests/sequel_texts.js "&sequel=11"
 const D = G.data, me = G.me, out = [];
 const check = (name, ok, info) => out.push((ok ? 'ok   ' : 'FAIL ') + name + (info !== undefined ? '  ' + JSON.stringify(info) : ''));
 const text = (html) => { const d = document.createElement('div'); d.innerHTML = html; return d.innerText; };

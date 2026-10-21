@@ -52,8 +52,8 @@ The file browser shows the import options on the right:
 
 | Option | What it does |
 |---|---|
-| **Models** | Names of the models to import, comma separated. Patterns work: `seas_*`, `*_dest`. Empty = every model. |
-| **Only open the archive** | Read the archive and list its models, but import none. Use this for big archives; pick models afterwards. |
+| **Models** | Names of the models to import, comma separated. Patterns work: `seas_*`, `*_dest`. Models named here are imported even with *Only open the archive* ticked. |
+| **Only open the archive** | Ticked by default: read the archive and list its models, but import none; pick models afterwards in the GSF tab. Untick it (with *Models* empty) to import every model. |
 | **Animations** | Import the models' animations as actions. Untick for a quick look at a character archive. |
 | **Textures** | Look for the game's textures and show them on the materials. |
 | **Weld vertices** | Join vertices that the file stores twice (same position, normal, UV and weights). Cloth is never welded. |

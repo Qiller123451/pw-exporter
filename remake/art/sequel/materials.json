@@ -6,9 +6,24 @@
    "url": "https://ambientcg.com/a/Asphalt031",
    "license": "CC0"
   },
+  "Bricks008": {
+   "source": "ambientCG",
+   "url": "https://ambientcg.com/a/Bricks008",
+   "license": "CC0"
+  },
   "Bricks060": {
    "source": "ambientCG",
    "url": "https://ambientcg.com/a/Bricks060",
+   "license": "CC0"
+  },
+  "Bricks066": {
+   "source": "ambientCG",
+   "url": "https://ambientcg.com/a/Bricks066",
+   "license": "CC0"
+  },
+  "Bricks085": {
+   "source": "ambientCG",
+   "url": "https://ambientcg.com/a/Bricks085",
    "license": "CC0"
   },
   "Bricks089": {
@@ -41,9 +56,24 @@
    "url": "https://ambientcg.com/a/Ground079S",
    "license": "CC0"
   },
+  "PaintedPlaster017": {
+   "source": "ambientCG",
+   "url": "https://ambientcg.com/a/PaintedPlaster017",
+   "license": "CC0"
+  },
+  "PavingStones046": {
+   "source": "ambientCG",
+   "url": "https://ambientcg.com/a/PavingStones046",
+   "license": "CC0"
+  },
   "Planks037A": {
    "source": "ambientCG",
    "url": "https://ambientcg.com/a/Planks037A",
+   "license": "CC0"
+  },
+  "RoofingTiles003": {
+   "source": "ambientCG",
+   "url": "https://ambientcg.com/a/RoofingTiles003",
    "license": "CC0"
   },
   "Rust009": {

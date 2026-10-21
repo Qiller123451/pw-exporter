@@ -41,24 +41,34 @@ export class MapView {
   }
   // ---------------------------------------------------------------- terrain
   // q = the game's ground detail 1 .. 5 (0 / undefined = the finest the installation has)
+  // info.local: a map made in the browser (the sequel's: remake/src/tools/sequel_maps.js) - heights, the material
+  // weights per vertex and the roads come with it, there is no picture of the game's tiles
   async load(info, onProgress = () => {}, q = 0) {
     this.info = info;
-    const step = Math.max(1, Math.ceil(Math.max(info.grid[0], info.grid[1]) / 768));   // at most ~768 x 768 vertices
-    const [hb, mb] = await Promise.all([
-      this.api.raw('/api/map/heights?id=' + encodeURIComponent(info.id) + '&step=' + step),
-      this.api.raw('/api/map/mats?id=' + encodeURIComponent(info.id)),
-    ]);
-    const [nx, ny] = hb.grid, H = new Float32Array(hb.data);
-    const [mx, my] = mb.grid, M = new Uint8Array(mb.data);
+    const L = info.local;
+    let nx, ny, H, M, mx, my, step, w0, w1;
+    if (L) {
+      nx = ny = L.n; H = L.H; step = L.cell / 2; w0 = L.w0; w1 = L.w1;
+    } else {
+      step = Math.max(1, Math.ceil(Math.max(info.grid[0], info.grid[1]) / 768));   // at most ~768 x 768 vertices
+      const [hb, mb] = await Promise.all([
+        this.api.raw('/api/map/heights?id=' + encodeURIComponent(info.id) + '&step=' + step),
+        this.api.raw('/api/map/mats?id=' + encodeURIComponent(info.id)),
+      ]);
+      [nx, ny] = hb.grid; H = new Float32Array(hb.data);
+      [mx, my] = mb.grid; M = new Uint8Array(mb.data);
+      w0 = new Float32Array(nx * ny * 4); w1 = new Float32Array(nx * ny * 4);
+    }
     this.H = { nx, ny, H, step: 2 * step };
     onProgress(0.1);
     const uvs = new Float32Array(nx * ny * 2);
-    const pos = new Float32Array(nx * ny * 3), w0 = new Float32Array(nx * ny * 4), w1 = new Float32Array(nx * ny * 4);
+    const pos = new Float32Array(nx * ny * 3);
     const cell = (cx, cy) => M[Math.min(my - 1, Math.max(0, cy)) * mx + Math.min(mx - 1, Math.max(0, cx))];
     for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
       const k = j * nx + i, x = i * 2 * step, y = j * 2 * step;
       pos[k * 3] = x - info.w / 2; pos[k * 3 + 1] = H[k]; pos[k * 3 + 2] = y - info.h / 2;
       uvs[k * 2] = x / info.w; uvs[k * 2 + 1] = 1 - y / info.h;      // the baked ground: row 0 = map y 0 (north)
+      if (L) continue;
       // material weights: bilinear over the 4 m cell centres
       const fx = x / 4 - 0.5, fy = y / 4 - 0.5, cx = Math.floor(fx), cy = Math.floor(fy), u = fx - cx, v = fy - cy;
       const add = (m, wt) => { if (m < 4) w0[k * 4 + m] += wt; else w1[k * 4 + m - 4] += wt; };
@@ -100,18 +110,22 @@ export class MapView {
     };
     mat.customProgramCacheKey = () => 'pw-map-terrain';
     this.mats = { tiles: null, blend: mat };
-    await this.loadGround(q);
+    if (L) { this.ground = { q: 0, qualities: [] }; this.groundFailed = true; } else await this.loadGround(q);
     if (this.cancelled) return;
     const terrain = new THREE.Mesh(geo, this.tiles === false || this.groundFailed ? mat : this.mats.tiles);
     terrain.name = 'terrain'; terrain.receiveShadow = true; terrain.userData.own = true;
     this.layers.terrain = terrain;
     this.group.add(terrain);
-    if (info.water > 0) {
+    if (info.water > 0 || (L && info.water != null)) {
       const wg = new THREE.PlaneGeometry(info.w, info.h).rotateX(-Math.PI / 2);
       const water = new THREE.Mesh(wg, new THREE.MeshPhongMaterial({ color: 0x2a6a78, transparent: true, opacity: 0.62, shininess: 80, depthWrite: false }));
       water.position.y = info.water; water.name = 'water'; water.userData.own = true; water.renderOrder = 2;
       this.layers.water = water;
       this.group.add(water);
+    }
+    if (L && L.roads) {
+      L.roads.traverse((o) => { if (o.isMesh) o.userData.own = true; });
+      this.group.add(L.roads);
     }
     this.markers();
     onProgress(0.2);
@@ -287,7 +301,7 @@ export class MapView {
     }
     const names = [...byModel.keys()];
     let done = 0;
-    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), s1 = new THREE.Vector3(1, 1, 1), up = new THREE.Vector3(0, 1, 0);
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
     const work = async (name) => {
       const parts = await staticModel(this.api, name, lod);
       if (this.cancelled || !parts) return;
@@ -297,7 +311,7 @@ export class MapView {
         const sel = pt.tag ? objs.filter((o) => wallShows(pt.tag, o.wall)) : objs;
         if (!sel.length) continue;
         const im = new THREE.InstancedMesh(pt.geometry, pt.material, sel.length);
-        sel.forEach((o, i) => { setQuat(q, o); m4.compose(this.toWorld(o.x, o.y, o.z), q, s1); im.setMatrixAt(i, m4); });
+        sel.forEach((o, i) => { setQuat(q, o); m4.compose(this.toWorld(o.x, o.y, o.z), q, sc.setScalar(o.scale || 1)); im.setMatrixAt(i, m4); });
         im.castShadow = false; im.receiveShadow = false; im.name = name;
         if (pt.material.userData.glow) im.renderOrder = 3;          // light effects after the water
         im.computeBoundingSphere();
@@ -347,16 +361,19 @@ function numberTexture(text, color) {
 function staticModel(api, name, lod = 0) {
   const key = lod ? name + '|lod' + lod : name;
   if (!modelCache.has(key)) modelCache.set(key, (async () => {
-    const inf = await api.get('/api/model?name=' + encodeURIComponent(name));
-    const gltf = await loader.loadAsync(inf.url);
-    const root = applyGsfMaterials(gltf.scene);       // light effects are added, not painted (materials.js)
+    // the sequel's own models (remake/art/sequel, glTF with their textures) as they are; ParaWorld's converted
+    const own = /^sq_/.test(name);
+    const gltf = await loader.loadAsync(own ? '/api/sequel/models/' + name + '.glb' : (await api.get('/api/model?name=' + encodeURIComponent(name))).url);
+    const root = own ? gltf.scene : applyGsfMaterials(gltf.scene);       // light effects are added, not painted (materials.js)
     const top = root.children[0];
-    const fourcc = (top && top.userData && top.userData.fourcc) || '';
-    const desc = P.describe(root, fourcc);
-    const st = P.defaultState(desc);
-    // the wanted level of detail, or the nearest coarser / finer one the model has
-    if (lod && desc.lods.length) st.lod = desc.lods.filter((k) => k <= lod).pop() ?? desc.lods[0];
-    P.apply(root, fourcc, st);
+    const fourcc = own ? '' : (top && top.userData && top.userData.fourcc) || '';
+    if (!own) {
+      const desc = P.describe(root, fourcc);
+      const st = P.defaultState(desc);
+      // the wanted level of detail, or the nearest coarser / finer one the model has
+      if (lod && desc.lods.length) st.lod = desc.lods.filter((k) => k <= lod).pop() ?? desc.lods[0];
+      P.apply(root, fourcc, st);
+    }
     root.updateMatrixWorld(true);
     // wall pieces: every part tagged with its arm and geometry variant, so each map piece shows only its own arms
     const tags = fourcc === 'Wall' ? wallTags(top) : null;

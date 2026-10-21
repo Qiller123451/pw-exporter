@@ -20,7 +20,7 @@ or **FBX, .blend, USD and Alembic** when Blender is installed.
 * **Exports** keep textures, skeletons and animations (GLB/glTF/FBX), or a posed static mesh (OBJ/STL/PLY/DAE).
 * **Map viewer**: every map of your installation in 3D – terrain with the original ground textures, the sea, every
   tree (the forest blocks included), rock, nest and building – exported as a 3D file, height map, object list or raw data with
-  [Kaitai Struct](https://kaitai.io) descriptions of the map format.
+  [Kaitai Struct](https://kaitai.io) descriptions of the map format; the maps of the remake's sequel campaign too.
 * English and German user interface. Runs on Windows, Linux and macOS.
 
 ---
@@ -271,6 +271,13 @@ Click one to load it:
   tiles at the finest level.
 * **Walls** are joined like in the game: every wall piece shows only the arms towards its neighbouring pieces, towers
   and gates (and one of the model's variants per arm) – in the 3D view and in the map exports.
+* **ParaWorld: Containment** (the remake's sequel campaign, [SEQUEL.md](../remake/docs/SEQUEL.md)): its eleven
+  missions' maps are listed too (`Containment/<n>`). They are no .ula files - the remake makes each map in code when
+  the mission starts - so the viewer runs the same code (`remake/src/tools/sequel_maps.js`, bundled by
+  `remake/build.sh` into `remake/game/sequelmaps.js`): the terrain with the setting's blended materials, the river or
+  sea, the roads, the sequel's own models (London's houses, the Society, the wheel ...) and ParaWorld's trees, rocks
+  and deposits where the mission puts them, the start as a pole. The mission's base, units and rifts come with the
+  mission and are not shown; there is no map file to export.
 
 ### Exporting a map
 

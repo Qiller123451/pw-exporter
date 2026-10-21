@@ -37,6 +37,17 @@ export class Renderer {
     this.sun.shadow.normalBias = 0.05;
     if (this.sun.shadow.map) { this.sun.shadow.map.dispose(); this.sun.shadow.map = null; }
   }
+  // lamps of a scene that light what stands near them (a mission's floodlights): [[x, y, z, colour, candela,
+  // reach]]; null takes them away
+  floodlights(list) {
+    for (const l of this.floods || []) this.scene.remove(l);
+    this.floods = (list || []).map(([x, y, z, color, cd, reach]) => {
+      const l = new THREE.PointLight(color, cd, reach, 2);
+      l.position.set(x, y, z);
+      this.scene.add(l);
+      return l;
+    });
+  }
   setShadows(q) {
     this.settings.shadows = q;
     const on = q !== 'off';

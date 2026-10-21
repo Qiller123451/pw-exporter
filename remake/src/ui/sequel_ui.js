@@ -169,6 +169,7 @@ export class SequelUI {
       }
       if (r) r.rotation[R.axis] += dt * R.speed;
     }
+    this.pieces(dt);
     // mission 5: the rocket on its pad, and its flight after the count reaches zero
     const pad = M.state.pad;
     if (pad && pad.alive && pad.obj) {
@@ -185,6 +186,29 @@ export class SequelUI {
         if (G.fx && Math.random() < 0.6) G.fx.dust(r.position.clone(), 4);
       }
     }
+  }
+  // the set pieces (Sequel.piece): the big wheel's rim turning, boats on the river - drawn where the script has them
+  pieces(dt) {
+    const G = this.G, W = G.world, M = this.M;
+    this.pieceObjs = this.pieceObjs || new Map();
+    const live = new Set();
+    for (const p of M.pieces) {
+      live.add(p);
+      let o = this.pieceObjs.get(p);
+      if (!o) {
+        const tpl = W.template(p.model, true);
+        if (!tpl) continue;
+        o = new THREE.Group();
+        const m = W.cloneModel(tpl);
+        o.add(m); o.userData.inner = m;
+        G.scene.add(o);
+        this.pieceObjs.set(p, o);
+      }
+      o.position.set(p.x, p.y != null ? p.y : W.height(p.x, p.z), p.z);
+      o.rotation.y = p.rot || 0;
+      if (p.spin) o.userData.inner.rotation.z += dt * p.spin * Math.PI * 2;
+    }
+    for (const [p, o] of this.pieceObjs) if (!live.has(p)) { G.scene.remove(o); this.pieceObjs.delete(p); }
   }
   // the power lines: a sagging wire between each pole and the one it hangs on (Grid.links), rebuilt when they change
   wires() {

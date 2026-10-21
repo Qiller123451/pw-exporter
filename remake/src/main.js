@@ -40,7 +40,7 @@ import { Menu, loadSettings, saveSettings, TRIBE_INFO, CONFIG_MOD } from './ui/m
 import { snapshot, restore } from './game/save.js';
 import { Sequel } from './game/sequel/runtime.js';
 import { sequelData, SEQUEL_MOD } from './game/sequel/rules.js';
-import { lockedBefore } from './game/sequel/missions.js';
+import { lockedBefore, LAST_MISSION, SEQUEL_ORDER, renumbered } from './game/sequel/missions.js';
 import { onRoad } from './game/sequel/maps.js';
 import { SequelUI } from './ui/sequel_ui.js';
 import { listSaves, putSave, getSave, deleteSave, exportSave, importSave, quickId } from './ui/saves.js';
@@ -292,7 +292,7 @@ async function buildWorld(cfg, S) {
   if (S.water != null) W.markWater(S.water);
   // where land units can walk: the map's pathfinder grid, else a slope rule (maps/source.js slopeWalkable: the
   // sequel's cliffs and the random maps' mountains)
-  W.markTerrain(S.walkable || slopeWalkable((x, z) => W.height(x, z), S.maxSlope));
+  W.markTerrain(S.walkable || slopeWalkable((x, z) => W.height(x, z), S.maxSlope), !!S.walkable);
   nav.labelRegions();                              // before anything is built (nav.js: goals across mountains)
   if (W.waterNav) W.waterNav.labelRegions();
   // AdaptTerrain: under a building put down in the game the ground is levelled and takes the brush's materials
@@ -1149,7 +1149,7 @@ G.updateFow = () => updateFow(true);      // the mission UI refreshes the fog wh
 // "Restart" and "Play again" reload the page with the skirmish stored in sessionStorage.
 function quickConfig() {
   // ?campaign=<mission 0-16>[&difficulty=0|1|2][&tribe=Hu|Aje|Ninigi|SEAS]: a campaign mission (tribe: played with that tribe)
-  // ?sequel=<mission 1-10>[&difficulty=0|1|2]: a mission of the sequel campaign (docs/SEQUEL.md)
+  // ?sequel=<mission 1-11>[&difficulty=0|1|2]: a mission of the sequel campaign (docs/SEQUEL.md)
   if (params.has('sequel')) return { sequel: +params.get('sequel'), difficulty: params.has('difficulty') ? +params.get('difficulty') : 1, debug: params.has('debug') && params.get('debug') !== '0' };
   if (params.has('campaign')) return { campaign: +params.get('campaign'), difficulty: params.has('difficulty') ? +params.get('difficulty') : 1, tribe: params.get('tribe') || '', debug: params.has('debug') && params.get('debug') !== '0' };
   const k = { ...G.settings.skirmish };
@@ -1264,6 +1264,7 @@ async function startGame(cfg) {
       const d = sequelData(G.raw.tt, G.raw.json, locked);
       G.data = new Rules(d.tt, d.extra);
       G.campaign = null;
+      cfg.sqOrder = SEQUEL_ORDER;                   // (the missions' numbering: a saved game keeps it, G.loadSaved)
       G.sequel = new Sequel(G, cfg);
       G.sequel.locked = locked;
       S = G.sequel.source();
@@ -1297,6 +1298,7 @@ async function startGame(cfg) {
       progress(0.98, 'Loading the saved game…');
       const oldFlags = G.world.go ? G.world.go.flags : [];
       const r = restore(G, saved);
+      if (G.sequel) G.sequel.id = +cfg.sequel;          // (the mission's number as the game started it: renumbered saves)
       // the domination flags' models (not saved: systems/gameover.js)
       for (const f of oldFlags) if (f.look && f.look.obj) f.look.obj.removeFromParent();
       if (G.world.go) for (const f of G.world.go.flags) G.world.flagLook(f);
@@ -1337,7 +1339,7 @@ G.endMission = (won, info = {}) => {
   const show = () => G.menu.end(!!won, {
     time: `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`, kills: G.me.kills, lost: G.me.lost, epoch: EPOCH[G.me.epoch()],
     mission: C ? { title: C.map.title || C.map.name, text: info.text || '', next: won && C.next() ? C.next() : null, difficulty: C.difficulty, points: info.points }
-      : G.sequel ? { sequel: true, title: G.sequel.def.title, text: info.text || '', next: won && G.sequel.id < 10 ? { id: G.sequel.id + 1 } : null, difficulty: G.sequel.difficulty } : null,
+      : G.sequel ? { sequel: true, title: G.sequel.def.title, text: info.text || '', next: won && G.sequel.id < LAST_MISSION ? { id: G.sequel.id + 1 } : null, difficulty: G.sequel.difficulty } : null,
     text: info.text || '',
   });
   G.endInfo = { won: !!won, text: info.text || '', points: info.points };
@@ -1373,6 +1375,7 @@ G.saveGame = async (name, opts = {}) => {
 // load a saved game: the page starts again with the game it was (in its game data configuration) and restores it
 G.loadSaved = async (meta) => {
   const cfg = { ...meta.cfg, load: meta.id };
+  if (cfg.sequel) { cfg.sequel = renumbered(cfg.sequel, cfg.sqOrder); cfg.sqOrder = SEQUEL_ORDER; }   // (a save of the old numbering)
   if ((meta.mod || '') !== CONFIG_MOD) return G.menu.openConfig(meta.mod || '', cfg);
   try { sessionStorage.setItem('pwr.autostart', JSON.stringify(cfg)); } catch (e) { /* ignore */ }
   location.reload();

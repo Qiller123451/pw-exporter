@@ -544,8 +544,9 @@ class Importer:
             bg.rest_rot = b.v['rot']
             bg.has_rest = True
             obj.pose.bones[names[k]].rotation_mode = 'QUATERNION'
-        arm.display_type = 'STICK'
+        arm.display_type = 'OCTAHEDRAL'
         obj.show_in_front = True
+        obj['gsf_bone_axis'] = BM.AXIS_VERSION        # bones point to their children (see bonemath.bone_axes)
         obj['gsf_bind_poses'] = [float(x) for x in np.asarray(c.bind_poses).reshape(-1)]
         ctx['skeletons'][id(c)] = dict(obj=obj, names=names, sk=sk, B=B)
         return obj

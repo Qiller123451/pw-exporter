@@ -463,6 +463,8 @@ class Exporter:
         arm = o.data
         M = np.array(self.space.S)
         Mrel = np.array(self.root_inv @ o.matrix_world)
+        # armatures imported by add-on versions before 1.4 have the old, fixed bone axis
+        legacy = 'gsf_bind_poses' in o and int(o.get('gsf_bone_axis', 1)) < BM.AXIS_VERSION
         roots = sorted([b for b in arm.bones if b.parent is None], key=lambda b: (b.gsf.order, b.name))
         order = []
 
@@ -482,7 +484,7 @@ class Exporter:
         det = np.ones(len(order))
         for k in range(len(order)):
             det[k] = sg[k] * (det[parent[k]] if parent[k] >= 0 else 1.0)
-        W = BM.from_blender(Bl, det, M)
+        W = BM.from_blender(Bl, det, M, legacy)
         bones = []
         for k, b in enumerate(order):
             Lk = W[k] if parent[k] < 0 else np.linalg.inv(W[parent[k]]) @ W[k]
@@ -510,6 +512,7 @@ class Exporter:
         c.root = bones[0] if bones else Bone()
         # inverse bind matrices: the rest pose (the original ones when the skeleton did not change)
         sk = BM.Skeleton(c)
+        sk.legacy = legacy
         bind = np.array([np.linalg.inv(sk.world[k]).T.reshape(-1) for k in range(sk.n)], dtype=np.float32)
         orig = o.get('gsf_bind_poses')
         if orig is not None and len(orig) == bind.size:
@@ -520,7 +523,7 @@ class Exporter:
         for extra in getattr(o, 'children', []):
             pass
         # the rest pose the animations are relative to: from the written skeleton (exact for unchanged bones)
-        self.skels[o] = dict(chunk=c, names=names, sk=sk, B=BM.to_blender(sk.world, sk.det, M), obj=o)
+        self.skels[o] = dict(chunk=c, names=names, sk=sk, B=BM.to_blender(sk.world, sk.det, M, legacy), obj=o)
         return c
 
     # ===================================================================================== meshes

@@ -109,9 +109,9 @@ browser, or a `.pwsave` file to keep or move; `F5` quick save, `F8` quick load.
 
 ![ParaWorld: Containment - the diner in Copper Basin](docs/screenshots/sequel_liftoff.png)
 
-**ParaWorld: Containment (1964).** A new campaign of ten missions written for the remake, a sequel to the original's
-ending: the rifts have opened into our world, and SEAS has to contain the outbreak across 1960s America (and once in
-ParaWorld). Its own mechanics: rifts sealed by stabilizers, townsfolk to evacuate, tranquilizers and capture trucks,
+**ParaWorld: Containment (1964).** A new campaign of eleven missions written for the remake, a sequel to the original's
+ending: the rifts have opened into our world, and SEAS has to contain the outbreak across 1960s America (once in
+London - the city of the original's opening film, rebuilt - and once in ParaWorld). Its own mechanics: rifts sealed by stabilizers, townsfolk to evacuate, tranquilizers and capture trucks,
 electrified nets, night and searchlights, command powers, and electricity - a fifth resource made in power plants
 and carried home over pole lines the dinosaurs can cut. The 1960s towns, cars and machines are made in Blender from
 CC0 materials and painted in ParaWorld's weathered look (remake/art/sequel).

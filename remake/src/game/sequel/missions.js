@@ -1,4 +1,4 @@
-// The ten missions of "ParaWorld: Containment" (docs/SEQUEL.md). Each is data plus named handlers that the runtime
+// The eleven missions of "ParaWorld: Containment" (docs/SEQUEL.md). Each is data plus named handlers that the runtime
 // (game/sequel/runtime.js, M) calls: setup, tick (every 0.5 s), died, evacuated, rescued, captured, asleep, loaded,
 // riftClosed, done_<objective>, and the mission's own timer names (M.after(sec, name, args)).
 // unlocks: the sequel's units and buildings the mission brings in (game/sequel/rules.js): buildable from then on, each
@@ -358,11 +358,165 @@ export const MISSIONS = [
     },
   },
   // ============================================================================================ 7
+  // London, after the campaign's opening film (Data/locale/<lang>/Video/hs_1000.bik): the river, the big wheel, the
+  // Society's seat on the embankment (art/sequel/london.py). The river runs west-east at z = -150 (110 m wide, the
+  // water's edge at z = -95 and -205); the iron bridge crosses it at x = 200.
   {
-    id: 7, title: 'Crane\'s Ark', place: 'Kuskokwim Mountains, Alaska', date: 'December 3, 1964',
+    id: 7, title: 'The Society', place: 'The Victoria Embankment, London', date: 'November 5, 1964',
+    briefing: [
+      'Bonfire Night in London. Dr. Taslov has come to the old seat of Babbit\'s Society on the Embankment: its archive holds the papers of the first Gate machine, and he wants them before anyone else does.',
+      'At nine o\'clock the sky over the river split open beside the great wheel. The fireworks are still going up - and the creatures are already in the streets. Get the people over the bridge, bring Taslov to the tear, and keep the Society standing.',
+    ],
+    night: true,
+    // the film's dusk (hs_1000.bik): a blue-grey cloudy sky, more light than a night's, warm floodlights on the Society's
+    // front and on the embankment by the wheel and the bridge
+    dusk: { sky: 0x2e3048, sun: 0.32, sunColor: 0x9aa4d4, hemi: 0.55,
+      lights: [[82, 3, 16, 0xffb066, 900, 70], [118, 3, 16, 0xffb066, 900, 70], [-150, 8, -70, 0xffc080, 700, 80], [200, 8, -86, 0xffc080, 500, 60]] },
+    crane: { ai: false },
+    creatures: ['Velociraptor', 'Deinonychus', 'Allosaurus', 'Carnotaurus'],
+    powers: ['supply', 'recon', 'airdrop', 'artillery'],
+    res: { food: 1000, wood: 1000, stone: 900 },
+    camera: [-110, 180],
+    zones: [{ name: 'bridge', x: 200, z: -238, r: 14, kind: 'evac' }],
+    props: ['sq_barge', 'sq_tug', 'sq_riverboat'],
+    pieces: [{ id: 'wheel', model: 'sq_wheel_rim', x: -150, z: -95, y: 43, rot: 0, spin: 1 / 120 }],
+    map: {
+      seed: 1105, setting: 'Northland', size: 560, base: 6, water: 0, noise: [], ground: [0, 1, 4, 3, 6], shrubs: 40,
+      clear: [[-150, -62, 20], [-150, -36, 14], [100, -60, 26]],
+      features: [{ type: 'river', path: [[-380, -150], [380, -150]], w: 110, depth: 4, bank: 3 },
+        { type: 'strip', path: [[200, -86], [200, -214]], w: 16, h: 6 }],
+      roads: [
+        { path: [[-300, -84], [300, -84]], width: 16, kind: 'pave' }, { path: [[-300, -58], [300, -58]], width: 15, kind: 'city' },
+        { path: [[-300, -213], [300, -213]], width: 16, kind: 'pave' }, { path: [[-300, -240], [300, -240]], width: 15, kind: 'city' },
+        ...[22, 95, 170, 245].map((z) => ({ path: [[-300, z], [300, z]], width: 15, kind: 'city' })),
+        { path: [[-200, -58], [-200, 300]], width: 15, kind: 'city' }, { path: [[-100, -58], [-100, 170]], width: 15, kind: 'city' },
+        { path: [[0, -58], [0, 300]], width: 15, kind: 'city' }, { path: [[100, 22], [100, 300]], width: 15, kind: 'city' },
+        { path: [[200, -240], [200, 300]], width: 15, kind: 'city' }, { path: [[-100, 245], [-100, 300]], width: 15, kind: 'city' },
+        { path: [[100, 15], [100, 9]], width: 8, kind: 'pave' },          // (the Society's forecourt, paved to the steps)
+      ],
+      places: [
+        // the embankments: walls along the water (river stairs behind the Society), trees, lamps
+        { kind: 'quay', path: [[-380, -150], [380, -150]], off: -58, steps: [100], gaps: [200] },
+        { kind: 'quay', path: [[-380, -150], [380, -150]], off: 58, gaps: [200] },
+        { kind: 'avenue', path: [[-300, -71], [300, -71]], off: 0, step: 13 }, { kind: 'avenue', path: [[-300, -226], [300, -226]], off: 0, step: 13 },
+        { kind: 'lamps', path: [[-300, -58], [300, -58]], off: -9, step: 26 }, { kind: 'lamps', path: [[-300, -240], [300, -240]], off: 9, step: 26 },
+        // the wheel and its pier, the bridge, the Society, the stalls, boats moored on the river
+        { kind: 'model', model: 'sq_wheel_frame', x: -150, z: -95, rot: 0, r: 14, y: 6 },
+        { kind: 'model', model: 'sq_pier', x: -90, z: -99.5, rot: 0, r: 0, y: 5.5, block: false },
+        { kind: 'model', model: 'sq_riverboat', x: -90, z: -109, rot: 0, r: 0, y: 0, block: false },
+        { kind: 'model', model: 'sq_bridge', x: 200, z: -150, rot: Math.PI / 2, r: 0, y: 6.15 },       // (over the street on its causeway)
+        { kind: 'model', model: 'sq_society', x: 100, z: -19, rot: Math.PI, r: 30 },
+        ...[-182, -172, -128, -118].map((x) => ({ kind: 'model', model: 'sq_stall', x, z: -78, rot: Math.PI, r: 2, block: false })),
+        { kind: 'model', model: 'sq_barge', x: 40, z: -190, rot: 0.05, r: 0, y: 0, block: false }, { kind: 'model', model: 'sq_tug', x: 62, z: -188, rot: 0.05, r: 0, y: 0, block: false },
+        { kind: 'model', model: 'sq_barge', x: -250, z: -175, rot: Math.PI, r: 0, y: 0, block: false }, { kind: 'model', model: 'sq_riverboat', x: 280, z: -120, rot: Math.PI, r: 0, y: 0, block: false },
+        // the north bank: one row of houses facing the river
+        { kind: 'block', x0: -300, z0: -290, x1: 192, z1: -248, sides: 's' }, { kind: 'block', x0: 208, z0: -290, x1: 300, z1: -248, sides: 's' },
+        // the south bank: blocks between the streets (the first row by the embankment: the wheel's gardens, the
+        // Society's grounds); the park with SEAS' camp
+        { kind: 'block', x0: -268, z0: -42, x1: -208, z1: 12 }, { kind: 'block', x0: -92, z0: -42, x1: -8, z1: 12 }, { kind: 'block', x0: 208, z0: -42, x1: 268, z1: 12 },
+        // (across the street from the Society's front, west: the park of the film's view - no houses)
+        ...[[30, 87], [103, 162]].flatMap(([z0, z1]) => [[-268, -208], [-192, -108], [-92, -8], [8, 92], [108, 192], [208, 268]]
+          .filter(([x0]) => !(x0 === 8 && z0 === 30)).map(([x0, x1]) => ({ kind: 'block', x0, z0, x1, z1 }))),
+        ...[[-268, -208], [8, 92], [108, 192], [208, 268]].map(([x0, x1]) => ({ kind: 'block', x0, z0: 178, x1, z1: 237 })),
+        ...[[-292, -208], [-192, -108], [-92, -8], [8, 92], [108, 192], [208, 292]].map(([x0, x1]) => ({ kind: 'block', x0, z0: 253, x1, z1: 300, sides: 'n' })),
+      ],
+      forests: [{ x: 40, z: -15, r: 22, n: 12 }, { x: 160, z: -16, r: 20, n: 10 }, { x: -170, z: -15, r: 16, n: 6 }, { x: -40, z: 200, r: 26, n: 18 },
+        { x: 50, z: 60, r: 30, n: 14 }],
+      resources: [{ x: -88, z: 222, stone: 6, food: 6, wood: 10 }],
+    },
+    start: BASE(-140, 195, { garage: true, units: [['sq_booker', -100, 186, 1], ['sq_jeep', -80, 192, 2], ['seas_mobile_suit', -70, 202, 1]], guard: [-90, 200] }),
+    on: {
+      setup(M) {
+        M.state.taslov = M.spawn('sq_taslov', 'me', 100, 12, 1)[0];
+        M.objective('evac', 'Get the townsfolk over the bridge (north end)', { of: 8, civ: true });
+        M.objective('rift', 'Bring Dr. Taslov to the tear by the wheel and seal it', {});
+        civilians(M, -200, 58, 4, 12); civilians(M, 0, 130, 4, 12); civilians(M, 150, 95, 4, 12);
+        M.rift('wheel', -150, -62, { every: 80, first: 100, cap: 14, sealTime: 70, waves: [[['Velociraptor', 3]], [['Deinonychus', 3]], [['Velociraptor', 3], ['Deinonychus', 2]], [['Allosaurus', 1], ['Velociraptor', 3]], [['Carnotaurus', 1], ['Deinonychus', 3]]] });
+        M.say('kiko', 'Bonfire Night. Half of London thinks the dinosaurs are part of the show.');
+        M.say('taslov', 'Colonel, the tear is beside the great wheel - and it is no accident. Somebody opened it. Bring me there and I will stitch it shut.');
+        M.say('halloran', 'Booker, take the troopers into the streets. Get those people over the bridge.');
+      },
+      evacuated(M, { n }) { M.progress('evac', n); },
+      riftClosed(M) {
+        M.complete('rift');
+        M.say('taslov', 'Closed. Now the archive - Babbit kept the first Gate\'s papers in the cellar. Give me three minutes.');
+        M.say('halloran', 'Three minutes. Everybody else, around the Society.');
+        M.state.toArchive = true;
+        const t = M.state.taslov;
+        if (alive(t)) M.W.order([t], { type: 'move', x: 100, z: 11, auto: true });
+      },
+      // Taslov goes in; Crane's people come up the river stairs
+      archive(M) {
+        M.objective('society', 'Hold the Society while Taslov reads the archive (3:00)', {});
+        M.state.archiveEnd = M.time + 3 * T;
+        M.after(40, 'landing');
+      },
+      landing(M) {
+        M.say('kiko', 'Boats on the river, no lights - a tug and a lighter, heading for the Society\'s stairs!');
+        M.piece('tug', 'sq_tug', 300, -112, 0, Math.PI); M.piece('lighter', 'sq_barge', 320, -112, 0, Math.PI);
+        M.sail('tug', [[124, -110]], 12); M.sail('lighter', [[104, -112]], 12);
+        M.piece('steamer', 'sq_riverboat', 380, -120, 0, Math.PI); M.sail('steamer', [[70, -124]], 11);
+      },
+      arrived_lighter(M) {
+        if (M.state.landed) return;
+        M.state.landed = true;
+        M.say('crane', 'Good evening, Margaret. Do carry on with your fireworks - I have only come for a few old papers.');
+        M.say('halloran', 'Crane. Hold them at the back of the house!');
+        const k = M.difficulty;
+        const us = [...M.spawn('seas_gunner', 'crane', 100, -82, 6 + 2 * k, { level: 3 }), ...M.spawn('seas_marksman', 'crane', 90, -80, 3 + k, { level: 3 }), ...M.spawn('seas_rocketman', 'crane', 110, -80, 2 + k, { level: 3 })];
+        M.send(us, [100, -54]);
+        M.after(30, 'landing2');
+      },
+      landing2(M) {
+        const us = [...M.spawn('seas_gunner', 'crane', 60, -82, 4 + 2 * M.difficulty, { level: 3 }), ...M.spawn('seas_mobile_suit', 'crane', 140, -80, 1 + M.difficulty, { level: 2 })];
+        M.send(us, [100, -54]);
+        M.say('kiko', 'More of them coming up the stairs!');
+      },
+      tick(M) {
+        const t = M.state.taslov;
+        if (!M.state.inside) {
+          if (!alive(t) && M.time > 3) { M.lose('Dr. Taslov has fallen.'); return; }
+          if (M.state.toArchive && alive(t) && near(t, 100, 11, 7)) {
+            M.state.inside = true;
+            M.W.removeEntity(t);
+            M.call('archive');
+          }
+        }
+        if (M.state.archiveEnd && !M.state.taken) {
+          // Crane's men at the back of the house for long enough: they are in
+          const at = M.near(100, -54, 14, 'crane').length;
+          M.state.breach = at >= 3 ? (M.state.breach || 0) + 0.5 : Math.max(0, (M.state.breach || 0) - 0.5);
+          if (M.state.breach >= 20) { M.lose('Crane\'s men broke into the Society.'); return; }
+          if (M.time >= M.state.archiveEnd && M.state.landed) M.call('taken');
+        }
+      },
+      // the archive is safe - but Taslov was taken through the cellar to the steamer while the fight was at the back
+      taken(M) {
+        if (M.state.taken) return;
+        M.state.taken = true;
+        M.complete('society');
+        M.say('taslov', 'Colonel, I have the papers - wait, who are - (the radio goes dead)');
+        M.say('kiko', 'The steamer at the Society\'s stairs is casting off! Downriver, fast, no lights!');
+        M.say('crane', 'The papers are no use without the man who can read them, Margaret. I shall take good care of him.');
+        M.sail('steamer', [[0, -128], [-200, -136], [-420, -140]], 9, true);
+        for (const id of ['tug', 'lighter']) M.sail(id, [[-60, -120], [-420, -128]], 8, true);
+        for (const u of M.units('crane')) M.W.order([u], { type: 'move', x: 100, z: -86, auto: true });
+        M.after(24, 'end');
+      },
+      end(M) {
+        // (the townsfolk still out first: the mission ends when they are over the bridge)
+        if (!M.isDone('evac')) { if (!M.state.toldEvac) { M.state.toldEvac = true; M.say('halloran', 'Crane can wait. Get the last of those people over the bridge.'); } M.after(5, 'end'); return; }
+        M.say('halloran', 'Get me Washington. And find out where that boat is going.');
+        M.win('The archive is safe. Dr. Taslov is not.');
+      },
+    },
+  },
+  // ============================================================================================ 8
+  {
+    id: 8, title: 'Crane\'s Ark', place: 'Kuskokwim Mountains, Alaska', date: 'December 3, 1964',
     unlocks: ['sq_arc_halftrack'],
     briefing: [
-      'Dr. Taslov is gone. His car was found on the Seattle highway; the men who took him wore the badges of Crane Industrial Security.',
+      'Crane\'s steamer was found empty below Gravesend. That same night a cargo plane chartered by Crane Industrial Security left for Anchorage - with Dr. Taslov aboard.',
       'Augustus Crane, once a director of SEAS, has built a fortress in the Alaskan snow - and he has been collecting dinosaurs. Find Taslov. Break the Ark.',
     ],
     models: ['seas_jail_part_01'],
@@ -429,9 +583,9 @@ export const MISSIONS = [
       end(M) { M.win('The Ark is broken. Crane is on the run.'); },
     },
   },
-  // ============================================================================================ 8
+  // ============================================================================================ 9
   {
-    id: 8, title: 'The Dustriders', place: 'Monument Valley, Arizona', date: 'February 11, 1965',
+    id: 9, title: 'The Dustriders', place: 'Monument Valley, Arizona', date: 'February 11, 1965',
     briefing: [
       'The satellite has found something new: a rift that stayed open, and a camp beside it. Not of dinosaurs - of people. Riders in bone armour, with war-dinosaurs and a chieftain called Tala.',
       'Crane\'s hunters are on their way to capture them. Decide for yourself who the enemy is.',
@@ -486,9 +640,9 @@ export const MISSIONS = [
       end(M) { M.win('SEAS has new allies.'); },
     },
   },
-  // ============================================================================================ 9
+  // ============================================================================================ 10
   {
-    id: 9, title: 'Through the Rift', place: 'ParaWorld', date: 'March 20, 1965 (our calendar)',
+    id: 10, title: 'Through the Rift', place: 'ParaWorld', date: 'March 20, 1965 (our calendar)',
     briefing: [
       'The rifts all lead to one place. Taslov believes the root is the old Gate machine of Babbit\'s Society, still humming in a temple of the other world - and that its core can be turned around.',
       'Tala will guide the expedition. Crane got there first.',
@@ -545,9 +699,9 @@ export const MISSIONS = [
       end(M) { M.win('The core of the Gate is in SEAS hands.'); },
     },
   },
-  // ============================================================================================ 10
+  // ============================================================================================ 11
   {
-    id: 10, title: 'Containment', place: 'Copper Basin, Nevada', date: 'April 1, 1965',
+    id: 11, title: 'Containment', place: 'Copper Basin, Nevada', date: 'April 1, 1965',
     briefing: [
       'Back where it began. Taslov has built a new Gate machine around the stolen core. When it reaches full charge it will pull every rift on Earth shut at once.',
       'Every rift is opening wider in protest - and Crane is coming for the machine with everything he has left. Hold for twenty minutes.',
@@ -606,6 +760,20 @@ export const MISSIONS = [
     },
   },
 ];
+
+// The numbering: "The Society" came in as mission 7 (the later ones moved up by one). Settings and saved games of the
+// earlier numbering (no order stamp, or order 1) are moved over: their mission 7 and up is now one higher.
+export const SEQUEL_ORDER = 2;
+export const renumbered = (id, order) => (+order >= SEQUEL_ORDER || +id < 7 ? +id : +id + 1);
+export const LAST_MISSION = MISSIONS[MISSIONS.length - 1].id;
+// the sequel's settings ({mission, difficulty, unlocked, order}) in the current numbering; true when they changed
+export function migrateSettings(k) {
+  if (+k.order === SEQUEL_ORDER) return false;
+  if (k.unlocked) k.unlocked = renumbered(k.unlocked, k.order);
+  if (k.mission) k.mission = renumbered(k.mission, k.order);
+  k.order = SEQUEL_ORDER;
+  return true;
+}
 
 // the classes of the sequel a mission lets the player build: those of its own and the earlier missions' unlocks; the
 // others are locked (sequelData leaves their build actions out)

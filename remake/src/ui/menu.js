@@ -10,7 +10,7 @@ import { armyPage } from './pointbuy.js';
 import { statsWindow } from './stats.js';
 import { PointBuy, RES } from '../game/pointbuy.js';
 import { TribeSwap } from '../game/campaign/tribes.js';
-import { MISSIONS as SEQUEL_MISSIONS } from '../game/sequel/missions.js';
+import { MISSIONS as SEQUEL_MISSIONS, SEQUEL_ORDER, migrateSettings } from '../game/sequel/missions.js';
 import { SEQUEL_MOD, SEQUEL_CLASSES } from '../game/sequel/rules.js';
 import { HelpBook } from './helpbook.js';
 
@@ -282,8 +282,9 @@ export class Menu {
   // ---------------------------------------------------------------- the sequel campaign (docs/SEQUEL.md)
   sequel() {
     const s = this.G.settings;
-    s.sequel = s.sequel || { mission: 1, difficulty: 1, unlocked: 1 };
+    s.sequel = s.sequel || { mission: 1, difficulty: 1, unlocked: 1, order: SEQUEL_ORDER };
     const k = s.sequel;
+    if (migrateSettings(k)) saveSettings(s);        // (settings of the old numbering: a mission came in as 7)
     this.open('ParaWorld: Containment', `<div class="pwgrp"><b>1964. The dinosaurs have come to our world.</b><div class="missions"><div class="mlist" id="q_list">${SEQUEL_MISSIONS.map((m) =>
       `<div data-id="${m.id}">${m.id}. ${esc(m.title)}${m.id < (k.unlocked || 1) ? ' ✔' : ''}</div>`).join('')}</div><div class="mtext" id="q_text"></div></div></div>
       <div class="pwgrp"><b>Difficulty</b><div class="set"><span>How strong the outbreak is</span><select class="pwsel" id="q_diff">

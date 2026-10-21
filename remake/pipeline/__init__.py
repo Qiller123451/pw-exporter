@@ -26,6 +26,7 @@ Steps (each module has run(log, progress) and a command line for running it alon
     sounds    build_sounds.py    sound events -> assets/sounds.json (the wavs stay in the game folder)
     ai        build_ai.py        the computer player's tables -> ai.json
     forest    build_forest.py    tree layouts of forest blocks + tree kinds per setting -> forest.json
+    sequel    sequel_assets.py   the sequel campaign's models (built in the repository) and cards -> assets
 Music (Audio/Music/*.mp3) and the maps are read straight from the installation by the server.
 """
 import json

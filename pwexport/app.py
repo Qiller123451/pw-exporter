@@ -28,6 +28,9 @@ HTTP API (JSON)
     GET  /api/map/groundpage?id=&q=&n=   atlas page n (png)
     POST /api/map/export            {id, format, objects, plants, forest, undergrowth, step, extras: [...]} -> {files}
     GET  /cache/...                 converted models and textures
+    GET  /api/sequel/sequelmaps.js  the remake's sequel maps for the map viewer (remake/game/sequelmaps.js, built by
+                                    remake/build.sh from remake/src/tools/sequel_maps.js)
+    GET  /api/sequel/<path>         the sequel's own models, textures and manifest (remake/art/sequel/built)
 """
 import io
 import json
@@ -500,6 +503,18 @@ def make_handler(app):
             self.end_headers()
             self.wfile.write(b)
 
+        def send_sequel(self, rel):
+            """the sequel campaign's maps for the map viewer: the module that makes them and the sequel's own built
+            models (part of the toolkit, nothing of the game)"""
+            remake = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'remake')
+            if rel == 'sequelmaps.js':
+                return self.send_file(os.path.join(remake, 'game', 'sequelmaps.js'))
+            root = os.path.realpath(os.path.join(remake, 'art', 'sequel', 'built'))
+            f = os.path.realpath(os.path.join(root, rel))
+            if not f.startswith(root + os.sep):
+                return self.send_error(403)
+            return self.send_file(f, cache=True)
+
         def send_file(self, path, cache=False):
             if not os.path.isfile(path):
                 self.send_error(404)
@@ -543,6 +558,8 @@ def make_handler(app):
                     except (KeyError, ValueError) as e:          # unknown model / no geometry: the client shows it
                         return self.send_json({'error': str(e)})
                 if p == '/api/maps': return self.send_json(app.maps.list())
+                if p.startswith('/api/sequel/'):
+                    return self.send_sequel(p[len('/api/sequel/'):])
                 if p == '/api/map': return self.send_json(app.maps.info(q['id']))
                 if p == '/api/map/heights':
                     data, (nx, ny) = app.maps.heights(q['id'], max(1, int(q.get('step') or 1)))

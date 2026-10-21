@@ -6,7 +6,7 @@
 // definition, called by name: def.on[name](M, args) for timers (M.after) and events.
 import * as THREE from 'three';
 import { Player } from '../player.js';
-import { MISSIONS } from './missions.js';
+import { MISSIONS, migrateSettings } from './missions.js';
 import { CAST } from './cast.js';
 import { sequelSource, roadMeshes } from './maps.js';
 import { tagsOf, SEQUEL_CLASSES, SEQUEL_HEROES } from './rules.js';
@@ -15,7 +15,7 @@ import { Grid, isPlant, isPole } from './power.js';
 import { applyFow } from '../../engine/terrain.js';
 
 export const SAVED = ['id', 'difficulty', 'time', 'state', 'objectives', 'timers', 'lines', 'said', 'rifts', 'zones', 'cp', 'cpEarned', 'powerReady', 'counters', 'passiveT',
-  'started', 'ended', 'roles', 'nightOn', 'cargo', 'markers', 'evAt', 'plantSpots', 'raidT', 'civT'];
+  'started', 'ended', 'roles', 'nightOn', 'cargo', 'markers', 'evAt', 'plantSpots', 'raidT', 'civT', 'pieces'];
 // how close to a rift a stabilizer must stand (centre to centre; the texts say 30 m)
 export const RIFT_RANGE = 32;
 // how long the "Tranquilized" debuff of a dart lasts (seconds; every dart starts it again)
@@ -55,6 +55,7 @@ export class Sequel {
     this.counters = {};              // evacuated, captured, lost civilians ...
     this.cargo = [];                 // [truck, dinosaur] being hauled
     this.markers = [];               // {x, z, color, label, until}
+    this.pieces = [];                // the scene's moving set pieces (ui/sequel_ui.js draws them): see piece()
     this.started = false;            // the briefing was read
     this.ended = null;
     this.roles = {};                 // role -> player id
@@ -90,6 +91,8 @@ export class Sequel {
     }
     // the heroes, and classes of the original a mission places by script (def.models)
     for (const h of [...Object.keys(SEQUEL_HEROES), ...(this.def.models || [])]) { const s = D.stats(h, 1, null); if (s && s.gfx) out.add(s.gfx.toLowerCase()); }
+    // the set pieces' models (def.pieces, and those the script brings in later: def.props)
+    for (const m of [...(this.def.pieces || []).map((o) => o.model), ...(this.def.props || [])]) out.add(m);
     return out;
   }
   build(W, S) {
@@ -122,6 +125,7 @@ export class Sequel {
     W.recomputeCaps(me);
     this.startWork(me);
     if (this.nightOn) this.setNight(true);
+    for (const o of def.pieces || []) this.piece(o.id, o.model, o.x, o.z, o.y, o.rot, o);
     this.call('setup');
     if ((def.unlocks || []).some((u) => !Array.isArray(u))) this.after(8, '_intro');     // what the mission brings in
     // the map's stations the mission did not place itself stand abandoned (the civilians' until SEAS gets there)
@@ -150,7 +154,7 @@ export class Sequel {
     const out = new Map();
     for (const r of ['crane', 'aje']) {
       const p = this.player(r);
-      if (!p || !this.def[r]) continue;
+      if (!p || !this.def[r] || this.def[r].ai === false) continue;        // (ai false: only the mission's script moves them)
       const o = this.def[r] === true ? {} : this.def[r];
       out.set(p.id, new TribeAI(this.G, p, { difficulty: o.difficulty ?? [2, 5, 8][this.difficulty], behaviour: o.behaviour || 'Mikrobe', mapOptions: {}, multimap: false }));
     }
@@ -223,6 +227,7 @@ export class Sequel {
     const s = this.G.settings;
     if (!s) return;
     s.sequel = s.sequel || {};
+    migrateSettings(s.sequel);
     s.sequel.unlocked = Math.max(s.sequel.unlocked || 1, this.id + 1);
     if (this.G.saveSettings) this.G.saveSettings(s);
   }
@@ -279,6 +284,36 @@ export class Sequel {
     if (g) out.push(g);
     return out;
   }
+  // a set piece: a model the scene moves (not a unit, nothing can touch it) - the big wheel's turning rim, a boat
+  // casting off. y: its height (null: the ground's); spin: turns per second about its own z axis (the model's
+  // front-back axis); path [[x, z], ...] it sails along at `speed` m/s, facing its way (the model's +x forward), then
+  // the mission's handler arrived_<id> runs (remove: it is gone then)
+  piece(id, model, x, z, y = null, rot = 0, o = {}) {
+    this.pieces = this.pieces.filter((p) => p.id !== id);
+    const p = { id, model, x, z, y, rot, spin: o.spin || 0, path: null, speed: 0, remove: false };
+    this.pieces.push(p);
+    return p;
+  }
+  sail(id, path, speed, remove = false) {
+    const p = this.pieces.find((q) => q.id === id);
+    if (p) Object.assign(p, { path: path.map((q) => [...q]), speed, remove });
+  }
+  piecesTick(dt) {
+    for (const p of this.pieces.slice()) {
+      if (!p.path || !p.path.length) continue;
+      let step = p.speed * dt;
+      while (step > 0 && p.path.length) {
+        const [tx, tz] = p.path[0], dx = tx - p.x, dz = tz - p.z, d = Math.hypot(dx, dz);
+        if (d > 0.01) p.rot = Math.atan2(-dz, dx);
+        if (d <= step) { p.x = tx; p.z = tz; p.path.shift(); step -= d; } else { p.x += dx / d * step; p.z += dz / d * step; step = 0; }
+      }
+      if (!p.path.length) {
+        p.path = null;
+        if (p.remove) this.pieces = this.pieces.filter((q) => q !== p);
+        this.call('arrived_' + p.id, { p });
+      }
+    }
+  }
   building(cls, role, x, z, rot = 0) {
     const b = this.W.placeAdapted(cls, this.player(role), x, z, rot, true);      // (the ground levels to it)
     if (b && role === 'me') this.W.recomputeCaps(this.me);
@@ -327,6 +362,7 @@ export class Sequel {
       if (due.length) { this.timers = this.timers.filter((t) => t[0] > this.time); for (const [, name, args] of due) this.call(name, args); }
     }
     this.readEvents();
+    this.piecesTick(dt);
     this.grid.update(dt);
     this.tickT = (this.tickT || 0) - dt;
     if (this.tickT <= 0) {
@@ -639,18 +675,22 @@ export class Sequel {
     } finally { this.chaining = false; }
   }
   // ---------------------------------------------------------------- night
+  // the night: a dark blue one, or the mission's own dusk (def.dusk: the sky's colour, the sun's and the sky light's
+  // share of the day's, the sun's colour, floodlights [[x, height over the ground, z, colour, candela, reach]])
   setNight(on) {
     this.nightOn = on;
     const R = this.G.renderer;
     if (!R) return;
     if (!this.dayLight) this.dayLight = { sun: R.sun.intensity, hemi: R.hemi.intensity, bg: R.scene.background.getHex(), fog: R.scene.fog.color.getHex(), sunC: R.sun.color.getHex() };
     const L = this.dayLight;
-    R.sun.intensity = on ? L.sun * 0.2 : L.sun;
-    R.sun.color.setHex(on ? 0x8aa8ff : L.sunC);
-    R.hemi.intensity = on ? L.hemi * 0.34 : L.hemi;
+    const N = { sky: 0x101828, sun: 0.2, sunColor: 0x8aa8ff, hemi: 0.34, ...(this.def.dusk || {}) };
+    R.sun.intensity = on ? L.sun * N.sun : L.sun;
+    R.sun.color.setHex(on ? N.sunColor : L.sunC);
+    R.hemi.intensity = on ? L.hemi * N.hemi : L.hemi;
     if (typeof document !== 'undefined') document.body.classList.toggle('sqnight', on);
-    R.scene.background.setHex(on ? 0x101828 : L.bg);
-    R.scene.fog.color.setHex(on ? 0x101828 : L.fog);
+    R.scene.background.setHex(on ? N.sky : L.bg);
+    R.scene.fog.color.setHex(on ? N.sky : L.fog);
+    if (R.floodlights) R.floodlights(on && N.lights ? N.lights.map(([x, y, z, ...l]) => [x, this.W.height(x, z) + y, z, ...l]) : null);
     this.G.sightScale = on ? 0.6 : 1;
   }
   nightTick() {

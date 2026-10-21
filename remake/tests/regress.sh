@@ -80,7 +80,7 @@ run atmo python3 tests/evaljs.py tests/atmo.js "&tribe=Hu&enemy=Aje&map=maps/Bas
 run items python3 tests/evaljs.py tests/items.js "&tribe=Hu&enemy=Aje&map=maps/Base/Multiplayer/multi_2_nor_002.ula"
 run finishing_buffs python3 tests/evaljs.py tests/finishing_buffs.js "&tribe=Hu&enemy=Aje&debug"
 run wallwalk python3 tests/evaljs.py tests/wallwalk.js "&tribe=Hu&enemy=Ninigi&debug"
-run sequel_texts env PWR_PORT=${SEQ_PORT:-8412} python3 tests/evaljs.py tests/sequel_texts.js "&sequel=10"
+run sequel_texts env PWR_PORT=${SEQ_PORT:-8412} python3 tests/evaljs.py tests/sequel_texts.js "&sequel=11"
 # MIRAGE's towers with the guns they put on when finished (pwexport/modparts.py: SetReady)
 run comp_mirage env PWR_PORT=${SEQ_PORT:-8412} python3 tests/evaljs.py tests/composites.js "&tribe=SEAS&enemy=Hu"
 # forest blocks (docs/MAP_FORMAT.md "Frst"): the remake's reader against the toolkit's on real maps (needs PW_GAME = the
@@ -137,7 +137,7 @@ run pointbuy python3 tests/evaljs.py tests/pointbuy.js "&players=Hu,Aje,Ninigi&t
 run save_skirmish4 python3 tests/save_load.py "&players=Hu,Aje,Ninigi&teams=1,2,2&points=1000&aivai" 150 20
 # the sequel campaign (docs/SEQUEL.md): every mission loads and runs; 1, 3, 5 and 6 play their mechanic by script
 SQ="env PWR_PORT=${SEQ_PORT:-8412}"            # (the sequel is played with MIRAGE's data: game/sequel/rules.js SEQUEL_MOD)
-for n in 1 2 3 4 5 6 7 8 9 10; do run sequel_$n $SQ python3 tests/evaljs.py tests/sequel.js "&sequel=$n"; done
+for n in 1 2 3 4 5 6 7 8 9 10 11; do run sequel_$n $SQ python3 tests/evaljs.py tests/sequel.js "&sequel=$n"; done
 run save_sequel_3 $SQ python3 tests/save_load.py "&sequel=3" 120 30
 run sequel_power $SQ python3 tests/evaljs.py tests/sequel_power.js "&sequel=2"
 run sequel_capture $SQ python3 tests/evaljs.py tests/sequel_capture.js "&sequel=3"

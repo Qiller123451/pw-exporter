@@ -180,14 +180,16 @@ export class World {
   // original maps: land units walk where the map's pathfinder grid lets them (maps/ula.js pathing) - not over
   // mountains and cliffs, through shallow water up to about 0.6 m (fords) but not up the steep shore. steepCell marks
   // the dry cells it blocks (coastal buildings may stand on them, construction.js); the ford cells are no longer wet.
-  markTerrain(walkable) {
+  // fords: the walk rule may open wet cells (an original map's own walk grid knows its fords); a slope rule may not -
+  // the bed of the sequel's rivers is flat but under water
+  markTerrain(walkable, fords = true) {
     const nav = this.nav, n = nav.n;
     this.steepCell = new Uint8Array(n * n);
     this.shoreCell = this.waterNav ? new Uint8Array(n * n) : null;     // steep cells at the waterline: amphibians go there
     for (let k = 0; k < n * n; k++) {
       const [x, z] = nav.center(k), ok = walkable(x, z);
       if (this.wetCell && this.wetCell[k]) {
-        if (ok) { nav.block[k]--; this.wetCell[k] = 0; }
+        if (ok && fords) { nav.block[k]--; this.wetCell[k] = 0; }
       } else if (!ok) {
         nav.block[k]++; this.steepCell[k] = 1;
         if (this.shoreCell && this.height(x, z) < this.waterLevel + 2) this.shoreCell[k] = 1;

@@ -1,6 +1,7 @@
 // The sequel campaign (docs/SEQUEL.md): a mission loads, its script runs a while without errors, and the missions
 // with a signature mechanic have it played by script - 1: a stabilizer seals the rift, 3: a tranquilized dinosaur
-// is carried to the pen, 5: the rocket lifts off when the count reaches zero, 6: a net holds Big Tooth for the darts.
+// is carried to the pen, 5: the rocket lifts off when the count reaches zero, 6: a net holds Big Tooth for the darts,
+// 7: London - the bridge over the river, the rift sealed, Taslov to the archive, Crane's landing, the steamer away.
 // python3 tests/evaljs.py tests/sequel.js "&sequel=3"
 const M = G.sequel, W = G.world, me = G.me, out = [];
 const check = (name, ok, info) => out.push((ok ? 'ok   ' : 'FAIL ') + name + (info !== undefined ? '  ' + JSON.stringify(info) : ''));
@@ -101,6 +102,50 @@ if (M.id === 5) {
   run(20);
   check('lift-off when the count reaches zero', M.state.won && M.isDone('pad'), M.objectives.map((o) => o.id + (o.done ? '+' : '')));
   run(150);
+  check('the mission is won', !!M.ended && M.ended.won, M.ended);
+}
+if (M.id === 7) {
+  // the city (art/sequel/london.py; missions.js 7): the Society, the wheel turning, houses that block, the bridge
+  const has = (m) => (G.props && G.props.kinds && G.props.kinds.has(m)) || false;
+  check('the Society, the wheel, the bridge and the houses stand', ['sq_society', 'sq_wheel_frame', 'sq_bridge', 'sq_terrace_corner', 'sq_quay'].every(has) && ['stucco', 'portland', 'brick', 'red', 'grey'].some((t) => has('sq_terrace_' + t)),
+    ['sq_society', 'sq_wheel_frame', 'sq_bridge', 'sq_terrace_corner', 'sq_quay'].filter((m) => !has(m)));
+  const wheel = M.pieces.find((p) => p.id === 'wheel');
+  G.sequelUI.effects(0);
+  const o = G.sequelUI.pieceObjs && G.sequelUI.pieceObjs.get(wheel), a0 = o ? o.userData.inner.rotation.z : null;
+  G.sequelUI.effects(1);
+  check('the wheel\'s rim turns, high over the embankment', !!o && o.userData.inner.rotation.z !== a0 && o.position.y > 40, o && [o.userData.inner.rotation.z, o.position.y]);
+  check('a house blocks the way (its walls: pf boxes)', !W.nav.isFree(-150, 36) && W.nav.isFree(-150, 20), [W.nav.isFree(-150, 36), W.nav.isFree(-150, 20)]);
+  const path = W.nav.find(200, -40, 200, -246, 0.7, 60000, me);
+  const P = (path || []).map((p) => (Array.isArray(p) ? p : [p.x, p.z]));
+  check('the bridge carries the way over the river', !!path && P.every(([x, z]) => z > -95 || z < -205 || Math.abs(x - 200) < 8), path && P.length);
+  check('the water is not walkable beside it', !W.nav.isFree(150, -150) && !W.nav.isFree(250, -150));
+  // the tear by the wheel: a stabilizer seals it, Taslov goes in to the archive
+  run(900);
+  const r = M.rifts[0];
+  check('the rift by the wheel opens', !!r && r.open, r && r.id);
+  const t = M.state.taslov;
+  if (r) {
+    const b = M.building('sq_stabilizer', 'me', r.x, r.z + 26, 0);
+    for (const u of M.units('me', (u) => !u.isWorker && u.name !== 'sq_halloran' && u.name !== 'sq_taslov')) W.teleport(u, r.x - 10 + Math.random() * 20, r.z + 12 + Math.random() * 10);
+    for (let k = 0; k < 16 && r.open; k++) run(100);
+    check('the stabilizer seals it', !r.open && M.isDone('rift'), { seal: Math.round(r.seal), hp: b && Math.round(b.hp) });
+  }
+  if (t && t.alive) W.teleport(t, 100, 22);
+  for (let k = 0; k < 30 && !M.state.inside; k++) run(10);
+  check('Taslov goes into the Society to the archive', !!M.state.inside && !t.alive, { inside: M.state.inside });
+  check('the archive objective', M.objectives.some((x) => x.id === 'society'), M.objectives.map((x) => x.id));
+  // Crane's landing at the river stairs: the boats come, his men come up; the army holds the back of the house
+  for (const u of M.units('me', (u) => !u.isWorker && u.name !== 'sq_halloran')) W.teleport(u, 100 + (Math.random() - 0.5) * 30, -40 + Math.random() * 8);
+  for (let k = 0; k < 40 && !M.state.landed; k++) run(20);
+  check('Crane\'s men land at the stairs', !!M.state.landed && M.units('crane').length > 0, { landed: M.state.landed, crane: M.units('crane').length, pieces: M.pieces.map((p) => p.id) });
+  // the townsfolk over the bridge (the test walks them there)
+  for (const u of W.units) if (u.alive && u.owner === M.player('civilians')) { u.sqRescued = true; u.sqHiding = false; W.teleport(u, 200, -238); }
+  run(40);
+  check('the townsfolk are safe', M.isDone('evac'), M.objectives.map((x) => x.id + (x.done ? '+' : '')));
+  M.state.archiveEnd = M.time + 1;
+  run(30);
+  check('Taslov is taken: the steamer sails', !!M.state.taken && M.isDone('society') && !!M.pieces.find((p) => p.id === 'steamer' && p.path), M.pieces.map((p) => p.id));
+  for (let k = 0; k < 10 && !M.ended; k++) run(50);
   check('the mission is won', !!M.ended && M.ended.won, M.ended);
 }
 check('no errors', !errs.length, errs.slice(0, 2));

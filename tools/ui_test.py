@@ -167,6 +167,8 @@ with sync_playwright() as p:
     pg.click('#tab-maps')
     pg.wait_for_function('document.querySelector("#tab-maps").classList.contains("on") && [...document.querySelectorAll("#list li .badge")].some((b) => b.textContent.includes("×"))', timeout=180000)
     check('maps listed', pg.locator('#list li').count() > 50, pg.locator('#list li').count())
+    nsq = pg.evaluate('[...document.querySelectorAll("#list li")].filter((li) => li.textContent.includes("Containment/")).length')
+    check('the sequel\'s maps listed', nsq == 11, nsq)
     pg.fill('#search', 'dschungelkrater'); time.sleep(0.4)
     pg.click('#list li >> nth=0')
     pg.wait_for_function('document.querySelector("#busy").classList.contains("hidden") && document.querySelector("#d-head h2")', timeout=180000)

@@ -82,9 +82,10 @@ class IMPORT_SCENE_OT_paraworld_gsf(bpy.types.Operator, ImportHelper):
     filename_ext = '.gsf'
     filter_glob: StringProperty(default='*.gsf', options={'HIDDEN'})
     models: StringProperty(name='Models', description='Names (or patterns like seas_*) to import, comma separated. '
-                           'Empty = every model')
-    open_only: BoolProperty(name='Only open the archive', default=False,
-                            description='List the archive\'s models without importing any (import them later from the GSF tab)')
+                           'Filled in, these models are imported even with "Only open the archive" ticked')
+    open_only: BoolProperty(name='Only open the archive', default=True,
+                            description='List the archive\'s models without importing any (import them later from the GSF '
+                                        'tab). Untick to import every model, or name models in "Models"')
     animations: BoolProperty(name='Animations', default=True)
     textures: BoolProperty(name='Textures', default=True, description='Look for the game\'s textures')
     weld: BoolProperty(name='Weld vertices', default=True,
@@ -103,10 +104,10 @@ class IMPORT_SCENE_OT_paraworld_gsf(bpy.types.Operator, ImportHelper):
         imp = Importer(a, self.filepath, self.mirror, self.data_dir, self.textures, self.animations, self.weld)
         col = imp.archive_collection()
         context.scene['gsf_active_archive'] = col.name
-        if self.open_only:
+        pats = [p.strip() for p in self.models.split(',') if p.strip()]
+        if self.open_only and not pats:
             self.report({'INFO'}, 'Opened %s: %d models' % (a.file_name, len(a.models)))
             return {'FINISHED'}
-        pats = [p.strip() for p in self.models.split(',') if p.strip()]
         sel = [m for m in (a.toc_order or a.models) if not pats or any(fnmatch.fnmatchcase(m.name, p) for p in pats)]
         if not sel:
             self.report({'WARNING'}, 'No model matches %s' % self.models)

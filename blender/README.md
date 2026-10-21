@@ -21,7 +21,7 @@ Edit > Preferences > Add-ons > (drop-down) Install from Disk… and choose `io_s
 ## Editing an archive directly
 
 1. **Open.** Use *File > Import > ParaWorld GSF*, or *Open / Import* in the 3D view sidebar (N), tab **GSF**.
-   - Tick *Only open the archive* to list the models without importing any.
+   - *Only open the archive* (ticked by default) lists the models without importing any. Untick it to import all.
    - Enter names in *Models* (patterns like `seas_*` work) to import only those.
    - The archive becomes a collection named `GSF <name>`. The GSF tab lists every model in it.
    - Each imported model gets its own collection holding the root empty, with the components sorted into
@@ -83,7 +83,9 @@ Every chunk field that the file does not derive from other data has its own prop
 ParaWorld GSF*. The attribute (visibility) bits are named after the model's FourCC.
 
 Coordinates: the game is left-handed. The add-on mirrors the x axis by default (*Handedness*, as the ParaWorld
-Toolkit's glTF files do) and mirrors it back on export.
+Toolkit's glTF files do) and mirrors it back on export. Bones point at their children, as in the game (shown as octahedra).
+Armatures imported by versions before 1.4 keep their old bone orientation and still export correctly; import the
+model again to get the new one.
 
 ## Normals
 

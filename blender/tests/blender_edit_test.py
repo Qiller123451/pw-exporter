@@ -192,7 +192,7 @@ check(abs(part.param(0) - 0.75) < 1e-6 and part.name == 'smoke' and len(part.til
 lk = next(c for c in pm.chunks if c.KIND == 'link')
 check(lk.v['link_fourcc'] == 'HndR' and abs(abs(lk.v['pos'][0]) - 0.5) < 1e-5 and abs(lk.v['pos'][2] - 1.5) < 1e-5, 'link position')
 # read the new archive back into Blender
-r = bpy.ops.import_scene.paraworld_gsf(filepath=out3, textures=False)
+r = bpy.ops.import_scene.paraworld_gsf(filepath=out3, open_only=False, textures=False)
 check(r == {'FINISHED'}, 'new archive imports again')
 
 # ------------------------------------------------------------------ 4. rearranging the models (the list's arrow buttons)
@@ -377,4 +377,14 @@ bpy.ops.export_scene.paraworld_gsf(filepath=out7, archive=col7.name)
 D7, E7 = GsfArchive.load(src7), GsfArchive.load(out7)
 check(not cmp_canon(Canon()(D7.model('hu_knife')), Canon()(E7.model('hu_knife'))),
       'an imported model set back to Keep is written from the file, not from the edited objects')
+# ------------------------------------------------------------------ 8. imported bones point at their children
+for mirror8 in ('X', 'Y', 'NONE'):
+    before8 = set(bpy.data.objects)
+    bpy.ops.import_scene.paraworld_gsf(filepath=os.path.join(gsf_dir, 'all_animals.gsf'), models='macrolemys_land',
+                                       textures=False, animations=False, mirror=mirror8)
+    arm8 = next(o for o in set(bpy.data.objects) - before8 if o.type == 'ARMATURE')
+    pairs = [(b, c) for b in arm8.data.bones for c in b.children if (c.head_local - b.head_local).length > 1e-3]
+    good = sum(b.matrix_local.col[1].to_3d().dot((c.head_local - b.head_local).normalized()) > 0.9 for b, c in pairs)
+    check(good == len(pairs) and arm8.data.display_type == 'OCTAHEDRAL',
+          'mirror %s: every bone points at its children (%d of %d), octahedral display' % (mirror8, good, len(pairs)))
 print('FAILURES:', fails or 'none')
