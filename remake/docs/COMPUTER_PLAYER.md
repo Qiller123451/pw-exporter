@@ -136,7 +136,13 @@ of the attack plan. `brain.launched` lists every attack that set out (`{ t, go, 
   taken from any other building that has it, or that building is asked for.
 - **Squad sizes**: the tables give `min-max` per class and the engine picks; the remake takes
   `min + (max - min) × share(d)` (0 at difficulty 0, a third at 4, all at 9). Tribes whose settings folder is
-  missing from the installation get unit mixes and squads derived from the tech tree.
+  missing from the installation (Hu, Ninigi): in the campaign (Easy, Medium, Hard) as the original - the ministry
+  of defence trains nothing (no Units.txt, MOD:96, 1060-1137); their army is the fight module's extra units, one at
+  a time (FM:569-621, not at difficulty 0-1); their raids take pool units only (a blitz 1-2 / 2-4 / 3-6, a scripted
+  wave 1-4 / 1-6 / 2-8, nothing spawned; a first-epoch all-in goes unit by unit as they come), and only the
+  Kindergarten levels units up. In skirmish and on the campaign's Nightmare the remake's own: a standing army from
+  unit mixes derived from the tech tree, a full pyramid row moving up, squads trained for the raid and marched
+  together (the brain's option `extraSquads`).
 - **Defence** is proportional instead of "everybody"; workers take cover one by one; the militia is the scripts'
   unused `CheckForWorkerSupport`. Towers are limited to 1 + epoch. Units of a squad that is still being put
   together defend the village too.

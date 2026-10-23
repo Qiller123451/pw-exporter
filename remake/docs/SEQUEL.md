@@ -128,11 +128,18 @@ London (mission 7) is the city of the original campaign's opening film (`Data/lo
 bird flies over the city at night, along the river past the great wheel to Babbit's Society, then the meeting in his
 office). None of it is in the game's data - the film was rendered from models that were not shipped (the `seq_*`
 archives hold only a city wall, gates, watchtowers and the telescope tower) - so the city was modelled anew after the
-film's frames (`art/sequel/london.py`):
+film's frames (`art/sequel/london.py`, the houses in `art/sequel/houses.py`):
 
-* terraces of three town houses in five fronts (cream stucco with porticos, Portland stone, London stock brick, red
-  brick, grey stone): four storeys, a slate mansard with dormers, chimney stacks, steps over the area railings;
-  corner houses with a rounded corner under a dome (the film's);
+* rows of town houses that differ from house to house, as the film's city does: five kinds - Georgian brick houses
+  with a mansard or a parapet, steps over the area railings and balconies; Italianate stucco villas in cream, pink,
+  ochre, grey or blue with porticos, canted bays and balustrades; red brick mansions with Dutch gables and tall bays;
+  stone chambers of five or six storeys under hipped roofs; shops with fascias, name boards and awnings below and
+  flats above - each house 5.8 - 8.4 m wide and three to six storeys high. Fourteen rows of two, three and four
+  houses (14, 21 and 28 m): some are terraces built together (one kind, one front, a storey more here and there),
+  the others streets that grew (every house its own). Neighbouring houses with one roof at one height share it;
+  party walls are built only where a house stands higher than its neighbour; railings are bars and rails;
+* four corner buildings: a round corner under a drum and a dome (the film's), a red brick corner with a turret and
+  a spire, a long stucco curve with shops and glazed roofs, a cut stone corner under a pediment and a balustrade;
 * the Society, measured on the film (a camera and the proportions fitted together to points marked on the frame at
   33.8 s - the domes' tops, the towers' cornices and corners, the door, the cornice, a dormer's top - and checked on
   the frame at 26.8 s): five bays of sandstone on every side, banded pilasters, pedimented windows below, paired
@@ -150,7 +157,8 @@ the embankment by the wheel and the bridge.
 
 The map (`maps.js`): the river across it with embankment walls (`quay`), paved promenades and tree-lined verges
 (`avenue`), London streets (road kind `city`: asphalt, kerbs, flagged pavements; `pave` the promenades), blocks of
-terraces round their edges with corner houses (`block`), the bridge on a causeway (`strip`) so units walk over it.
+houses round their edges with corner buildings (`block`: each edge filled with rows of mixed lengths, no model next
+to itself), the bridge on a causeway (`strip`) so units walk over it.
 The houses block along their walls: a model's pathfinder boxes come with it (`kit.set_pf`). Where London streets
 meet (`junctions`), asphalt patches carry each carriageway through the other's pavements; lamps are not put down on
 a street's surface (where a side street meets the one they line).

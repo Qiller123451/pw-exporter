@@ -13,6 +13,7 @@ import { listMaps, loadMapInfo, drawPreview } from './mappreview.js';
 import { TRIBE_INFO, saveSettings } from './menu.js';
 import { armyPage } from './pointbuy.js';
 import { PointBuy } from '../game/pointbuy.js';
+import { cheatsOf, debugPage, debugRow, withCheats } from './debugopts.js';
 
 const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[c]);
 const opts = (list, cur) => list.map(([v, label]) => `<option value="${esc(v)}" ${String(v) === String(cur) ? 'selected' : ''}>${esc(label)}</option>`).join('');
@@ -24,6 +25,8 @@ const mapModes = (m) => (m.modes && m.modes.length ? m.modes : ['Deathmatch']).m
 export function skirmishWindow(menu) {
   const s = menu.G.settings;
   const setup = s.skirmishSetup = loadSetup(s.skirmishSetup, s.skirmish);
+  // the older "debug mode" checkbox: now the debug options' "free and instant" (ui/debugopts.js)
+  if (setup.debug) { const c = cheatsOf(s); c.on = true; c.free = true; setup.debug = false; }
   const D = menu.G.data, PB = new PointBuy(D, menu.G.aiData);
   // the chosen map: {maxPlayers, modes, slots (tribes of each start location)}; the random jungle: up to 4 players
   let mp = { maxPlayers: GENERATED_PLAYERS, gameTypes: ['Deathmatch'], slots: {} }, maps = [], mapError = null;
@@ -48,8 +51,7 @@ export function skirmishWindow(menu) {
       ${check('k_lock', 'Lock diplomacy settings')}
       ${check('k_hcap', 'Allow player handicap')}
       ${check('k_hq', 'Choose headquarters position')}
-      ${check('k_debug', 'Debug mode: everything is free and builds instantly (for you, not the computer)')}
-    </div></div>
+    </div>${debugRow(menu)}</div>
     <div class="pwgrp sk-players"><b>Players</b><table class="slots"><thead><tr>
       <th data-col="name">Player</th><th data-col="tribe">Tribe</th><th data-col="army">Army</th><th data-col="level">AI level</th>
       <th data-col="team">Team</th><th data-col="color">Colour</th><th data-col="hp">HP</th><th data-col="hq">HQ</th></tr></thead>
@@ -83,7 +85,6 @@ export function skirmishWindow(menu) {
     box('#k_lock', setup.lockDiplomacy, m !== 'deathmatch' || setup.teams < 2);
     box('#k_hcap', setup.handicap);
     box('#k_hq', setup.chooseHQ, m === 'defender');
-    box('#k_debug', setup.debug);
   };
   $('#k_mode').onchange = () => { applyMode(setup, $('#k_mode').value); fillMaps(); refresh(); };
   $('#k_defmin').onchange = () => { setup.defenderMin = +$('#k_defmin').value; refresh(); };
@@ -95,7 +96,6 @@ export function skirmishWindow(menu) {
   // unchecking the handicap resets every slot to 100 % (LSP:611-630), unchecking "choose HQ" numbers them 1.. (LSP:567-588)
   $('#k_hcap').onchange = () => { setup.handicap = $('#k_hcap').checked; if (!setup.handicap) setup.slots.forEach((sl) => { sl.hp = 100; }); refresh(); };
   $('#k_hq').onchange = () => { setup.chooseHQ = $('#k_hq').checked; if (!setup.chooseHQ) setup.slots.forEach((sl, i) => { sl.hq = i; }); refresh(); };
-  $('#k_debug').onchange = () => { setup.debug = $('#k_debug').checked; refresh(); };
   $('#k_seed').onchange = () => { setup.seed = +$('#k_seed').value || 1; save(); };
 
   // ------------------------------------------------------------ the player slots
@@ -256,13 +256,14 @@ export function skirmishWindow(menu) {
 
   menu.bind({
     back: () => { leave(); save(); menu.title(); },
+    cheats: () => { setup.seed = +$('#k_seed').value || 1; save(); leave(); debugPage(menu, () => skirmishWindow(menu)); },
     start: () => {
       setup.seed = +$('#k_seed').value || 1;
       if (showProblem()) return;
       save();
       leave();
       menu.close();
-      if (menu.hooks.start) menu.hooks.start(JSON.parse(JSON.stringify(setup)));
+      if (menu.hooks.start) menu.hooks.start(withCheats(s, JSON.parse(JSON.stringify(setup))));
     },
   });
   refresh();

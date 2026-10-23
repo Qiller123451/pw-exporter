@@ -55,6 +55,7 @@ export const Production = {
       p.queuedAtLevel[item.level - 1]++; p.queuedUnits++;
     }
     producer.queue.push(item);
+    if (action.kind === 'Build' && this.prewarm) this.prewarm(action.results[0].obj, p);     // (main.js: its shaders now)
     return null;
   },
   // duration of production / research; debug mode: instant. A computer player's actions are faster from difficulty 5
@@ -66,7 +67,8 @@ export const Production = {
     const m = p && p.aiMods;
     const k = !m || action.id === 'age_2' ? 1 : action.kind === 'Upgrades' ? m.researchTime || 1 : m.buildTime || 1;
     const tm = p && p.tt ? p.tt.num(`/Modifications/${p.tribe}/${action.kind}${action.kind === 'Build' ? '/' + action.type : ''}/duration`, 1) : 1;
-    return Math.max(0.5, (action.time || 1) * k * tm);
+    const sp = p && p.cheat && p.cheat.speed > 0 ? p.cheat.speed : 1;      // (debug option: game/cheats.js)
+    return Math.max(0.5 / sp, (action.time || 1) * k * tm / sp);
   },
   // pyramid slots per level: the game's, plus the extra slots of a computer player at difficulty 7-9
   // (RequirementsMgr.usl:213-241)
@@ -189,25 +191,20 @@ export const Production = {
   // skull cost from level a to level b: sum of the per-level costs 25 / 50 / 100 / 300
   skullCost(a, b) { let c = 0; for (let l = a + 1; l <= b; l++) c += this.data.levelupSkulls[l - 2] || 0; return c; },
   canHaveLevel(u, nl) { const st = this.data.stats(u.name, nl, u.owner); return !!st && st.exists && !u.illusion; },
-  // move a unit to another pyramid row (drag & drop). Up costs skulls, down is free.
-  // swapWith: the unit whose card occupies the target slot - it takes the dragged unit's level (the lower one pays)
-  changeLevel(u, nl, swapWith = null) {
+  // move a unit to a higher pyramid row (drag & drop onto a free slot), for the skulls of every level on the way. As
+  // the original's pyramid (NewPyramid.usl SwapSlotsAndCards): a card never goes to a lower row - a unit keeps the
+  // level it reached - and cards on different rows do not swap; the target row needs a free slot
+  changeLevel(u, nl) {
     const p = u.owner;
     if (!p || !u.alive || nl === u.level) return 'same';
-    if (nl < 1 || nl > 5) return 'max';
+    if (nl < u.level) return 'down';
+    if (nl > 5) return 'max';
     if (!this.canHaveLevel(u, nl)) return 'max';
-    const ol = u.level;
-    let cost = nl > ol ? this.skullCost(ol, nl) : 0;
-    if (swapWith) {
-      if (!swapWith.alive || swapWith.owner !== p || swapWith.level !== nl) return 'level';
-      if (!this.canHaveLevel(swapWith, ol)) return 'max';
-      if (ol > nl) cost += this.skullCost(nl, ol);
-    } else if (p.atLevel[nl - 1] + p.queuedAtLevel[nl - 1] >= this.pyramidFor(p)[nl - 1]) return 'level';
-    if (p.debug) cost = 0;                      // debug mode: free level-ups
+    if (p.atLevel[nl - 1] + p.queuedAtLevel[nl - 1] >= this.pyramidFor(p)[nl - 1]) return 'level';
+    const cost = p.debug ? 0 : this.skullCost(u.level, nl);          // (debug mode: free level-ups)
     if (p.res.skulls < cost) return 'skulls';
     p.res.skulls -= cost;
     this.applyLevel(u, nl);
-    if (swapWith) this.applyLevel(swapWith, ol);
     return null;
   },
   applyLevel(u, nl) {

@@ -18,7 +18,7 @@ const T = {
   en: {
     title: 'ParaWorld Toolkit',
     hello: 'Welcome to the ParaWorld Toolkit',
-    lead: 'Explore and export the models and maps of your ParaWorld installation, or play the remake.',
+    lead: 'Explore and export the models and maps of your ParaWorld installation, play the remake, or make new units and buildings for both.',
     where: 'Where is ParaWorld installed?',
     whereHint: 'The folder that contains "Data" (for example C:\\Program Files (x86)\\Sunflowers\\ParaWorld). The toolkit reads the game files from there; nothing is copied anywhere else or sent anywhere.',
     found: 'Found on this computer:',
@@ -31,7 +31,7 @@ const T = {
     loadingExp: (s, p) => `Reading the game files… ${p}% ${s || ''}`,
     remake: 'ParaWorld Remake',
     remakeText: 'The game rebuilt for the browser, with the models, sounds, maps and rules of your installation.',
-    remakeList: ['The campaign\'s 17 missions, playable with any tribe and with a mod', 'Skirmish against the computer on the original maps or random maps', 'Containment (1964): a new SEAS campaign of ten missions (needs MIRAGE)'],
+    remakeList: ['The campaign\'s 17 missions, playable with any tribe and with a mod', 'Skirmish against the computer on the original maps or random maps', 'Containment (1964): a new SEAS campaign of eleven missions (needs MIRAGE)'],
     play: 'Play', prepare: 'Prepare the game data', rebuild: 'Rebuild game data',
     ready: 'Ready', notReady: 'Game data not prepared yet', building: 'Preparing…', failed: 'Preparing failed',
     reasons: { 'not built': 'The first start converts the models, textures and rules of your installation (about 5–15 minutes, once).',
@@ -48,11 +48,14 @@ const T = {
     dataMoving: (p) => `Moving the toolkit's data… ${p}%`, dataWait: 'Waiting for the film conversion to stop…',
     dataWhere: (p) => `It is stored in ${p} (Toolkit data, below: Change moves it, e.g. onto another drive).`,
     dataEnv: '(set by PWTOOLKIT_DATA)', dataFailed: 'Could not move the data:',
+    workshop: 'Workshop',
+    workshopText: 'Make new units, buildings, wild animals and decorations - for the game and for the remake.',
+    workshopList: ['A model from the Blender add-on, or one of the game\'s to tweak', 'A step-by-step creator: behaviour, animations, numbers, texts, icon', 'Installs as a mod for ParaWorld; the remake plays it too'],
   },
   de: {
     title: 'ParaWorld Toolkit',
     hello: 'Willkommen beim ParaWorld Toolkit',
-    lead: 'Modelle und Karten deiner ParaWorld-Installation ansehen und exportieren – oder das Remake spielen.',
+    lead: 'Modelle und Karten deiner ParaWorld-Installation ansehen und exportieren, das Remake spielen – oder neue Einheiten und Gebäude für beide bauen.',
     where: 'Wo ist ParaWorld installiert?',
     whereHint: 'Der Ordner, in dem „Data“ liegt (zum Beispiel C:\\Programme (x86)\\Sunflowers\\ParaWorld). Das Toolkit liest die Spieldateien von dort; nichts wird woandershin kopiert oder verschickt.',
     found: 'Auf diesem Computer gefunden:',
@@ -65,7 +68,7 @@ const T = {
     loadingExp: (s, p) => `Spieldateien werden gelesen… ${p}% ${s || ''}`,
     remake: 'ParaWorld Remake',
     remakeText: 'Das Spiel für den Browser nachgebaut – mit den Modellen, Klängen, Karten und Regeln deiner Installation.',
-    remakeList: ['Die 17 Missionen der Kampagne, mit jedem Volk und mit einer Mod spielbar', 'Gefechte gegen den Computer auf den Originalkarten oder Zufallskarten', 'Containment (1964): eine neue SEAS-Kampagne mit zehn Missionen (braucht MIRAGE)'],
+    remakeList: ['Die 17 Missionen der Kampagne, mit jedem Volk und mit einer Mod spielbar', 'Gefechte gegen den Computer auf den Originalkarten oder Zufallskarten', 'Containment (1964): eine neue SEAS-Kampagne mit elf Missionen (braucht MIRAGE)'],
     play: 'Spielen', prepare: 'Spieldaten vorbereiten', rebuild: 'Spieldaten neu erstellen',
     ready: 'Bereit', notReady: 'Spieldaten noch nicht vorbereitet', building: 'Wird vorbereitet…', failed: 'Vorbereitung fehlgeschlagen',
     reasons: { 'not built': 'Beim ersten Start werden Modelle, Texturen und Regeln deiner Installation umgewandelt (etwa 5–15 Minuten, einmalig).',
@@ -82,6 +85,9 @@ const T = {
     dataMoving: (p) => `Toolkit-Daten werden verschoben… ${p}%`, dataWait: 'Warte, bis die Filmumwandlung anhält…',
     dataWhere: (p) => `Sie werden in ${p} abgelegt (Toolkit-Daten, unten: „Ändern“ verschiebt sie, z. B. auf ein anderes Laufwerk).`,
     dataEnv: '(durch PWTOOLKIT_DATA festgelegt)', dataFailed: 'Die Daten konnten nicht verschoben werden:',
+    workshop: 'Werkstatt',
+    workshopText: 'Neue Einheiten, Gebäude, Wildtiere und Dekorationen bauen – für das Spiel und das Remake.',
+    workshopList: ['Ein Modell aus dem Blender-Add-on oder eines aus dem Spiel zum Anpassen', 'Ein Assistent Schritt für Schritt: Verhalten, Animationen, Werte, Texte, Symbol', 'Wird als Mod in ParaWorld installiert; das Remake spielt sie auch'],
   },
 };
 let L = T.en;
@@ -162,7 +168,12 @@ function home() {
       el('span', { class: 'status ' + (R.error ? 'bad' : 'warn'), text: R.error ? L.failed : L.notReady }));
   }
   rem.append(act);
-  m.append(el('div', { class: 'cards' }, exp, rem));
+  // workshop card (workshop/: new objects as a mod)
+  const ws = el('div', { class: 'card', id: 'workshop-card' },
+    el('h2', {}, el('span', { class: 'ico', text: '🛠' }), L.workshop),
+    el('p', { text: L.workshopText }), el('ul', {}, L.workshopList.map((t) => el('li', { text: t }))),
+    el('div', { class: 'actions' }, el('a', { class: 'button primary', href: '/workshop/', id: 'open-workshop' }, L.open)));
+  m.append(el('div', { class: 'cards' }, exp, rem, ws));
   if (R.building || !P.ready) later(1200);
 }
 

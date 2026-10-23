@@ -254,7 +254,7 @@ file name without `.lsd` (`_seq_2010_Tarna_01`), or the stored string when `is_k
 case, the lookup ignores case [I] (245 of the 249 non-music LipSync items find their key; the others are 3 sound
 effects and one item with an empty path) [D]. The
 subtitle belongs to the item: from `start` for `length` [I]. The .lsd (gzip: f32 fps 25, u32 frames, visemes)
-drives the mouth (CFaceAnimBuilder; `_notes/re_lipsync.md`): each phoneme is a layer turning the jaw towards a frame
+drives the mouth (CFaceAnimBuilder; [original/LIP_SYNC.md](original/LIP_SYNC.md)): each phoneme is a layer turning the jaw towards a frame
 of the characters' `faceanim` clip by Data/Base/Sequences/Setup.ini (LipSyncSetup: phonemes -> frames 1-13, Blink 14,
 Frown 15, expressions 16-19); the shipped clip has two frames, so only frame 1 (IY, IH, h, y) is ever drawn. LipSync items whose lsd lies in `SeqSounds/music/` (`NS_<id>.lsd`) are the
 music track (77 items in 76 files) - they play the same way and have no subtitle.

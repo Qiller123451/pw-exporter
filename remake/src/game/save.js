@@ -42,10 +42,10 @@ export const SAVE_VERSION = 1;
 const DRAWN = ['obj', 'model', 'anim', 'comp', 'tpl', 'weaponObjs', 'toolObj', 'carryObj', 'ruin', '_links', '_ro', 'parts', 'turret', 'cranes',
   'slots', 'world', 'autoMovesCache', 'onScreen', 'still'];
 const SPECS = [
-  { cls: Unit, name: 'Unit', skip: [...DRAWN, 'def', 'stats', 'weapons', 'gfx', 'walkAnim', 'runAnim', 'speed', 'runSpeed', 'animSpeed', 'runAnimSpeed', 'idleAnim', 'height', 'radius', 'ttVersion', '_hk', 'heldWeapon', 'fow'],
+  { cls: Unit, name: 'Unit', skip: [...DRAWN, 'def', 'stats', 'weapons', 'gfx', 'unreach', 'walkAnim', 'runAnim', 'speed', 'runSpeed', 'animSpeed', 'runAnimSpeed', 'idleAnim', 'height', 'radius', 'ttVersion', '_hk', 'heldWeapon', 'fow'],
     make: (f, X) => new Unit(X.W, f.name, X.ref(f.owner), X.num(f.pos, 'x'), X.num(f.pos, 'z'), f.level, f.heading, {}),
     revive: reviveUnit },
-  { cls: Building, name: 'Building', skip: [...DRAWN, 'def', 'stats', 'weapons', 'behaviour', 'baseY', 'boxes', 'gfx', 'ttVersion', '_hk', 'visKey', 'dmgStage', 'partsKey', 'fxShown', 'ht', 'hx', 'hz', 'fLocal', 'fow', 'cls', 'dLinks'],
+  { cls: Building, name: 'Building', skip: [...DRAWN, 'def', 'stats', 'weapons', 'behaviour', 'baseY', 'boxes', 'gfx', 'ttVersion', '_hk', 'visKey', '_vs', 'dmgStage', 'partsKey', 'fxShown', 'ht', 'hx', 'hz', 'fLocal', 'fow', 'cls', 'dLinks'],
     make: (f, X) => new Building(X.W, f.name, X.ref(f.owner), X.num(f.origin, 'x'), X.num(f.origin, 'z'), f.rot, f.built),
     revive: reviveBuilding },
   { cls: ResNode, name: 'ResNode', skip: ['world', 'propHandle', 'spriteHandles', 'stumpHandle', 'timberHandle', '_hk'],
@@ -75,7 +75,7 @@ const SPECS = [
 const KEY_SPECS = {
   world: { name: 'World', skip: ['scene', 'data', 'templates', 'height', 'fx', 'audio', 'props', 'foliage', 'fow', 'adaptTerrain', 'nightFn', 'clearVegetation', 'decorIndex', 'onEntity', 'nav', 'waterNav',
     'uHash', 'bHash', 'rHash', 'reserved', 'events', 'hooks', 'dead', 'standIns', '_amp', '_resCan', '_resBy', '_noModel', 'wetCell', 'steepCell', 'shoreCell', 'cloneModel', 'applyFow',
-    'MOVES', 'THREE', 'size', 'play', 'playHalf', 'water', 'setting', 'wallGrid', 'productWood', 'regionOf', '_walkable', '_island'] },
+    'MOVES', 'THREE', 'size', 'play', 'playHalf', 'water', 'setting', 'wallGrid', 'productWood', 'regionOf', '_walkable', '_island', 'prewarm'] },
   trig: { name: 'Trigger', skip: ['E', 'data', 'conds', 'actions', 'expr', 'index', 'guid', 'name', 'folder', 'once', 'random', 'byDifficulty', 'startEnabled', 'nodeOff'] },
   cond: { name: 'Cond', skip: ['E', 't', 'type', 'p', 'index'] },
 };

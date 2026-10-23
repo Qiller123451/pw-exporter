@@ -29,7 +29,8 @@ full notes in docs/GSF_FORMAT.md):
   * vertices: 8 bytes = 3x13 bit position quantised in the chunk bbox,
     9 bit index into a 511-entry normal table, u8 u, u8 v.
     16 byte vertices append 4 bone indices (255 = unused) + 4 u8 weights.
-  * skeleton: bones stored with children contiguous; bone local rest = T(pos)*R(q*)
+  * skeleton: a tree of bone records (each bone's children in one block); bind poses in depth-first order;
+    bone local rest = T(pos)*R(q*)
     (quaternions are D3D/row-vector, i.e. conjugated for column vectors); rest
     scale is not inherited.  Bind matrices (row-major inverse bind) and vertex
     bone indices use depth-first bone order.
@@ -56,7 +57,7 @@ try:
 except ImportError:  # textures are optional
     Image = None
 
-VERSION = '2026.10.19'     # bump when the output changes (invalidates cached conversions)
+VERSION = '2026.10.23'     # bump when the output changes (invalidates cached conversions)
 NULL = 0x80000000
 
 _SPHERE_B64 = "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"
@@ -209,7 +210,10 @@ def parse_model_infos(r, h):
         ct = r.ptr(b + 8)
         m['chunks'] = [r.ptr(ct + 4 * k) for k in range(r.u32(b + 12))] if ct else []
         fb = r.ptr(b + 16)
-        m['used_materials'] = [r.u32(fb + 20 + 4 * k) for k in range(r.u32(fb + 12))] if fb else []
+        # the material list: [header2][materials header][indices][count][1]; the game's archives keep the indices
+        # right after it, other writers (the Blender add-on) wherever the pointer says
+        ip = (r.ptr(fb + 8) or fb + 20) if fb else None
+        m['used_materials'] = [r.u32(ip + 4 * k) for k in range(r.u32(fb + 12))] if fb else []
         at = r.ptr(b + 76)
         anims = []
         for k in range(r.u32(b + 80)):
@@ -238,7 +242,21 @@ def parse_model_infos(r, h):
 def parse_skeleton(r, c):
     bp = r.ptr(c + 76)
     nall = r.u32(c + 80)
-    offs = [c + 16] + [c + 92 + 60 * k for k in range(nall - 1)]
+    # the bone records, found through the child pointers (the game's archives keep them in one block after the
+    # chunk's tail - c + 92 + 60k -, an archive written by other tools, e.g. the Blender add-on, may put each
+    # sibling block elsewhere); in file order, which is the game's own order for its archives
+    found, todo = set(), [c + 16]
+    while todo:
+        o = todo.pop()
+        if o in found or len(found) > 4096:
+            continue
+        found.add(o)
+        cp, n = r.ptr(o + 52), r.u32(o + 48)
+        if cp is not None:
+            todo.extend(cp + 60 * k for k in range(min(n, 4096)))
+    offs = sorted(found)
+    if len(offs) != nall:
+        raise ValueError('skeleton: %d bones reachable, the chunk says %d' % (len(offs), nall))
     bones = []
     for o in offs:
         f = r.fs(o + 8, 10)
@@ -1183,7 +1201,8 @@ def export_model(r, h, model, mats, names, texfinder, out_path, fps=25.0, all_lo
         # it keep the alpha use their flags ask for.
         gk = gi_ if gi_ is not None else -1
         if ('bb', gk) not in mat_cache:
-            mj = json.loads(json.dumps(g.j['materials'][material(gk)]))
+            base_mi = material(gk)                       # (first: it makes the material list of a model without meshes)
+            mj = json.loads(json.dumps(g.j['materials'][base_mi]))
             mj['doubleSided'] = True
             if 'alphaMode' not in mj and 'baseColorTexture' in mj['pbrMetallicRoughness']:
                 mj['alphaMode'] = 'MASK'; mj['alphaCutoff'] = 0.5
@@ -1251,6 +1270,7 @@ def export_model(r, h, model, mats, names, texfinder, out_path, fps=25.0, all_lo
     # a finishing move) sprays only while one of those animations plays (extras anims).
     nemit = 0
     driven = {}
+    emit_nodes = {}         # guid -> node of an emitter in the model's frame (its particle animation keys move it)
     for ak, entries in enumerate(model['anims']):
         for e in entries:
             c_ = e[0] if isinstance(e, (list, tuple)) else e
@@ -1298,6 +1318,8 @@ def export_model(r, h, model, mats, names, texfinder, out_path, fps=25.0, all_lo
                    rotation=[float(x) for x in q_])
         g.j['nodes'][n]['extras'] = dict(kind='particles', attr=int(P['attr']), emitter=em)
         g.add_child(parent, n)
+        if parent == root:
+            emit_nodes[P['guid']] = (n, q_)
         nemit += 1
 
     # ---------------------------------------------------------------- animations
@@ -1356,6 +1378,27 @@ def export_model(r, h, model, mats, names, texfinder, out_path, fps=25.0, all_lo
                 chan(n, 'rotation', times, pad2(o['q']), 'VEC4')
                 if o.get('s') is not None:
                     chan(n, 'scale', times, pad2(o['s']), 'VEC3')
+                continue
+            if at == 0x40000002 and r.u32(ac + 8) in emit_nodes:
+                # a particle animation chunk (+8 the emitter's guid, +16 the offset of the positions - in the game's
+                # archives right after the chunk, +24 -, +20 the number of frames; a position per frame in the model's
+                # frame): the emitter moves with the animation - the SEAS turret's muzzle flashes follow the gun
+                # (their rest position lies inside the tower, 4 m under the turret)
+                try:
+                    nk = r.u32(ac + 20)
+                    if not 1 <= nk <= 4096:
+                        continue
+                    pos = np.array(r.fs(r.ptr(ac + 16) or ac + 24, 3 * nk), dtype=np.float64).reshape(nk, 3)
+                except Exception as e:
+                    log('   ! particle anim %s: %s' % (aname, e))
+                    continue
+                if not np.isfinite(pos).all() or np.abs(pos).max() > 1e4:
+                    continue
+                n, _ = emit_nodes[r.u32(ac + 8)]
+                tt = np.arange(max(nk, 2), dtype=np.float64) / fps
+                times = g.accessor(tt, 5126, 'SCALAR', minmax=True)
+                g_times_cache[times] = tt
+                chan(n, 'translation', times, np.concatenate([pos, pos[-1:]], 0) if nk == 1 else pos, 'VEC3')
                 continue
             if at != 0x40000005:
                 continue

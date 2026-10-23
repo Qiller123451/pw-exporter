@@ -433,6 +433,8 @@ export class Rules {
   check(owner, a, unit = null) {
     if (!a.visible) return 'hidden';
     if (a.disabled) return 'disabled';
+    // debug option "highest epoch" (game/cheats.js): the epoch upgrades above it do not exist
+    if (owner && owner.maxEpoch && a.kind === 'Upgrades' && /^age_\d$/.test(a.id) && +a.id[4] > owner.maxEpoch) return 'hidden';
     const T = this.tree(owner);
     const t = a.tribe === 'Special' ? T.tribe : a.tribe;
     for (const r of a.req) if (!this.invented(owner, r, t, unit)) return 'req';
@@ -471,10 +473,11 @@ export class Rules {
   // ---------------------------------------------------------------- misc
   // the texts of a class as the original finds them (HelpMenu.GetObjHelpitemKey): the help item of its tech-tree
   // description key (the heroes: lovelace_s0 -> "_lovelace"), else of its class name. The sequel's copies keep the
-  // original's description key but have texts of their own (sequel/rules.js).
-  text(name) {
+  // original's description key but have texts of their own (sequel/rules.js). owner: the description as that player's
+  // tech tree has it (the SEAS headquarters' epochs: age_N sets its description to _seas_headquarters_N)
+  text(name, owner = null) {
     if (this.sameAs[name] && this.texts[name]) return this.texts[name];
-    const d = this.exists(name) ? this.def(name, null) : null;
+    const d = this.exists(name) ? this.def(name, owner) : null;
     return (d && d.desc && this.textKey(d.desc)) || this.textKey(name) || { name: prettify(name), medium: '', long: '', vs: {}, lvl: {} };
   }
   // the help item of a key as the tech tree and the scripts spell it ("_hu_drums", "cb_walk", "_stance_0"; any case),

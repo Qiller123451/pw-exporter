@@ -155,25 +155,25 @@ export const WallWalk = {
     if (u.wjump) return;
     if (t.phase === 'up') {
       const w = t.wall;
-      if (!this.mayUseWall(u, w)) { u.task = { type: 'idle' }; return; }
+      if (!this.mayUseWall(u, w)) { this.toIdle(u); return; }
       if (!t.side) {
         t.side = this.wallSides(w.tile[0], w.tile[1], u.pos.x, u.pos.z)[0];
-        if (!t.side) { u.task = { type: 'idle' }; return; }
+        if (!t.side) { this.toIdle(u); return; }
         u.setPath(t.side[0], t.side[1]);
       }
       const d = Math.hypot(t.side[0] - u.pos.x, t.side[1] - u.pos.z);
       if (d > 1.2 && u.path.length) { u.moveAnim(u.steer(dt, t.user ? u.runSpeed : u.speed, 0.5), t.user); return; }
-      if (d > 3) { u.task = { type: 'idle' }; return; }        // no way there
+      if (d > 3) { this.toIdle(u); return; }        // no way there
       const [cx, cz] = this.wallMap.centre(w.tile[0], w.tile[1]);
       this.wallJump(u, cx, cz, true, { i: w.tile[0], j: w.tile[1] });
       t.phase = 'walk';
       return;
     }
-    if (!u.onWall) { u.task = { type: 'idle' }; return; }
+    if (!u.onWall) { this.toIdle(u); return; }
     if (t.phase === 'walk') {
       if (!u.wpath.length) {
         const then = t.then;
-        u.task = { type: 'idle' }; u.vel.set(0, 0, 0);
+        this.toIdle(u); u.vel.set(0, 0, 0);
         if (!u.busyAnim) u.anim.play(u.standAnim());
         if (then) this.order([u], then);
         return;
@@ -184,7 +184,7 @@ export const WallWalk = {
     if (t.phase === 'leave') {
       if (!t.exit) {
         t.exit = this.wallExit(u, t.dest);
-        if (!t.exit) { u.task = { type: 'idle' }; return; }       // no way down (an enemy's wall without a ladder)
+        if (!t.exit) { this.toIdle(u); return; }       // no way down (an enemy's wall without a ladder)
         u.wpath = t.exit.route.map(([i, j]) => this.wallMap.centre(i, j));
       }
       if (u.wpath.length) { u.moveAnim(this.wallSteer(u, dt, t.user ? u.runSpeed : u.speed), t.user); return; }
@@ -270,8 +270,8 @@ export const WallWalk = {
     if (j.onto) { u.onWall = j.onto; this.setOnWall(u, true); }
     else { this.setOnWall(u, false); u.onWall = null; }
     u.anchor.set(u.pos.x, u.pos.z);
-    if (!j.onto) u.task = { type: 'idle' };
-    if (j.then) { if (j.onto) u.task = { type: 'idle' }; this.order([u], j.then); }
+    if (!j.onto) this.toIdle(u);
+    if (j.then) { if (j.onto) this.toIdle(u); this.order([u], j.then); }
   },
   // SetOnWall (FO:1979): the ranged protection of the wall (Defence_On_Wall of the player's tribe)
   setOnWall(u, on) { u.wallDef = on ? this.data.miscValue(u.rulesOwner(), 'Defence_On_Wall', 0) : 0; },
@@ -328,7 +328,7 @@ export const WallWalk = {
     const h = u.pos.y - this.height(u.pos.x, u.pos.z);
     u.onWall = null; u.wpath = []; u.wallDef = 0; u.climbing = false; u.wallH = null;
     this.releaseTask(u);
-    u.task = { type: 'idle' }; u.path = [];
+    this.toIdle(u); u.path = [];
     const k = this.nav.nearestFree(this.nav.idx(u.pos.x, u.pos.z), 6), [fx, fz] = this.nav.center(k);
     u.wjump = { from: [u.pos.x, u.pos.z], to: [fx, fz], y0: u.pos.y, y1: this.height(fx, fz), t: 0, T: 0.6, onto: null, then: null };
     if (u.anim.has('hit_front')) {

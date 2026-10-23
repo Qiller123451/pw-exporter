@@ -55,6 +55,9 @@ export class TribeAI {
     this.multimap = !!o.multimap;
     this.mapOptions = { walls: false, markplace_outpost: false, harbour: false, warpgate: false, hunt_animals: false, watermap: false, ...(o.mapOptions || {}) };
     this.levelName = o.levelName || null;      // 'Single 04' ...: level-specific rows of the attack plan (optional)
+    // raids of a tribe without army tables: the remake's own squads (skirmish, the campaign's Nightmare) or, false,
+    // the original's pool units only (the campaign: ai/attack.js)
+    this.extraSquads = o.extraSquads !== false;
     // state
     this.locked = new Set();                   // AILU: units the AI must not touch
     this.claims = new Map();                   // unit -> the attack / defence area that holds it

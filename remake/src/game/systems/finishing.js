@@ -62,6 +62,7 @@ export const Finishing = {
     if (V && V.finish) this.finishDone(V);
     u.task = { type: 'attack', target: V, user: t.user };
     this.endAttack(u);
+    if (t.next) this.order([u], t.next);              // an order given during the move
   },
   // the victim (a dead unit) during the move: pulled to the link in `delay` s, then carried by it
   finishedUpdate(V) {

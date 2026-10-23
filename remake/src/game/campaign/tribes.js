@@ -289,6 +289,32 @@ export class TribeSwap {
   //   /Filters/AntiActions/Hu/Build/CHTR/hu_warrior_2       -> .../SEAS/Build/CHTR/seas_warrior_2
   //   /Filters/AntiActions/Hu/Upgrades/hu_fireplace/age_3   -> .../SEAS/Upgrades/seas_headquarters/age_3 (ages only)
   //   /Filters/AntiActions/Hu/Build/CHTR/lovelace_s0        -> .../SEAS/Build/CHTR/lovelace_s0 (heroes: the tribe only)
+  // the level's filters for the chosen tribe: each translated (filter); a ban of an equivalent that another class
+  // of the level's tribe - one the level does not ban - turns into as well is dropped. The Dustriders' first mission
+  // bans the clay wall and its gate but not the bone palisade and its gate: both pairs are the SEAS fence and gate,
+  // which the ban took away altogether.
+  filters(list) {
+    const banned = new Set();
+    for (const f of list) { const m = /AntiActions\/[A-Za-z]+\/Build\/[A-Za-z]+\/([^/\s]+)\s*$/.exec(String(f)); if (m) banned.add(m[1].toLowerCase()); }
+    const sources = this.memo.get('#sources') || (() => {
+      const r = this.D.parseActions(this.from, (t) => nodeAt(this.D.base.start, `/Actions/${t}`), false).filter((a) => a.kind === 'Build' && a.results[0]).map((a) => a.results[0].obj);
+      this.memo.set('#sources', r);
+      return r;
+    })();
+    const out = [];
+    for (const f of list) {
+      const g = this.filter(f);
+      if (!g) continue;
+      const m = /AntiActions\/[A-Za-z]+\/Build\/[A-Za-z]+\/([^/\s]+)\s*$/.exec(g);
+      if (m) {
+        const target = m[1].toLowerCase();
+        const shared = sources.some((c) => !banned.has(c.toLowerCase()) && (this.equivalent(c) || '').toLowerCase() === target);
+        if (shared) continue;
+      }
+      out.push(g);
+    }
+    return out;
+  }
   filter(path) {
     const p = String(path).trim(), m = /^(\/?Filters\/(?:AntiActions\/)?)([A-Za-z]+)\/(.*)$/.exec(p);
     if (!m || m[2] !== this.from) return p;                     // another tribe's filter, Items, ...: as it is

@@ -269,7 +269,7 @@ export class Viewer {
         p.obj.traverse((o) => {
           const n = o.userData.nodeName;
           if (!n || !n.startsWith('link_') || o.userData.overlay) return;
-          const s = 1 / Math.max(1e-6, o.getWorldScale(new THREE.Vector3()).x);
+          const s = 1 / worldScale(o);
           const ax = new THREE.AxesHelper(size * 0.04 * s);
           ax.material.depthTest = false; ax.renderOrder = 10;
           const label = textSprite(n.slice(5), size * 0.025 * s);
@@ -316,14 +316,14 @@ export class Viewer {
           const line = new THREE.LineSegments(geo, mat);
           const len = size * 0.012;
           if (!m.isSkinnedMesh) {
-            const s = 1 / Math.max(1e-6, m.getWorldScale(new THREE.Vector3()).x);
+            const s = 1 / worldScale(m);
             for (let i = 0; i < cnt; i++) for (let k = 0; k < 3; k++) { const v = P_.getComponent(i, k); arr[i * 6 + k] = v; arr[i * 6 + 3 + k] = v + N.getComponent(i, k) * len * s; }
             add(m, line);
           } else {
             // skinned: follow the animation (world space, recomputed every frame)
             add(this.scene, line);
             const a = new THREE.Vector3(), b = new THREE.Vector3(), n = new THREE.Vector3();
-            const bs = 1 / Math.max(1e-6, m.getWorldScale(new THREE.Vector3()).x);
+            const bs = 1 / worldScale(m);
             const upd = () => {
               line.visible = isShown(m);
               if (!line.visible) return;
@@ -411,6 +411,13 @@ function makeSprites(obj, rootNode) {
     });
   }
   return out;
+}
+
+// the size of an object's world scale, always positive. Every model's root mirrors x (GSF is left-handed, pwexport/gsf.py
+// GSF_MIRROR), so getWorldScale().x is -1 below it: used as a divisor (clamped to 1e-6) that made the link axes and
+// the normal lines a million times too long.
+function worldScale(o) {
+  return Math.max(1e-6, new THREE.Vector3().setFromMatrixColumn(o.matrixWorld, 0).length());
 }
 
 // a camera-facing text label (link names)

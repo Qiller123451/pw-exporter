@@ -44,6 +44,7 @@ remake/                      (part of the ParaWorld Toolkit; the launcher serves
 │  │  ├─ skirmish.js         the skirmish setup: up to 8 slots, game type, teams, options, validation, start locations
 │  │  ├─ pointbuy.js         the army budget: prices, presets, buying the start army, the computer players' armies
 │  │  ├─ stats.js            the game's statistics: counters per player and the time line (from the world's events)
+│  │  ├─ cheats.js           the debug options of a game and putting objects down (DEBUG_OPTIONS.md)
 │  │  └─ maps/
 │  │     ├─ ula.js           reader for original .ula maps (see docs/MAP_FORMAT.md of the toolkit)
 │  │     ├─ forest.js        forest blocks of original maps: the trees of the 32 m forest squares (forest.json)
@@ -55,6 +56,7 @@ remake/                      (part of the ParaWorld Toolkit; the launcher serves
 │     ├─ gamefx.js           the game's own effects for world events: hits, deaths, spawns, level-ups (GAME_EFFECTS.md)
 │     ├─ menu.js             title / campaign / pause / options / end screens (original menu art)
 │     ├─ skirmish.js         the skirmish setup window: map, game options, the eight player slots
+│     ├─ debugopts.js        the "Debug options" page of the campaign, skirmish and sequel windows (DEBUG_OPTIONS.md)
 │     ├─ pointbuy.js         "My Army": the army pyramid, shop, resources and presets of the army budget
 │     ├─ diplomacy.js        the diplomacy window: opinions of the other players, tribute
 │     ├─ chat.js             the chat bar (Enter / Ctrl+Enter / Shift+Enter) and the history of the news lines
@@ -93,6 +95,27 @@ object, and behaviour shared by kinds of entities is in the systems, not in comp
 
 Everything the player should notice is emitted as an event (`world.emit('built', {...})`) and consumed once per
 frame by `ui/feedback.js`. The simulation never touches the DOM.
+
+### Drawing a frame (main.js `frame`, `draw`)
+
+* The frame cap (Options: 30 / 60 / 120 / unlimited) draws on a fixed beat (`Renderer.shouldRender`), so the cap
+  holds on any refresh rate (waiting a whole 1/cap s after each frame gave 55 fps on a 165 Hz screen).
+* Each frame: the simulation (`simulate`), then the steps of `DRAW_STEPS`, the render, the particles. Their times
+  (ms, smoothed) are in `G.prof`; the performance overlay (F9) shows the frame, the simulation, the drawing and the
+  two slowest other steps.
+* What is drawn: a unit or building model only when it or its shadow can be in the view (`cullUnits`: the skinned
+  models are never culled by three.js); still buildings and far units keep their matrices (`freezeStill`); the
+  shadow box fits the ground the camera sees (`Renderer.fitShadow`, steps of 8 m); rigid parts under 0.8 m cast no
+  shadow and skinned meshes have depth materials of their own (`assets.js`: no shader look-ups in the shadow pass);
+  instanced decoration is culled per instance (`engine/props.js`).
+* Particle emitters whose node the model's state hides (the fires of the other damage stages and epochs, the parts of
+  wall pieces not shown - thousands on a map with walls) wait on a dormant list that is looked at in slices
+  (`Particles.wake`); the frame walks only the others.
+* Animations off the screen advance a few times per second (units: `World.animTick`, buildings with their turrets
+  and cranes: `Building.updateAnim`).
+* A unit put into production (anybody's) has its model's shaders compiled in the background (`W.prewarm`,
+  `renderer.compileAsync`), not in the frame it first shows (D3D shader compiles under Chrome on Windows took tens
+  of milliseconds: a stall when a computer player started training).
 
 ### Systems (src/game/systems)
 
@@ -369,13 +392,17 @@ of Texts/Help/index.txt and their files' help items with their pictures and link
 `pipeline/build_data.py help_book` with `pwexport.texts.help_doc`), on the item of what is under the mouse, being
 placed or selected; the game pauses meanwhile.
 
-Clicking (`input.js entityAt`): units by their screen rectangle first (the smallest wins), then whatever the mouse ray
-meets first of the buildings' visible surfaces (`pickHit`; the models' flag-less hulls reach far beyond many SEAS
+Clicking (`input.js entityAt`): as the original's ray against the objects' pick volumes - the unit whose pick volume
+(the model's pick parts, else its box a little narrower) the mouse ray meets first, so in a clump the one in front,
+exactly under the cursor (`unitRayHit`); only when the ray meets none, the nearest small figure by its screen
+rectangle (far zoom); then whatever the mouse ray meets first of the buildings' visible surfaces (`pickHit`; the models' flag-less hulls reach far beyond many SEAS
 buildings) and of the resources (standing cylinders of the height of their kind). A building put down by a player
 levels the ground under it and paints its ground materials with its object brush, and the plants and trees within
 its radius go (`game/ground.js`, `main.js W.adaptTerrain / clearVegetation`, docs/TERRAIN_NOTES.md "Object brushes").
-While a building is being placed, the placement grid shows which 2 m cells around it are free (green) or blocked
-(red) (`input.js updatePlaceGrid`).
+While a building is being placed, the placement grid (ObjPlaceChecker.EnableGridRendering) shows a dot every 2 m
+around it: green where the building fits with its centre on that dot, turned as it is - any green dot is a place
+to put it - red where it does not (`input.js updatePlaceGrid`: `canPlace` per dot; dots of a fixed size on the
+screen with a dark rim, drawn over everything). The preview sprays no fire, smoke or fans (`Particles.untrack`).
 
 Controls are the original's (Scripts/Game/options/Keys.srf, GameInputController.usl; docs/spec/formations.md):
 letters as on the key (like the original's virtual keys). Q / A / Y arm a row of the build or produce menu, X the

@@ -60,6 +60,9 @@ export class Campaign {
     this.data = loaded.data;
     this.id = loaded.entry.id;
     this.difficulty = Math.max(0, Math.min(2, cfg.difficulty == null ? 1 : +cfg.difficulty));    // 0 easy, 1 medium, 2 hard
+    // 3 Nightmare (the remake's own): the map, its triggers and AI levels as hard, the computer players' raids with
+    // the remake's bigger squads (ai/attack.js extraSquads)
+    this.nightmare = +cfg.difficulty === 3;
     this.chosenTribe = TRIBES.includes(cfg.tribe) ? cfg.tribe : null;
     this.army = cfg.army && cfg.army.cards ? cfg.army : null;               // the human's start army and resources
     this.swap = null;                            // TribeSwap when the player plays another tribe than the mission's
@@ -344,9 +347,15 @@ export class Campaign {
     }
     W.players = list;
     this.human = this.players[this.humanSlot];
+    // debug option "no mission bans" (game/cheats.js): the level's AntiActions do not reach the human (scripting.js setFilter)
+    const ch = G.config && G.config.cheats;
+    if (this.human && ch && ch.on && ch.unlock) this.human.unlockAll = true;
     for (const p of list) p.tt.suspend();
     // tech tree filters of the level: mostly AntiActions = what the mission forbids (ServerApp.usl:527-535)
-    for (const p of list) for (const f of p.data.tech_filters || []) { const g = this.filterFor(p, f); if (g) W.setFilter(p, g, true); }
+    for (const p of list) {
+      const fs = p.data.tech_filters || [];
+      for (const g of this.swap && p === this.human ? this.swap.filters(fs) : fs) if (g) W.setFilter(p, g, true);
+    }
     // stand-ins for classes without a model
     for (const pl of this.plans) if (pl.cls) { const si = this.standInModel(pl.cls); if (si) W.standIns.set(pl.cls.toLowerCase(), si); }
     for (const w of this.namedClasses) { const r = this.ruleClass(w); const si = r && this.standInModel(r); if (si) W.standIns.set(r.toLowerCase(), si); }
@@ -802,7 +811,7 @@ export class Campaign {
     if (rec.prop) return rec.prop.playAnim(name, loops);
     const e = rec.entity;
     if (!e || !e.anim || !e.anim.has(name)) return false;
-    if (e.kind === 'unit') { this.world.releaseTask(e); e.task = { type: 'idle' }; e.path = []; e.busyAnim = true; }
+    if (e.kind === 'unit') { this.world.releaseTask(e); this.world.dropStates(e); e.task = { type: 'idle' }; e.path = []; e.busyAnim = true; }
     let left = Math.max(1, Math.round(loops) || 1);
     if (e.kind === 'building') e.lastAnim = name;          // its last pose (a gate that opened) in a saved game
     const again = () => { if (--left > 0 && e.alive) e.anim.play(name, { loop: false, restart: true, onDone: again }); else if (e.kind === 'unit') e.busyAnim = false; else if (e.idleAnim && !/open|close/.test(name)) e.idleAnim(); };

@@ -92,7 +92,7 @@ export class Feedback {
         case 'placed': if (vis(e.building.pos)) gfx.placed(e.building); if (e.building.owner === me && A) { A.playFirst(['ui_' + me.tribe.toLowerCase() + '_placed', 'ui_placed']); A.ack(['voice_' + me.tribe.toLowerCase() + '_placed', 'voice_placed']); } break;
         case 'built':
           if (vis(e.building.pos)) gfx.built(e.building);
-          if (e.building.owner === me) { G.hud.message(`${G.data.text(e.building.name).name} completed`); A && A.play('FX_CBuildingReadyFX', e.building.pos); }
+          if (e.building.owner === me) { G.hud.message(`${G.data.text(e.building.name, e.building.owner).name} completed`); A && A.play('FX_CBuildingReadyFX', e.building.pos); }
           break;
         case 'delivered':
           if (e.unit.owner === me && A && G.input.onScreen(e.unit)) A.playFirst([`ui_${e.unit.name}_delivered`]);
@@ -110,7 +110,7 @@ export class Feedback {
             G.hud.message(e.player === me ? `${txt} reached!` : `The ${e.player.name} have reached ${txt}`, e.player === me ? 'good' : 'warn');
             if (e.player === me && A) { A.playFirst(['ui_nextage']); A.ack(['voice_nextage']); }
           } else if (e.player === me) { G.hud.message(`${G.data.actionText(a).name} researched`, 'good'); A && A.playFirst(['ui_invention']); }
-          if (e.entity && vis(e.entity.pos)) gfx.invented(e.entity);
+          if (e.entity && e.entity.pos && vis(e.entity.pos)) gfx.invented(e.entity);
           if (e.player === me && e.entity && e.entity.pos && G.minimap) G.minimap.marker('Finished', e.entity.pos.x, e.entity.pos.z);     // (FeedbackEventMgr.usl:105-111)
           break;
         }
@@ -162,7 +162,7 @@ export class Feedback {
             fx.dust(en.pos.clone(), en.radius * 2);
             A && A.play(en.owner && en.owner.tribe === 'Aje' ? 'FX_CAje_Tent_Dem_Fx' : 'FX_CBigBuildingExplosion', en.pos);
           }
-          if (en.owner === me) G.hud.message(`${G.data.text(en.name).name} destroyed`, 'bad');
+          if (en.owner === me) G.hud.message(`${G.data.text(en.name, en.owner).name} destroyed`, 'bad');
           break;
         }
         case 'shoot': {

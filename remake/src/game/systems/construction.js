@@ -285,6 +285,7 @@ export const Construction = {
       if (k === 'tesla_s0' && h.level >= 2 && b.surfDist(h.pos.x, h.pos.z) < 20) rate *= 2;
       if (k === 'babbage_s0' && h.level >= 5) rate *= 2;
     }
+    if (b.owner && b.owner.cheat && b.owner.cheat.speed > 0) rate *= b.owner.cheat.speed;      // (debug option: game/cheats.js)
     const total = D * tf * S;          // (the computer player's time handicap is Action.usl's: production and research only)
     this.addProgress(b, dt * rate / total, active);
   },

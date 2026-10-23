@@ -136,6 +136,8 @@ export class Particles {
   constructor(scene) {
     this.scene = scene;
     this.emitters = [];          // {node | matrix, e, attr, parts, acc, batch}
+    this.dormant = [];           // emitters whose node is hidden (wake)
+    this.wakeAt = 0;
     this.batches = new Map();
     this.frustum = new THREE.Frustum();
     this.enabled = true;
@@ -151,6 +153,28 @@ export class Particles {
   // a cloned model: its emitters follow their nodes
   track(root) {
     for (const node of Particles.nodes(root)) this.add({ node, root });
+  }
+  // the dormant emitters (their node hidden by its model's state: the fires of the other damage stages and epochs,
+  // the parts of wall pieces they don't show - thousands on a map with walls): looked at in slices, a fifteenth of
+  // them per frame - back to the active list when the node shows again, gone when its model left the scene
+  wake() {
+    const D = this.dormant, n = D.length;
+    if (!n) return;
+    const k = Math.min(n, Math.max(400, Math.ceil(n / 15)));
+    for (let c = 0; c < k && D.length; c++) {
+      if (this.wakeAt >= D.length) this.wakeAt = 0;
+      const i = this.wakeAt, x = D[i];
+      const out = () => { D[i] = D[D.length - 1]; D.pop(); };
+      if (x.dead || !Particles.attached(x.node)) { out(); continue; }
+      if (x.node.visible) { out(); this.emitters.push(x); continue; }
+      this.wakeAt++;
+    }
+  }
+  // a clone that sprays nothing (the building placement preview): its emitters are dropped at once - a fan or a
+  // flame of the finished building would otherwise turn on where the preview stood (and keep its particles there)
+  untrack(root) {
+    const nodes = new Set(Particles.nodes(root));
+    for (const x of [...this.emitters, ...this.dormant]) if (x.node && nodes.has(x.node)) { x.dead = true; x.parts.length = 0; }
   }
   // a landscape object (props.js): emitters of the template placed with the instance matrix; returns the handle
   addStatic(tplRoot, matrix) {
@@ -222,65 +246,77 @@ export class Particles {
     // the load of the last frame (0x706b9f): above half the limit the sources hold back
     const last = this.drawn || 0, lim = L.sprites;
     this.load = last >= lim / 2 ? 1 - Math.min(1, Math.max(0, (last / lim - 0.75) * 4)) : 1;
-    const keep = [];
-    for (const x of this.emitters) {
-      if (x.dead) continue;
-      const M = x.node ? x.node.matrixWorld : x.matrix;
-      _v.setFromMatrixPosition(M);
-      // far from the camera with nothing in flight: only a look every 2 s whether its model is still in the scene
-      // (thousands of emitters - torches, chimneys, the fires of every damage stage - most of them far away)
-      if (!x.parts.length && _v.distanceTo(target) > RANGE) {
-        if ((x.chkT = (x.chkT || 0) - dt) <= 0) { x.chkT = 2; if (x.node && !Particles.attached(x.node)) continue; }
-        keep.push(x);
-        continue;
-      }
-      let on = true;
-      if (x.node) {
-        const shown = Particles.shown(x.node);
-        if (!shown) { x.idle += dt; if (x.idle > 10 && !x.parts.length && !Particles.attached(x.node)) continue; on = false; } else x.idle = 0;
-      }
-      keep.push(x);
-      if (on && this.seen && !this.seen(_v.x, _v.z)) on = false;
-      if (on && x.anims && !Particles.playing(x)) on = false;
-      if (on && x.fire && !Particles.firing(x)) on = false;
-      if (!x.parts.length && (!on || _v.distanceTo(target) > RANGE || !this.frustum.intersectsSphere(_s.set(_v, 15)))) continue;
-      const near = on && _v.distanceTo(target) <= RANGE;
-      // the source's level of detail (0x703e40): every slot within ParticleSrcOffset (120 m) of the camera, then
-      // fewer over ParticleSrcDist (100 m), fewer still when the frame is full (load)
-      const max = Math.max(1, x.e.max || 1);
-      if (x.root) _g.setFromMatrixPosition(x.root.matrixWorld); else _g.setFromMatrixPosition(M);
-      const dl = _g.distanceTo(eye) - SRC_OFFSET;
-      x.lod = dl >= SRC_DIST ? 0 : dl <= 0 ? max : Math.min(max, Math.floor(max * (1 - dl / SRC_DIST) * this.load) + 2);
-      this.step(x, dt, M, near);
-      const b = this.batch(x.T);
-      if (!b.b) continue;
-      const ws = Math.cbrt(Math.abs(M.determinant())) || 1;
-      if (x.F & F.ALONG_VEL) _view.setFromMatrix4(camera.matrixWorldInverse);
-      _n3.setFromMatrix4(M);
-      for (const p of x.parts) {
-        if (!p.vis || p.size < 0.0001) continue;
-        if (budget.n <= 0 || budget.area <= 0) break;
-        if (p.world) _w.copy(p.p); else _w.copy(p.p).applyMatrix4(M);
-        // fading into the scene's fog (0x705191: the renderer's linear fog start / end), gone beyond its end
-        const de = _w.distanceTo(eye);
-        let fade = 1;
-        if (fog && de > fog.near) { if (de >= fog.far) continue; fade = (fog.far - de) / (fog.far - fog.near); }
-        const size = p.size / 4 * ws;                                  // (a quarter of "size" high)
-        const px = Math.min(maxPx, size * scale / Math.max(0.5, de));
-        budget.n--; budget.area -= px * px;
-        let rot = p.rot;
-        if (x.F & F.ALONG_VEL) {
-          // pointing the way it flies on the screen (0x707e30: the screen angle of pos -> pos + v, plus "rotate"); a
-          // ground quad: the heading on the ground. A source that turns its particles (src_rot_speed): that motion.
-          _d.copy(x.P.src_rot_speed ? p.dv : p.v); if (!p.world) _d.applyMatrix3(_n3);
-          if (x.F & F.GROUND) rot = (_d.x || _d.z ? Math.atan2(_d.x, _d.z) : 0) + (x.P.rotate || 0);
-          else { _d.applyMatrix3(_view); rot = (_d.x || _d.y ? Math.atan2(-_d.x, _d.y) : 0) + (x.P.rotate || 0); }
+    this.wake();
+    // (the emitters kept are moved up in place: a new list each frame was a good part of the frame's garbage)
+    const list = this.emitters;
+    let kept = 0, i = 0;
+    try {
+      for (; i < list.length; i++) {
+        const x = list[i];
+        if (x.dead) continue;
+        // a node its model's state hides (the fires of the other damage stages, the other epochs, the parts of a wall
+        // piece it does not show - most of the thousands): nothing to do but a look every 2 s whether the model is
+        // still in the scene
+        if (x.node && !x.node.visible && !x.parts.length) { this.dormant.push(x); continue; }
+        const M = x.node ? x.node.matrixWorld : x.matrix;
+        _v.setFromMatrixPosition(M);
+        // far from the camera with nothing in flight: only a look every 2 s whether its model is still in the scene
+        // (thousands of emitters - torches, chimneys, the fires of every damage stage - most of them far away)
+        if (!x.parts.length && _v.distanceTo(target) > RANGE) {
+          if ((x.chkT = (x.chkT || 0) - dt) <= 0) { x.chkT = 2; if (x.node && !Particles.attached(x.node)) continue; }
+          list[kept++] = x;
+          continue;
         }
-        _draw.size = size; _draw.a = p.a * fade; _draw.c = p.c; _draw.tx = p.tx; _draw.ty = p.ty; _draw.rot = rot;
-        b.b.push(_draw, x);
+        let on = true;
+        if (x.node) {
+          const shown = Particles.shown(x.node);
+          if (!shown) { x.idle += dt; if (x.idle > 10 && !x.parts.length && !Particles.attached(x.node)) continue; on = false; } else x.idle = 0;
+        }
+        list[kept++] = x;
+        if (on && this.seen && !this.seen(_v.x, _v.z)) on = false;
+        if (on && x.anims && !Particles.playing(x)) on = false;
+        if (on && x.fire && !Particles.firing(x)) on = false;
+        if (!x.parts.length && (!on || _v.distanceTo(target) > RANGE || !this.frustum.intersectsSphere(_s.set(_v, 15)))) continue;
+        const near = on && _v.distanceTo(target) <= RANGE;
+        // the source's level of detail (0x703e40): every slot within ParticleSrcOffset (120 m) of the camera, then
+        // fewer over ParticleSrcDist (100 m), fewer still when the frame is full (load)
+        const max = Math.max(1, x.e.max || 1);
+        if (x.root) _g.setFromMatrixPosition(x.root.matrixWorld); else _g.setFromMatrixPosition(M);
+        const dl = _g.distanceTo(eye) - SRC_OFFSET;
+        x.lod = dl >= SRC_DIST ? 0 : dl <= 0 ? max : Math.min(max, Math.floor(max * (1 - dl / SRC_DIST) * this.load) + 2);
+        this.step(x, dt, M, near);
+        const b = this.batch(x.T);
+        if (!b.b) continue;
+        const ws = Math.cbrt(Math.abs(M.determinant())) || 1;
+        if (x.F & F.ALONG_VEL) _view.setFromMatrix4(camera.matrixWorldInverse);
+        _n3.setFromMatrix4(M);
+        for (const p of x.parts) {
+          if (!p.vis || p.size < 0.0001) continue;
+          if (budget.n <= 0 || budget.area <= 0) break;
+          if (p.world) _w.copy(p.p); else _w.copy(p.p).applyMatrix4(M);
+          // fading into the scene's fog (0x705191: the renderer's linear fog start / end), gone beyond its end
+          const de = _w.distanceTo(eye);
+          let fade = 1;
+          if (fog && de > fog.near) { if (de >= fog.far) continue; fade = (fog.far - de) / (fog.far - fog.near); }
+          const size = p.size / 4 * ws;                                  // (a quarter of "size" high)
+          const px = Math.min(maxPx, size * scale / Math.max(0.5, de));
+          budget.n--; budget.area -= px * px;
+          let rot = p.rot;
+          if (x.F & F.ALONG_VEL) {
+            // pointing the way it flies on the screen (0x707e30: the screen angle of pos -> pos + v, plus "rotate"); a
+            // ground quad: the heading on the ground. A source that turns its particles (src_rot_speed): that motion.
+            _d.copy(x.P.src_rot_speed ? p.dv : p.v); if (!p.world) _d.applyMatrix3(_n3);
+            if (x.F & F.GROUND) rot = (_d.x || _d.z ? Math.atan2(_d.x, _d.z) : 0) + (x.P.rotate || 0);
+            else { _d.applyMatrix3(_view); rot = (_d.x || _d.y ? Math.atan2(-_d.x, _d.y) : 0) + (x.P.rotate || 0); }
+          }
+          _draw.size = size; _draw.a = p.a * fade; _draw.c = p.c; _draw.tx = p.tx; _draw.ty = p.ty; _draw.rot = rot;
+          b.b.push(_draw, x);
+        }
       }
+    } finally {
+      if (i < list.length) for (let j = i; j < list.length; j++) list[kept++] = list[j];      // (an error: the rest kept as is)
+      list.length = kept;
     }
-    this.emitters = keep;
     this.drawn = L.sprites - budget.n;
     for (const b of this.batches.values()) if (b.b) { b.b.uniforms.uScale.value = scale; b.b.uniforms.uMaxPx.value = maxPx; b.b.flush(); }
   }
@@ -310,9 +346,6 @@ export class Particles {
     dt = Math.min(1, dt);
     if (dt < 0.001) return;
     const P = x.P, max = Math.max(1, x.e.max || 1), fl = x.F;
-    // (the client also sprays nothing from an emitter below its model's origin without flag 0x40000 - Process
-    // 0x704a91 - but in which frame is unclear: a linked model's emitters, the SEAS turret's muzzle flashes, sit 4 m
-    // below their own model's origin and do flash in the game. Not ported: docs/spec/particles.md.)
     // the emitter's movement since the last frame, in its own frame (SetMatrix 0x703f70: moveDelta), and the
     // model's speed in the world (srcVel, for particles that live in the world)
     _w.setFromMatrixPosition(M);
@@ -326,6 +359,11 @@ export class Particles {
     }
     x.lastW.copy(_w);
     let can = emit;
+    // no spray while the emitter is below its model's origin unless flag 0x40000 (Process 0x704a91), for emitters an
+    // animation moves (gsf.py: particle animation keys): the SEAS turret's muzzle flashes rest inside the tower and
+    // flicker at the barrel, the keys alternating between it and a place inside the turret (the node's translation
+    // is in the model's own z-up frame when it hangs from the model's root)
+    if (can && x.anims && !(fl & 0x40000) && x.node && x.node.parent && x.node.parent.userData.fourcc && x.node.position.z < 0) can = false;
     if (P.emit_timer > 0) {
       can = false;
       x.timer = (x.timer || 0) + dt;

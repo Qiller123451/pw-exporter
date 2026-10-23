@@ -36,7 +36,13 @@ if (pair) {
       done = true;
       check('a blow that kills an enemy fighting back: a finishing move', !V.alive && seen.some((e) => e.victim === V && e.unit === A), seen.map((e) => [e.unit.name, e.victim.name]));
       check('the fighter can\'t be hurt during it', W.invulnerable(A) || !A.finishing, null);
+      // an order during the move waits for its end (FinishingMove.Break() = false) - it used to replace the task and
+      // leave the fighter invulnerable for good (Stina in campaign mission 1)
+      const during = A.finishing && A.task.type === 'finish';
+      W.order([A], { type: 'move', x: A.pos.x + 20, z: A.pos.z });
+      check('an order during the move: the move goes on, the order is kept for after it', !during || (A.task.type === 'finish' && A.task.next && A.task.next.type === 'move'), { during, task: A.task.type });
       run(6);
+      check('after it the order is carried out and the fighter can be hurt again', !A.finishing && !W.invulnerable(A) && (!during || A.task.type === 'move' || A.task.type === 'idle'), { task: A.task.type, finishing: A.finishing });
       check('the move ends: the fighter is free again, the victim lies on the ground', !A.finishing && !V.finish && Math.abs(V.pos.y - W.height(V.pos.x, V.pos.z)) < 1.5, { task: A.task.type });
     }
   }

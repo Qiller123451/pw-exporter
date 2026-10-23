@@ -71,9 +71,12 @@ the client (types 0-2 are USL classes, `Data/Base/Scripts/gfx/particle.usl`). Re
 - Fade (0x705191): a particle farther from the camera than the fog's start fades by (end - d) / (end - start) and
   is not drawn beyond its end - the scene's linear fog (the sky renderer sets it each frame from the sky colour,
   the view's tilt and ViewDepth; the remake: its fixed scene fog).
-- Not ported: the 0x400000 orbit about the model's origin (no model uses it), "no emission while the emitter is below its
-  model's origin (z < 0) without 0x40000" (Process 0x704a91): in which frame is unclear - the SEAS turret's muzzle
-  flashes sit 4 m below their own model's origin and flash in the game.
+- Not ported: the 0x400000 orbit about the model's origin (no model uses it).
+- "No emission while the emitter is below its model's origin (z < 0) without 0x40000" (Process 0x704a91): ported for
+  emitters an animation drives. Their particle animation chunk (0x40000002: +8 the emitter's guid, +16 the offset of the
+  positions, +20 the number of frames; one position per frame in the model's frame) moves them: the SEAS turret's muzzle flashes rest 4 m
+  under the turret, and in its attack the keys put them at the barrel's end on the frames that fire and back inside
+  the turret (z < 0) on the others - the flicker. pwexport/gsf.py exports the keys as the node's translation track.
 
 ## Before (the remake's guess, until 2026-10-18)
 The vector was taken as the half sizes of an emitting box with random speeds. The hit sparks (vel.z 26.5) and the

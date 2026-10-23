@@ -8,6 +8,8 @@ Community tools for **ParaWorld** (SEK / Sunflowers, 2006):
 * **ParaWorld Remake** – the game rebuilt for the web browser: the campaign and skirmishes of up to eight players
   with all four tribes on the original maps or random maps, with the rules, models, sounds and interface of your
   installation.
+* **Workshop** – new units, buildings, wild animals and decorations: a model made with the Blender add-on (or one of
+  the game's, to change), turned into a mod step by step – ParaWorld loads it, the remake plays it.
 * **ParaWorld Shooter** – a third-person action game made from the same data: the SEAS Gunner and the Executioner
   MKII against swarms of Dustriders in the Holy City – alone, or as part of a full SEAS assault – and against the
   Norsemen on an island of the game's own making, with a war mammoth to ride and a gunship to fly, and against the
@@ -40,6 +42,7 @@ listens on your computer.
    * **Model & Map Exporter → Open**. The very first start reads the model archives' tables of contents (10–30 s).
    * **ParaWorld Remake → Prepare the game data** (first time only, about 5–15 minutes: it converts the models,
      textures, interface and rules of your installation), then **Play**.
+   * **Workshop → Open** to make new objects ([docs/WORKSHOP.md](docs/WORKSHOP.md)).
 
 Settings, caches and the remake's game data are kept in `%APPDATA%\ParaWorldToolkit` (Linux/macOS:
 `~/.config/paraworld-toolkit`). The caches and the game data take several GB (about 2 GB per configuration, plus the
@@ -107,6 +110,11 @@ mission before buy on top of it. See
 **Saved games.** Campaign missions, skirmishes and the sequel can be saved and loaded from the menu: slots in the
 browser, or a `.pwsave` file to keep or move; `F5` quick save, `F8` quick load.
 
+**Debug options.** Before any game, *Debug options…* changes its rules: start resources, start and highest epoch,
+more places per level of the army pyramid, the unit limit, damage and defence of both sides, the whole map visible,
+the mission's bans lifted; in the game the pause menu's *Debug tools* put objects down, give resources, end a mission.
+[remake/docs/DEBUG_OPTIONS.md](remake/docs/DEBUG_OPTIONS.md).
+
 ![ParaWorld: Containment - the diner in Copper Basin](docs/screenshots/sequel_liftoff.png)
 
 **ParaWorld: Containment (1964).** A new campaign of eleven missions written for the remake, a sequel to the original's
@@ -117,10 +125,28 @@ and carried home over pole lines the dinosaurs can cut. The 1960s towns, cars an
 CC0 materials and painted in ParaWorld's weathered look (remake/art/sequel).
 [remake/docs/SEQUEL.md](remake/docs/SEQUEL.md).
 
-How it is built: [remake/docs/ARCHITECTURE.md](remake/docs/ARCHITECTURE.md),
+All of the remake's documents: [remake/docs/README.md](remake/docs/README.md). How it is built: [remake/docs/ARCHITECTURE.md](remake/docs/ARCHITECTURE.md),
 [DATA_PIPELINE.md](remake/docs/DATA_PIPELINE.md), [GAMEPLAY_RULES.md](remake/docs/GAMEPLAY_RULES.md),
 [MODDING.md](remake/docs/MODDING.md) and the rules extracted from the original scripts in
 [remake/docs/spec](remake/docs/spec).
+
+## Workshop
+
+![The Workshop](docs/screenshots/workshop/05_animations.png)
+
+New objects for ParaWorld, made without touching the game's files by hand:
+
+* **Units, buildings, wild animals, decorations.** Each new object behaves like an object of the game you choose (its
+  *template*: a Norsemen warrior, a Dustrider barracks, a stegosaurus, a rock) and gets its own model, name, numbers,
+  texts and icon.
+* **Your model or the game's.** Upload a `.gsf` archive from the ParaWorld GSF add-on for Blender (in `blender/`), or
+  take a model of the game – also to download it and change it in Blender. The 3D view shows it with its animations;
+  the Workshop matches its animations to the ones the template's scripts play.
+* **One mod for both.** The Workshop writes a mod as the game expects it (`Data/<mod>`, `Data/Info/<mod>.info`: the
+  tech tree, class lists, model archive, texts, icons, textures), installs it into your game and starts ParaWorld
+  with it. The remake offers the installed mod as game data; *Try it in the remake* opens a game with your objects.
+
+The guide, step by step: **[docs/WORKSHOP.md](docs/WORKSHOP.md)** (also behind *Guide* in the Workshop).
 
 ## ParaWorld Shooter
 
@@ -178,8 +204,10 @@ pwexport/       the Model & Map Exporter and the game-file readers shared by eve
                 (GSF models, tech tree, texts, maps, ground textures, Kaitai descriptions in data/ksy)
 remake/         the remake: src/ (game code), game/ (bundled: index.html + game.js), pipeline/ (builds the game
                 data from an installation), tests/, docs/
+workshop/       the Workshop: new objects as a mod (Python; its page in web/), tests/
 shooter/        the shooter: server.py (local web server), web/ (game code, no build step), tests/, docs/
-docs/           exporter guide, file format notes (GSF models, .ula maps, composites), screenshots
+docs/           guides (exporter, Workshop), file formats (GSF models, .ula maps, campaign, cutscenes), what is known
+                about the original game (ORIGINAL_GAME.md, original/), screenshots - every document: docs/INDEX.md
 tools/          development helpers: headless UI test, Kaitai description checker, script data mining
 ```
 

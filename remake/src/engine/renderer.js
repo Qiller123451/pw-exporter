@@ -66,12 +66,18 @@ export class Renderer {
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
   }
-  // returns true if a frame should be drawn now (frame cap)
+  // returns true if a frame should be drawn now (frame cap). Frames are due on a fixed beat of 1/cap s, so the cap
+  // is kept on average on any refresh rate: waiting a whole 1/cap s after the last frame drew only every third
+  // refresh of a 165 Hz screen with a cap of 60 (55 fps), every third of 144 Hz (48 fps)
   shouldRender(now) {
     const cap = this.settings.fpsCap;
     if (!cap) return true;
-    const minDt = 1000 / cap - 1.5;
-    if (now - this.lastRender < minDt) return false;
+    const step = 1000 / cap;
+    if (now < (this.due || 0) - 1) return false;
+    // (never more than one beat ahead of now: a screen slightly faster than the cap would gain on the beat and skip
+    // a frame now and then; never behind by more than one: slow frames, a hidden tab - no catching up)
+    this.due = Math.min((this.due || now) + step, now + step);
+    if (this.due < now - step) this.due = now;
     return true;
   }
   render(now) {
@@ -100,8 +106,37 @@ export class Renderer {
     this.sun.position.set(tx + this.sunOffset.x, target.y + this.sunOffset.y, tz + this.sunOffset.z);
     this.sun.target.position.set(tx, target.y, tz);
     this.sun.target.updateMatrixWorld();
+    if (this.renderer.shadowMap.enabled) this.fitShadow(target);
+  }
+  // the shadow box only as big as the ground the camera sees, plus the reach of the shadows falling into it: the
+  // shadow pass then draws only what can matter (it was the whole 210 m square around the target - more objects
+  // than the view itself), and the shadows are sharper close up. In steps of 8 m: a box that changes size makes the
+  // shadows crawl, so it changes only when the zoom does.
+  fitShadow(target) {
+    const rMax = this.settings.shadows === 'high' ? 130 : 105;
+    const cam = this.camera, sc = this.sun.shadow.camera;
+    cam.updateMatrixWorld();
+    _lm.lookAt(this.sun.position, this.sun.target.position, _up);      // the light's frame (as the shadow camera's)
+    let ext = 0;
+    for (const [x, y] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      _p.set(x, y, 0.5).unproject(cam).sub(cam.position);                // the ray through a corner of the view
+      // (onto ground 30 m below the target: looking down a slope, the far edge of the view lies lower and further out)
+      const t = _p.y < -1e-3 ? (target.y - 30 - cam.position.y) / _p.y : Infinity;
+      if (!(t > 0 && t < 2000)) { ext = rMax; break; }
+      _p.multiplyScalar(t).add(cam.position).sub(this.sun.target.position);
+      _p.applyMatrix4(_li.copy(_lm).transpose());                       // into the light's frame
+      ext = Math.max(ext, Math.abs(_p.x), Math.abs(_p.y));
+    }
+    const r = Math.min(rMax, Math.max(40, Math.ceil((ext + 14) / 8) * 8));
+    if (sc.right !== r) {
+      Object.assign(sc, { left: -r, right: r, top: r, bottom: -r });
+      sc.updateProjectionMatrix();
+      this.shadowDirty = true;
+    }
   }
 }
+
+const _lm = new THREE.Matrix4(), _li = new THREE.Matrix4(), _p = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0);
 
 // ParaWorld-style RTS camera: pan, zoom (pitch follows zoom), rotate.
 export class RTSCamera {

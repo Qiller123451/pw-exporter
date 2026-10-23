@@ -105,10 +105,13 @@ if (M.id === 5) {
   check('the mission is won', !!M.ended && M.ended.won, M.ended);
 }
 if (M.id === 7) {
-  // the city (art/sequel/london.py; missions.js 7): the Society, the wheel turning, houses that block, the bridge
+  // the city (art/sequel/london.py, houses.py; missions.js 7): the Society, the wheel turning, houses that block, the bridge
   const has = (m) => (G.props && G.props.kinds && G.props.kinds.has(m)) || false;
-  check('the Society, the wheel, the bridge and the houses stand', ['sq_society', 'sq_wheel_frame', 'sq_bridge', 'sq_terrace_corner', 'sq_quay'].every(has) && ['stucco', 'portland', 'brick', 'red', 'grey'].some((t) => has('sq_terrace_' + t)),
-    ['sq_society', 'sq_wheel_frame', 'sq_bridge', 'sq_terrace_corner', 'sq_quay'].filter((m) => !has(m)));
+  const rows = ['14_1', '14_2', '14_3', '14_4', '21_1', '21_2', '21_3', '21_4', '21_5', '21_6', '28_1', '28_2', '28_3', '28_4'].filter((r) => has('sq_row' + r));
+  const corners = ['dome', 'turret', 'curve', 'chamfer'].filter((c) => has('sq_corner_' + c));
+  check('the Society, the wheel, the bridge and the houses stand (rows of every length, every corner)', ['sq_society', 'sq_wheel_frame', 'sq_bridge', 'sq_quay'].every(has)
+    && ['14', '21', '28'].every((w) => rows.some((r) => r.startsWith(w))) && rows.length >= 10 && corners.length === 4,
+  { missing: ['sq_society', 'sq_wheel_frame', 'sq_bridge', 'sq_quay'].filter((m) => !has(m)), rows, corners });
   const wheel = M.pieces.find((p) => p.id === 'wheel');
   G.sequelUI.effects(0);
   const o = G.sequelUI.pieceObjs && G.sequelUI.pieceObjs.get(wheel), a0 = o ? o.userData.inner.rotation.z : null;

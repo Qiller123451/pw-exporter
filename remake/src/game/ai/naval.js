@@ -168,14 +168,16 @@ export const NavalAI = {
           F.ordered = true;
           for (let i = F.ships.length; i < need; i++) { const T = this.trainable(S, F.cls); if (T && T.producer && this.armyCanPay(S, T.action.cost)) W.queueAction(T.producer, T.action); }
         }
-        if (F.ships.length >= need || (F.ships.length && W.time - F.t0 > 120)) { F.phase = 'board'; F.round = 0; F.hp = new Map(F.ships.map((s) => [s, s.hp])); break; }
+        if (F.ships.length >= need || (F.ships.length && W.time - F.t0 > 120)) { F.phase = 'board'; F.round = 0; F.boardT = W.time; F.hp = new Map(F.ships.map((s) => [s, s.hp])); break; }
         if (W.time - F.t0 > 120) { this.ferryDone(a); return a.end('no transports'); }
         return;
       }
       case 'board': {
-        // a transport lost or attacked while boarding: everybody out at home (WC:138 OnShipAttacked, 444-447)
+        // a transport lost or attacked while boarding: everybody out at home (WC:138 OnShipAttacked, 444-447) - hit
+        // since the boarding began (lastHit: healed at home, a small hit is gone by the next think), or with
+        // fewer hit points than then
         if (!F.hp) F.hp = new Map(F.ships.map((s) => [s, s.hp]));         // (the hit points when the boarding began)
-        const hit = F.ships.some((s) => s.hp < (F.hp.get(s) ?? s.hp));
+        const hit = F.ships.some((s) => s.lastHit >= (F.boardT ?? Infinity) || s.hp < (F.hp.get(s) ?? s.hp));
         if (F.lost || hit) { this.ferryUnload(a); this.ferryDone(a); return a.end(F.lost ? 'transport lost' : 'transport attacked'); }
         const out = us.filter((u) => !u.inside);
         if (!out.length) {

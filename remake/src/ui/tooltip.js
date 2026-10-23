@@ -57,8 +57,8 @@ export function helpTip(G, key) {
 }
 
 // an object (a unit, building, animal): its help item (HelpMenu.GetObjHelpitemKey: by its description key)
-export function objectTip(G, name) {
-  const t = G.data.text(name);
+export function objectTip(G, name, owner = null) {
+  const t = G.data.text(name, owner);
   return ttHtml({ title: t.name, cls: t.cls, lvl: t.lvl, body: t.medium, vs: t.vs });
 }
 

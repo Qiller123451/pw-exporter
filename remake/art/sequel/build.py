@@ -5,7 +5,7 @@ default folder, art/sequel/built, is the copy in the repository that the pipelin
 data (pipeline/sequel_assets.py): building needs Blender's Python module and the materials (fetch.py), the game
 does not."""
 import os, sys, json, time
-from . import kit, town, vehicles, works, roads, london
+from . import kit, town, vehicles, works, roads, london, houses
 
 # name -> (builder, kind, texture size, scale: ParaWorld's larger-than-life proportions)
 CATALOGUE = {}
@@ -74,8 +74,6 @@ CATALOGUE.update({
     'sq_arc_halftrack': (vehicles.arc_halftrack, 'unit', 1024, 1.3),
     # London by night (london.py, the mission "The Society"): the film's city
     'sq_society': (london.society, 'prop', 2048, 1.3),
-    'sq_terrace_corner': (london.corner, 'prop', 1024, 1.2),
-    'sq_terrace_corner_red': (lambda: london.corner('red', 5), 'prop', 1024, 1.2),
     'sq_wheel_frame': (london.wheel_frame, 'prop', 1024, 1.0),
     'sq_wheel_rim': (london.wheel_rim, 'prop', 1024, 1.0),
     'sq_pier': (london.pier, 'prop', 1024, 1.0),
@@ -88,8 +86,19 @@ CATALOGUE.update({
     'sq_barge': (london.barge, 'prop', 512, 1.0),
     'sq_tug': (london.tug, 'prop', 512, 1.0),
 })
-for k, st in enumerate(london.TERRACE):
-    CATALOGUE[f'sq_terrace_{st}'] = (lambda st=st, k=k: london.terrace(st, 3, 20 + k), 'prop', 1024, 1.2)
+# London's houses (houses.py): rows of 14, 21 and 28 m (life size; 1.2 times in the game), each a terrace of one kind
+# or a street of different houses; the corner buildings
+ROWS = {
+    14: [('street', None), ('terrace', 'georgian'), ('street', None), ('terrace', 'shops')],
+    21: [('terrace', 'italianate'), ('street', None), ('terrace', 'mansion'), ('street', None), ('terrace', 'chambers'), ('street', None)],
+    28: [('terrace', 'georgian'), ('street', None), ('terrace', 'italianate'), ('street', None)],
+}
+for w, variants in ROWS.items():
+    for k, (mood, kind) in enumerate(variants):
+        CATALOGUE[f'sq_row{w}_{k + 1}'] = (lambda w=w, k=k, mood=mood, kind=kind: houses.row(w, 100 * w + k, mood, kind), 'prop',
+                                          1024 if w == 14 else 2048, 1.2)
+for k, kind in enumerate(houses.CORNERS):
+    CATALOGUE[f'sq_corner_{kind}'] = (lambda kind=kind, k=k: houses.corner(kind, 40 + k), 'prop', 1024, 1.2)
 
 
 

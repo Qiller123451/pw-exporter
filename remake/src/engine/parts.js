@@ -43,7 +43,9 @@ export function sigVisible(sig, level, dmg, age) {
 // light shapes of an effect, which are what is shown (fx_heal_area, fx_holy_forest, ash_lava_glow_01)
 export function helperPart(a, fourcc, additive = false) {
   if ((a >>> BIT.PICK) & 1 && fourcc !== 'Wall' && !(additive && fourcc === 'Deko')) return 'pick';
-  if (fourcc !== 'Anim' && fourcc !== 'Char' && (a >>> BIT.SHADOW) & 1) return 'shadow';
+  // (a wall piece's construction parts - the states A, B, C of every arm and hub: levels 0-1, 1-3, 3 - carry the pick
+  // and shadow bits too and are drawn: without them a wall under construction showed nothing until finished)
+  if (fourcc !== 'Anim' && fourcc !== 'Char' && fourcc !== 'Wall' && (a >>> BIT.SHADOW) & 1) return 'shadow';
   if (!(a & 1)) return 'lod';
   return null;
 }

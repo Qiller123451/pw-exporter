@@ -109,6 +109,7 @@ export const Scripting = {
     const from = e.owner;
     if (e.kind === 'unit') {
       this.releaseTask(e);
+      this.dropStates(e);
       for (const q of e.queue) { if (from) { from.refund(q.action.cost); if (q.level) { from.queuedAtLevel[q.level - 1]--; from.queuedUnits--; } } }
       e.queue = [];
       if (from) {
@@ -186,6 +187,7 @@ export const Scripting = {
     if (!e || !e.alive || e.kind !== 'unit') return false;
     if (e.inside && this.leaveTransport) this.leaveTransport(e, x, z);
     this.releaseTask(e);
+    this.dropStates(e);
     const nav = this.navFor(e);
     if (!nav.isFree(x, z)) [x, z] = nav.center(nav.nearestFree(nav.idx(x, z)));
     e.task = { type: 'idle' }; e.path = []; e.vel.set(0, 0, 0); e.busyAnim = false;
@@ -202,7 +204,7 @@ export const Scripting = {
     if (!e || !e.alive || !!e.parked === !!parked) return;
     e.parked = !!parked;
     if (e.kind === 'unit') {
-      if (parked) { this.releaseTask(e); e.task = { type: 'idle' }; e.path = []; e.vel.set(0, 0, 0); if (!e.inside) this.uHash.remove(e); if (e.obj) e.obj.visible = false; }
+      if (parked) { this.releaseTask(e); this.dropStates(e); e.task = { type: 'idle' }; e.path = []; e.vel.set(0, 0, 0); if (!e.inside) this.uHash.remove(e); if (e.obj) e.obj.visible = false; }
       else if (!e.inside) { this.uHash.insert(e); e.anchor.set(e.pos.x, e.pos.z); }
       // a trailer (the Dustriders' collector wagon) is drawn apart from its unit: hidden with it, hitched again where
       // the unit comes back
@@ -230,6 +232,7 @@ export const Scripting = {
     if (!p) return;
     for (const r of ['food', 'wood', 'stone']) if (caps[r] != null && Number.isFinite(+caps[r])) p.caps[r] = +caps[r];
     p.capsFixed = true;
+    if (p.cheat && p.cheat.storage != null) for (const r of ['food', 'wood', 'stone']) p.caps[r] = Math.max(p.caps[r], p.cheat.storage);    // (debug option)
   },
   // tech tree filters of a player (TECH action, the players' start filters). path as in the data:
   // "/Filters/AntiActions/Hu/Build/CHTR/hu_archer" - an enabled AntiAction FORBIDS that build / upgrade.
@@ -238,6 +241,7 @@ export const Scripting = {
     if (!p || !p.tt || !path) return false;
     const f = String(path).replace(/^\/?Filters\//, '');
     const key = 'script:' + f;
+    if (on && p.unlockAll && /^AntiActions\//.test(f)) return true;          // (debug option "no mission bans": game/cheats.js)
     p.scriptFilters = p.scriptFilters || new Set();
     if (on && !p.scriptFilters.has(key)) { p.scriptFilters.add(key); p.tt.enable(f); }
     else if (!on && p.scriptFilters.has(key)) { p.scriptFilters.delete(key); p.tt.disable(f); }

@@ -13,6 +13,8 @@ import { TribeSwap } from '../game/campaign/tribes.js';
 import { MISSIONS as SEQUEL_MISSIONS, SEQUEL_ORDER, migrateSettings } from '../game/sequel/missions.js';
 import { SEQUEL_MOD, SEQUEL_CLASSES } from '../game/sequel/rules.js';
 import { HelpBook } from './helpbook.js';
+import { debugPage, debugRow, withCheats } from './debugopts.js';
+import { raiseEpoch, spawnable, spawnObject } from '../game/cheats.js';
 
 export const DEFAULT_SETTINGS = {
   showIncome: false, mentor: true, autosave: true, autosaveMin: 10, shadows: 'on', grass: 'on', particles: 'on', weather: true, fpsCap: 60, resScale: 1, uiScale: 0, perf: false, edgeScroll: true, autoMenu: true, tipNear: true, minimapRotate: false, minimapPlayerColors: true, antialias: true, speed: 1,
@@ -110,7 +112,7 @@ export class Menu {
   static missionOpen(id) { return !!Menu.MISSIONS[id] || new URLSearchParams(location.search).has('allmissions'); }
   // the original single player campaign: the missions of the installation (campaign/index.json: id, title,
   // description, tribe), a difficulty, the tribe to play, start. The config of a mission is { campaign: id,
-  // difficulty: 0 | 1 | 2, tribe: '' | 'Hu' | 'Aje' | 'Ninigi' | 'SEAS' }.
+  // difficulty: 0 | 1 | 2 | 3 (Nightmare), tribe: '' | 'Hu' | 'Aje' | 'Ninigi' | 'SEAS' }.
   async campaign() {
     const s = this.G.settings, k = s.campaign;
     const esc = (t) => String(t || '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' })[c]);
@@ -118,8 +120,10 @@ export class Menu {
       <div class="pwgrp"><b>Your tribe</b><div class="tribes" id="c_tribe"><div class="tribe ${k.tribe ? '' : 'on'}" data-t=""><i style="background-position:0 -${4 * 21}px"></i>As in the mission</div>${Object.entries(TRIBE_INFO).map(([t, i]) =>
         `<div class="tribe ${t === k.tribe ? 'on' : ''}" data-t="${t}"><i style="background-position:0 -${i.icon * 21}px"></i>${i.name}</div>`).join('')}</div></div>
       <div class="pwgrp"><b>Difficulty</b><div class="set"><span>How strong the opponents are</span><select class="pwsel" id="c_diff">
-        ${['Easy', 'Medium', 'Hard'].map((v, i) => `<option value="${i}" ${+k.difficulty === i ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+        ${['Easy', 'Medium', 'Hard', 'Nightmare'].map((v, i) => `<option value="${i}" ${+k.difficulty === i ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+        <small>Easy, Medium and Hard are the original game's. Nightmare: Hard with the remake's bigger enemy raids.</small>
         <div class="set hidden" id="c_modrow"><span>Game data</span><select class="pwsel" id="c_mod"></select></div><small id="c_modnote"></small></div>
+      ${debugRow(this)}
       <div class="btns row">${this.btn('back', 'Back', 'small')}${this.btn('start', 'Start mission', 'small')}</div>`, { title: true });
     const list = this.win.querySelector('#c_list'), text = this.win.querySelector('#c_text');
     let missions = [], shown = null;
@@ -139,12 +143,13 @@ export class Menu {
     };
     this.bind({
       back: () => this.title(),
+      cheats: () => { k.difficulty = +this.win.querySelector('#c_diff').value; saveSettings(s); debugPage(this, () => this.campaign()); },
       start: () => {
         if (!missions.length || !shown || !Menu.missionOpen(shown.id) || this.busy) return;
         k.mission = shown.id;
         k.difficulty = +this.win.querySelector('#c_diff').value;
         saveSettings(s);
-        const cfg = { campaign: k.mission, difficulty: k.difficulty, tribe: k.tribe || '' };
+        const cfg = withCheats(s, { campaign: k.mission, difficulty: k.difficulty, tribe: k.tribe || '' });
         const conf = configs.find((c) => c.id === k.mod);
         const go = (c) => {
           if (conf && conf.id !== CONFIG_MOD) { this.campaign().then(() => this.switchConfig(conf, c)); return; }
@@ -269,15 +274,54 @@ export class Menu {
   // ---------------------------------------------------------------- in game
   main() {
     this.inGame = true;
-    this.open('Menu', `<div class="btns">${this.btn('resume', 'Resume game')}${this.btn('save', 'Save game')}${this.btn('load', 'Load game')}${this.btn('settings', 'Options')}${this.btn('book', 'Help')}${this.btn('help', 'Controls')}
+    const dbg = this.G.world && this.G.world.cheats;
+    this.open('Menu', `<div class="btns">${this.btn('resume', 'Resume game')}${dbg ? this.btn('debug', 'Debug tools') : ''}${this.btn('save', 'Save game')}${this.btn('load', 'Load game')}${this.btn('settings', 'Options')}${this.btn('book', 'Help')}${this.btn('help', 'Controls')}
       ${this.btn('restart', this.G.campaign ? 'Restart mission' : 'Restart skirmish')}${this.btn('quit', 'Quit to main menu')}${this.btn('exit', 'Exit game')}</div>`);
     this.bind({
-      resume: () => this.close(), save: () => this.saveWin(), load: () => this.loadWin(() => this.main()), settings: () => this.settings(() => this.main()), help: () => this.help(() => this.main()), book: () => this.helpBook(null, () => this.main()),
+      resume: () => this.close(), debug: () => this.debugTools(), save: () => this.saveWin(), load: () => this.loadWin(() => this.main()), settings: () => this.settings(() => this.main()), help: () => this.help(() => this.main()), book: () => this.helpBook(null, () => this.main()),
       restart: () => this.confirm(this.G.campaign ? 'Restart the mission?' : 'Restart the skirmish?', () => this.hooks.restart && this.hooks.restart(), () => this.main()),
       quit: () => this.confirm('Quit to the main menu?', () => this.hooks.quit && this.hooks.quit(), () => this.main()),
       exit: () => this.confirm('Exit the game?', () => this.hooks.exit && this.hooks.exit(), () => this.main()),
     });
     this.versionLine();
+  }
+  // ---------------------------------------------------------------- debug tools (a game with debug options: game/cheats.js)
+  // things to do at once in the running game; the window stays open, a line says what was done
+  debugTools() {
+    const G = this.G, W = G.world, me = G.me, D = G.data;
+    const say = (t) => { const e = this.win.querySelector('#d_did'); if (e) e.textContent = t; };
+    const mine = (f) => [...W.units, ...W.buildings].filter((e) => e.alive && e.owner === me && (!f || f(e)));
+    this.open('Debug tools', `<div class="pwgrp"><b>Resources</b><div class="btns row">${this.btn('res', '+1000 food, wood, stone', 'small')}${this.btn('skulls', '+500 skulls', 'small')}</div></div>
+      <div class="pwgrp"><b>You</b><div class="btns row">${this.btn('epoch', 'Next epoch', 'small')}${this.btn('free', me.debug ? 'Free and instant: on' : 'Free and instant: off', 'small')}${this.btn('heal', 'Heal everything', 'small')}</div>
+        <div class="btns row">${this.btn('lvl', 'Selected: level up', 'small')}${this.btn('kill', 'Selected: destroy', 'small')}</div></div>
+      <div class="pwgrp"><b>Put down an object</b><div class="dbgspawn"><input class="pwsel" id="d_cls" list="d_clslist" placeholder="class, e.g. hu_warrior" value="${esc(this.lastSpawn || '')}">
+        <datalist id="d_clslist">${spawnable(D).map((o) => `<option value="${esc(o.name)}">${esc(o.tribe + ' ' + o.type)}</option>`).join('')}</datalist>
+        <select class="pwsel" id="d_side"><option value="me">yours</option><option value="foe">enemy</option><option value="wild">wild</option></select>
+        <select class="pwsel" id="d_lvl">${[1, 2, 3, 4, 5].map((l) => `<option value="${l}">level ${l}</option>`).join('')}</select>
+        ${this.btn('spawn', 'Put down', 'small')}</div><small>At the middle of the screen. Your new Workshop objects are in the list too.</small></div>
+      <div class="pwgrp"><b>World</b><div class="btns row">${this.btn('fog', G.fow && G.fow.revealAll ? 'Fog of war: off' : 'Fog of war: on', 'small')}${(G.campaign || G.sequel) ? this.btn('win', 'Win the mission', 'small') + this.btn('lose', 'Lose the mission', 'small') : ''}</div></div>
+      <p id="d_did"></p><div class="btns row">${this.btn('back', 'Back', 'small')}${this.btn('resume', 'Resume game', 'small')}</div>`);
+    this.bind({
+      res: () => { for (const r of ['food', 'wood', 'stone']) me.res[r] = (me.res[r] || 0) + 1000; say('+1000 food, wood and stone (above the storage limit too).'); },
+      skulls: () => { me.res.skulls = (me.res.skulls || 0) + 500; say('+500 skulls.'); },
+      epoch: () => { const e = me.epoch(); raiseEpoch(G, me, e + 1, me.maxEpoch || 0); say(me.epoch() > e ? `Epoch ${me.epoch()}.` : 'No further epoch (the highest, or the limit of the debug options).'); },
+      free: () => { me.debug = !me.debug; this.debugTools(); say(me.debug ? 'Everything is free and instant for you now.' : 'Costs and times are back.'); },
+      heal: () => { const l = mine((e) => e.hp < e.maxHp && (e.kind === 'unit' || e.built)); for (const e of l) e.hp = e.maxHp; say(`${l.length} healed or repaired.`); },
+      lvl: () => { let n = 0; for (const u of [...G.sel]) if (u.alive && u.owner === me && u.kind === 'unit' && !W.levelUp(u)) n++; say(`${n} of the selected units levelled up${me.debug ? '' : ' (for skulls)'}.`); },
+      kill: () => { let n = 0; for (const e of [...G.sel]) if (e.alive) { W.damage(e, e.hp + 1e6, null); n++; } say(`${n} destroyed.`); },
+      spawn: () => {
+        const n = this.win.querySelector('#d_cls').value.trim(), side = this.win.querySelector('#d_side').value, lv = +this.win.querySelector('#d_lvl').value;
+        if (!n) return say('Type the class name of the object.');
+        this.lastSpawn = n;
+        const c = G.rtscam || { x: 0, z: 0 };
+        const got = spawnObject(G, n, side, c.x, c.z, lv);
+        say(typeof got === 'string' ? got : `${(D.text(n, got.owner) || {}).name || n} put down.`);
+      },
+      fog: () => { if (G.fow) G.fow.revealAll = !G.fow.revealAll; if (G.updateFow) G.updateFow(); this.debugTools(); say(G.fow && G.fow.revealAll ? 'The whole map is visible.' : 'The fog of war is back.'); },
+      win: () => { this.close(); G.endMission(true, { text: 'Won with the debug tools.' }); },
+      lose: () => { this.close(); G.endMission(false, { text: 'Lost with the debug tools.' }); },
+      back: () => this.main(), resume: () => this.close(),
+    });
   }
   // ---------------------------------------------------------------- the sequel campaign (docs/SEQUEL.md)
   sequel() {
@@ -290,6 +334,7 @@ export class Menu {
       <div class="pwgrp"><b>Difficulty</b><div class="set"><span>How strong the outbreak is</span><select class="pwsel" id="q_diff">
         ${['Easy', 'Medium', 'Hard'].map((t, i) => `<option value="${i}" ${+k.difficulty === i ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
         <small id="c_modnote">${Menu.dataMod(this.G) === SEQUEL_MOD ? '' : `Played with the ${SEQUEL_MOD} mod's game data (its SEAS).`}</small></div>
+      ${debugRow(this)}
       <div class="btns row">${this.btn('back', 'Back', 'small')}${this.btn('start', 'Start mission', 'small')}</div>`, { title: true });
     const list = this.win.querySelector('#q_list'), text = this.win.querySelector('#q_text');
     const show = (id) => {
@@ -305,11 +350,12 @@ export class Menu {
     show(+k.mission || 1);
     this.bind({
       back: () => this.title(),
+      cheats: () => { k.difficulty = +this.win.querySelector('#q_diff').value; saveSettings(s); debugPage(this, () => this.sequel()); },
       start: async () => {
         if (this.busy) return;
         k.difficulty = +this.win.querySelector('#q_diff').value;
         saveSettings(s);
-        const cfg = { sequel: k.mission, difficulty: k.difficulty };
+        const cfg = withCheats(s, { sequel: k.mission, difficulty: k.difficulty });
         // the MIRAGE configuration's data (built from the installation the first time: switchConfig)
         if (Menu.dataMod(this.G) !== SEQUEL_MOD) {
           const conf = (await this.configs()).find((c) => c.id === SEQUEL_MOD);
@@ -459,7 +505,7 @@ export class Menu {
       <tr><td>Walls</td><td>Click the start point, then the end point: a line of segments is placed</td></tr>
       <tr><td>Arrows · screen edge · wheel</td><td>Scroll · zoom · PgUp/PgDn zoom · End reset</td></tr>
       <tr><td>Middle drag · Alt + left / middle + right drag</td><td>Pan · turn the camera (Alt + right drag: pan)</td></tr>
-      <tr><td>Army pyramid</td><td>Drag a card into a higher row to level the unit up (skulls), into a lower row to level it down; drop it on another card to swap</td></tr>
+      <tr><td>Army pyramid</td><td>Drag a card onto a free place of a higher row to level the unit up (the skulls of every level on the way); right-click a card: one level up</td></tr>
       <tr><td>Ctrl+U · right click on a card</td><td>Level up by one</td></tr>
       <tr><td>Ctrl+0–9 · 0–9</td><td>Assign / select group (double tap centres; Ctrl+digit with nothing selected keeps the view)</td></tr>
       <tr><td>W · Shift+W · Ctrl+W · .</td><td>Next idle worker · add one · all idle workers · next idle worker</td></tr>
@@ -490,7 +536,7 @@ export class Menu {
     if (m) {
       // a mission: its name, the result (the game's own "_GAOV_" lines), why it was lost, what the quests came to
       const quests = (C && C.data && C.data.quests || []).filter((q) => q.visible);
-      const key = ['easy', 'medium', 'hard'][m.difficulty] || 'medium', pts = (q) => +((q.bonus || {})[key] || 0);
+      const key = ['easy', 'medium', 'hard', 'hard'][m.difficulty] || 'medium', pts = (q) => +((q.bonus || {})[key] || 0);
       const earned = quests.reduce((a, q) => a + (q.accomplished ? pts(q) : 0), 0), max = quests.reduce((a, q) => a + pts(q), 0);
       const st = (q) => (q.accomplished ? 'done' : q.unaccomplishable ? 'failed' : 'open');
       const mark = { done: '✔', failed: '✘', open: '•' };

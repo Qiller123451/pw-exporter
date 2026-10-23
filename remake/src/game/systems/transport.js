@@ -69,6 +69,7 @@ export const Transport = {
   },
   enterTransport(u, t) {
     this.releaseTask(u);
+    this.dropStates(u);
     t.passengers = t.passengers || [];
     t.passengers.push(u);
     u.inside = t;

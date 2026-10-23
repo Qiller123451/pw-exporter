@@ -156,6 +156,9 @@ export const Fight = {
   // the fight module's gate (FM:205-241) and the goal for a plan entry
   // force: past the gate (the timer attack of the last 5 minutes, FM:1126-1180)
   requestAttack(S, type, enemy, targets = null, pos = null, force = false) {
+    // debug option "passive computer" (game/cheats.js): no attack of its own on the human player (a mission's scripted
+    // attacks, startAttack, still come)
+    if (this.W.cheats && this.W.cheats.ai === 'passive' && (!enemy || enemy.id === this.W.cheats.human)) return null;
     // melee or ranged army? By the range of what is to be attacked (CheckTargetTypeOfEnemy, DA:1857)
     if ((type === 'suicide' || type === 'violence') && enemy) {
       let long = 0, short = 0;
@@ -272,15 +275,22 @@ export const Fight = {
       // epochs, capped at what a first-epoch pool holds) and goes together, in every epoch: without that the units
       // trained after an all-in follow it one by one
       const units = S.pool.filter((u) => !u.def.unique || S.age > 1);
-      const need = !a.scripted ? Math.min(4, lv.pyramidAttackUnits || 4) : 1;
+      // (the original's way - extraSquads false, the campaign below Nightmare: in the first epoch the units go as
+      // they are, without waiting for each other)
+      const orig = !this.extraSquads && S.age <= 1;
+      const need = !a.scripted && !orig ? Math.min(4, lv.pyramidAttackUnits || 4) : 1;
       if (units.length < need) return a.end('no units');
       if (S.age > 1 && !a.scripted && !this.strongEnough(a, units, lv.attackStrength) && units.length < (lv.pyramidAttackUnits || 10)) return a.end('too strong');
       a.add(units);
+      a.noGather = orig;
       return this.attackGather(S, a);
     }
     const table = this.cfg.valueTable || 'Dodo';
-    // a tribe without any army table (its settings folder is missing): a squad from the tech tree instead
-    const army = a.armyName ? DATA.army(this.p.tribe, table, a.armyName) || (DATA.hasArmies(this.p.tribe) || a.goal === 'quick' ? null : this.fallbackArmy(S, a.armyName)) : null;
+    // a tribe without any army table (its settings folder is missing: Hu, Ninigi): the original takes pool units only
+    // (below); the remake's own squads from the tech tree where extraSquads allows them (skirmish, the campaign's
+    // Nightmare)
+    const own = this.extraSquads && !DATA.hasArmies(this.p.tribe) && a.goal !== 'quick';
+    const army = a.armyName ? DATA.army(this.p.tribe, table, a.armyName) || (own ? this.fallbackArmy(S, a.armyName) : null) : null;
     if (!army) {
       // no army table (GetUnits fails): pool units only (SU:116-151)
       const extra = a.goal === 'pureviolence' ? S.age * 2 : 0;
@@ -352,7 +362,7 @@ export const Fight = {
     const g = this.guardPoint(S);
     a.rally = g;
     const far = us.filter((u) => d2({ x: u.pos.x, z: u.pos.z }, g) > 24);
-    if (far.length <= us.length * 0.2) return this.attackGo(S, a, us);
+    if (a.noGather || far.length <= us.length * 0.2) return this.attackGo(S, a, us);
     this.W.order(far, { type: 'move', x: g.x, z: g.z, auto: true });
     a.set('gather');
   },
@@ -524,10 +534,18 @@ export const Fight = {
       return this.launch(S, a) ? a.id : null;
     }
     const a = new Attack(this, { type, goal: 'singleplayer', armyName: type, targets, pos: position, scripted: true, onTheWay: attackOnTheWay, targetOnly, spawned: spawn });
-    const army = DATA.army(this.p.tribe, 'Singleplayer', type) || this.fallbackArmy(S, type, true);
-    if (!army) return null;
+    const army = DATA.army(this.p.tribe, 'Singleplayer', type) || (this.extraSquads ? this.fallbackArmy(S, type, true) : null);
+    if (!army && this.extraSquads) return null;
     this.attacks.push(a);
     this.launched.push({ id: a.id, t: Math.round(this.W.time), type, goal: a.goal, scripted: true, n: 0 });
+    if (!army) {
+      // no table (GetUnits fails): pool units only, 1-4 / 1-6 / 2-8 by difficulty, nothing spawned (SP:198-229)
+      const sq = DATA.squad('singleplayer', this.cls), units = this.queryPool(S, sq.min, sq.max);
+      if (!units) { a.end('no units'); return null; }
+      a.add(units);
+      this.attackGather(S, a);
+      return a.state === 'over' ? null : a.id;
+    }
     if (spawn) {
       const made = this.spawnArmy(S, army, spawnPosition || this.start || S.home, ignoreLocations, type);
       if (!made.length) { a.end('no units'); return null; }

@@ -44,7 +44,7 @@ export class Entity {
   // the tree rules are read from: the owner's, or this object's own local tree
   rulesOwner() {
     if (!this.localTT) return this.owner;
-    if (!this._ro) { const o = this.owner; this._ro = { tt: this.localTT, tribe: o.tribe, get debug() { return !!o.debug; } }; }
+    if (!this._ro) { const o = this.owner; this._ro = { tt: this.localTT, tribe: o.tribe, get debug() { return !!o.debug; }, get maxEpoch() { return o.maxEpoch || 0; } }; }
     return this._ro;
   }
   // derived combat values of a weapon (default: the weapon in hand), after the tribe's modifiers
@@ -405,6 +405,7 @@ export class Unit extends Entity {
   }
   moveAnim(sp, run) {
     if (sp > 0.15) {
+      this.busyAnim = false;            // (walking cuts an action short - its onDone, which ended busyAnim, is gone)
       let a = run ? this.runAnim : this.walkAnim;
       const as = run ? this.runAnimSpeed : this.animSpeed;
       const ws = this.walkSet();
@@ -689,14 +690,19 @@ export class Building extends Entity {
   updateVisual() {
     const L = this.constructLevel(), dmg = this.destructLevel();
     if (this.owner) this.age = this.owner.epoch();
+    const night = !!this.night;          // its lights (World.nightCheck; parts.js applyNight)
+    // (called every frame: the state is compared field by field, the key string only made when it changed)
+    const s = this._vs, wp = this.wallParts || null;
+    if (this.visKey && s && s.L === L && s.dmg === dmg && s.age === this.age && s.arm === (this.armMask || 0) && s.gate === !!this.gateEnds && s.night === night &&
+      (s.wp === wp ? !wp || (s.wpn === wp.length && wp.every((x, i) => s.wpc[i] === x)) : false)) return;
+    this._vs = { L, dmg, age: this.age, arm: this.armMask || 0, gate: !!this.gateEnds, night, wp, wpn: wp ? wp.length : 0, wpc: wp ? wp.slice() : null };
     if (this.def.wallKind === 'wall') {
       this.model.userData.armMask = this.armMask || 0;
       // the model parts the WallMap named (BuildName): hub and one piece per direction; their variants A..P are the
       // construction and damage states, picked by applyState
       this.model.userData.parts = this.wallParts ? new Set(this.wallParts) : new Set(['x2', '0f', '1f', '2f', '3f', '4f', '5f', '6f', '7f']);
     }
-    const night = !!this.night;          // its lights (World.nightCheck; parts.js applyNight)
-    const key = L + '|' + dmg + '|' + this.age + '|' + (this.armMask || 0) + '|' + (this.wallParts ? this.wallParts.join('.') : '') + '|' + (this.gateEnds ? 1 : 0) + '|' + night;
+    const key = L + '|' + dmg + '|' + this.age + '|' + (this.armMask || 0) + '|' + (wp ? wp.join('.') : '') + '|' + (this.gateEnds ? 1 : 0) + '|' + night;
     if (key === this.visKey) return;
     this.visKey = key;
     this.dmgStage = dmg;
@@ -746,6 +752,8 @@ export class Building extends Entity {
     this.deliverT = (lp ? lp[0] : 0) + loop;
     a.play('deliver', { restart: true });
   }
+  // (off the screen: the animations advance a few times per second only - posing the bones of a few hundred
+  // buildings, their turrets and cranes every tick was a good part of the simulation's time; World.animTick)
   updateAnim(dt, t) {
     const a = this.anim;
     if (a) {
@@ -755,13 +763,17 @@ export class Building extends Entity {
         if (a.has('work_finished')) a.play('work_finished', { loop: false, onDone: () => this.idleAnim() });
         else this.idleAnim();
       }
-      a.update(dt);
     }
-    for (const p of this.parts || []) if (p.anim) p.anim.update(dt);
+    this.animAcc = (this.animAcc || 0) + dt;
+    if (this.onScreen === false && this.animAcc <= 0.3) return;
+    const at = this.animAcc;
+    this.animAcc = 0;
+    if (a) a.update(at);
+    for (const p of this.parts || []) if (p.anim) p.anim.update(at);
     for (const c of this.cranes) if (c.anim) {
       const busy = [...this.builders].some((w) => w.alive && w.task.building === this && w.task.phase === 'work');
       if (busy) { if (c.anim.curName !== 'build') c.anim.play('build'); else c.anim.cur.paused = false; } else if (c.anim.cur) c.anim.cur.paused = true;
-      c.anim.update(dt);
+      c.anim.update(at);
     }
   }
   aimTurret(x, z, dt) {

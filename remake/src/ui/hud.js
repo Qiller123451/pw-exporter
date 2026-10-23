@@ -23,6 +23,7 @@ function el(tag, cls, parent, html) {
 const img = (file) => `url(${UIA.base}${file})`;
 
 const fmt = (n) => Math.floor(n).toString();
+const REASON_DOWN = 'A unit keeps the level it has reached';
 
 export class HUD {
   constructor(G) {
@@ -288,13 +289,17 @@ export class HUD {
     set('skulls', fmt(p.res.skulls));
     for (const r of ['food', 'wood', 'stone']) set(r, fmt(p.res[r]), inc ? `+${inc[r]}` : '');
     const ep = p.epoch();
-    const et = `Epoch ${['', 'I', 'II', 'III', 'IV', 'V'][ep]}` + (p.debug ? '  ·  Debug mode (free, instant)' : '');
+    const et = `Epoch ${['', 'I', 'II', 'III', 'IV', 'V'][ep]}` + (W.cheats ? '  ·  Debug options' : p.debug ? '  ·  Debug mode (free, instant)' : '');
     if (this.epochEl.textContent !== et) this.epochEl.textContent = et;
     this.hoverT -= dt;
     if (this.hoverT <= 0) { this.hoverT = 0.25; this.refreshInfo(); this.refreshPyramid(); this.refreshCommands(); this.epT = (this.epT || 0) - 0.25; if (this.epT <= 0) { this.epT = 1; this.refreshEpochBar(); } this.refreshGroups(); this.refreshTimers(); }
     if (!this.perfEl.classList.contains('hidden')) {
       const s = G.renderer.stats;
-      this.perfEl.textContent = `${s.fps} fps  ·  cpu ${(s.cpu || 0).toFixed(1)} ms  ·  ${s.calls || 0} draw calls  ·  ${((s.tris || 0) / 1000).toFixed(0)}k tris  ·  units ${W.units.length}`;
+      // the frame's work on the processor (main.js G.prof): the whole, the simulation, the draw calls' submission, the
+      // two slowest other steps
+      const P = G.prof || {}, ms = (v) => (v || 0).toFixed(1);
+      const top = Object.entries(P).filter(([k]) => !['frame', 'simulation', 'render'].includes(k)).sort((a, b) => b[1] - a[1]).slice(0, 2);
+      this.perfEl.textContent = `${s.fps} fps  ·  frame ${ms(P.frame)} ms: simulation ${ms(P.simulation)}, drawing ${ms(P.render)}, ${top.map(([k, v]) => `${k} ${ms(v)}`).join(', ')}  ·  ${s.calls || 0} draw calls  ·  ${((s.tris || 0) / 1000).toFixed(0)}k tris  ·  units ${W.units.length}`;
     }
   }
 
@@ -351,7 +356,7 @@ export class HUD {
       am.onmouseenter = () => this.showTip(am, buttonTip(G, '_iw_resourceamount')); am.onmouseleave = () => this.hideTip();
       return;
     }
-    const t = G.data.text(e.name);
+    const t = G.data.text(e.name, e.owner);
     const ic = iconFor(e.name);
     const f = Math.max(0, e.hp / e.maxHp);
     const lvl = e.level && e.kind === 'unit' ? `Level ${e.level}` : e.kind === 'building' ? 'Building' : '';
@@ -398,7 +403,7 @@ export class HUD {
     b.innerHTML = h;
     // the portrait's tooltip: what the unit does at each level (heroes), its strengths
     const por = b.querySelector('.por');
-    if (por) { por.onmouseenter = () => this.showTip(por, objectTip(G, e.name)); por.onmouseleave = () => this.hideTip(); }
+    if (por) { por.onmouseenter = () => this.showTip(por, objectTip(G, e.name, e.owner)); por.onmouseleave = () => this.hideTip(); }
     // the hit points and the attributes: the info window's own help items (Info.usl: _iw_hitpoints, _iw_attack ...)
     const hpb = b.querySelector('.hp');
     if (hpb) { hpb.onmouseenter = () => this.showTip(hpb, buttonTip(G, '_iw_hitpoints')); hpb.onmouseleave = () => this.hideTip(); }
@@ -671,19 +676,26 @@ export class HUD {
     for (const b of G.world.buildings) if (b.alive && b.owner === p && b.countsInPop) byLevel[b.level - 1].push(b);     // the floating harbour
     const queued = [[], [], [], [], []];
     for (const e of [...G.world.buildings, ...G.world.units]) if (e.alive && e.owner === p && e.queue) for (const q of e.queue) if (q.level) queued[q.level - 1].push(q);
-    const key = byLevel.map((l) => l.map((u) => u.id + (G.sel.has(u) ? 's' : '') + Math.round(u.hp / u.maxHp * 20) + ':' + (this.taskIcon(u) || '')).join(',')).join('/') + '#' + queued.map((q) => q.length).join(',') + '#' + Math.floor(p.res.skulls);
+    // the places of each row: the pyramid's own, more beside it when a debug option allows more (game/cheats.js)
+    const lim = G.world.pyramidFor ? G.world.pyramidFor(p) : PYR.map((r) => r.length);
+    this.rowN = [0, 1, 2, 3, 4].map((lv) => Math.max(PYR[lv].length, lim[lv] || 0, byLevel[lv].length + queued[lv].length));
+    const key = this.rowN.join(',') + '|' + byLevel.map((l) => l.map((u) => u.id + (G.sel.has(u) ? 's' : '') + Math.round(u.hp / u.maxHp * 20) + ':' + (this.taskIcon(u) || '')).join(',')).join('/') + '#' + queued.map((q) => q.length).join(',') + '#' + Math.floor(p.res.skulls);
     if (key === this.pyrKey) return;
     this.pyrKey = key;
     this.pyr.innerHTML = '';
     this.cardUnits = [[], [], [], [], []];
     for (let lv = 0; lv < 5; lv++) {
-      const slots = PYR[lv];
+      const slots = this.slotRects(lv, this.rowN[lv]);
       const list = byLevel[lv].sort((a, b) => a.name.localeCompare(b.name));
       slots.forEach((r, i) => {
         const u = list[i];
         this.cardUnits[lv][i] = u || null;
         const q = !u ? queued[lv][i - list.length] : null;
-        if (!u && !q) return;
+        if (!u && !q) {
+          // a free place beside the pyramid (it has no picture of its own)
+          if (i >= PYR[lv].length) { const x = el('div', 'pxslot', this.pyr); Object.assign(x.style, { left: r[0] + 'px', top: r[1] + 'px', width: r[2] + 'px', height: r[3] + 'px' }); }
+          return;
+        }
         const d = el('div', 'pcard' + (u && G.sel.has(u) ? ' sel' : '') + (q ? ' queued' : ''), this.pyr);
         d.style.left = r[0] + 'px'; d.style.top = r[1] + 'px';
         const name = u ? u.name : q.action.results[0].obj;
@@ -707,7 +719,7 @@ export class HUD {
           d.ondblclick = (ev) => { if (ev.altKey) G.select(this.cardUnits[lv].filter((x) => x && x.alive && x.name === u.name)); else G.centerOn(u); };
           // right-click: one level up; Alt: the right-click's order on it for the selection (heal, board, follow ..)
           d.oncontextmenu = (ev) => { ev.preventDefault(); if (ev.altKey) G.input.orderOn(u, { x: u.pos.x, z: u.pos.z }, ev.shiftKey, ev.ctrlKey); else if (u.kind === 'unit') G.levelUp(u); };
-          d.onmouseenter = () => this.showTip(d, objectTip(G, u.name));         // (PyramidCard.usl: the object's help item)
+          d.onmouseenter = () => this.showTip(d, objectTip(G, u.name, u.owner));         // (PyramidCard.usl: the object's help item)
           d.onmouseleave = () => this.hideTip();
         }
       });
@@ -729,14 +741,23 @@ export class HUD {
   }
 
   // ------------------------------------------------------------------ pyramid drag & drop (NewPyramid.usl)
-  // Drop on an empty slot of another row: level up (sum of the skull costs of every level passed) or down (free).
-  // Drop on another unit's card: the two units swap levels (the lower one pays for its rise).
+  // Drop on a free place of a higher row: level up (the skull costs of every level passed); never down, no swaps
+  // (production.js changeLevel).
+  // the places of row lv for n units: the pyramid's own, then more to the right of the pyramid on the row's lines
+  // (a debug option's bigger pyramid, game/cheats.js)
+  slotRects(lv, n) {
+    const own = PYR[lv];
+    if (!(n > own.length)) return own;
+    const out = own.slice(), ys = [...new Set(own.map((r) => r[1]))], w = own[0][2], h = own[0][3];
+    for (let j = 0; j < n - own.length; j++) out.push([184 + Math.floor(j / ys.length) * (w + 5), ys[j % ys.length], w, h]);
+    return out;
+  }
   pyramidSlotAt(cx, cy) {
     const r = this.pyr.getBoundingClientRect();
     const k = r.width / 177;
     const x = (cx - r.left) / k, y = (cy - r.top) / k;
     for (let lv = 0; lv < 5; lv++) {
-      const i = PYR[lv].findIndex((s) => x >= s[0] - 3 && x <= s[0] + s[2] + 3 && y >= s[1] - 3 && y <= s[1] + s[3] + 3);
+      const i = this.slotRects(lv, (this.rowN || [])[lv] || 0).findIndex((s) => x >= s[0] - 3 && x <= s[0] + s[2] + 3 && y >= s[1] - 3 && y <= s[1] + s[3] + 3);
       if (i >= 0) return { lv, i };
     }
     return null;
@@ -784,14 +805,14 @@ export class HUD {
       ghost.style.left = e.clientX - 14 + 'px'; ghost.style.top = e.clientY - 14 + 'px';
       target = this.pyramidSlotAt(e.clientX, e.clientY);
       let tip = '';
+      // (up only, onto a free slot: NewPyramid.usl SwapSlotsAndCards)
       if (target && target.lv + 1 !== u.level) {
         const other = this.cardUnits[target.lv] && this.cardUnits[target.lv][target.i];
-        let cost = target.lv + 1 > u.level ? G.world.skullCost(u.level, target.lv + 1) : 0;
-        if (other && target.lv + 1 < u.level) cost += G.world.skullCost(target.lv + 1, u.level);
-        const ok = G.me.res.skulls >= cost;
-        tip = `${target.lv + 1 > u.level ? 'Level up' : 'Level down'} to ${target.lv + 1}${other ? ' (swap)' : ''}${cost ? ` · ${cost} skulls` : ''}`;
+        const cost = target.lv + 1 > u.level ? G.world.skullCost(u.level, target.lv + 1) : 0;
+        const ok = target.lv + 1 > u.level && !other && G.me.res.skulls >= cost;
+        tip = target.lv + 1 < u.level ? REASON_DOWN : other ? 'That slot is taken' : `Level up to ${target.lv + 1}${cost ? ` · ${cost} skulls` : ''}`;
         ghost.classList.toggle('bad', !ok);
-      }
+      } else ghost.classList.remove('bad');
       ghost.title = tip;
       ghost.dataset.tip = tip;
     };
@@ -805,8 +826,8 @@ export class HUD {
       target = this.pyramidSlotAt(e.clientX, e.clientY);
       if (!target || target.lv + 1 === u.level) return;
       const other = this.cardUnits[target.lv] && this.cardUnits[target.lv][target.i];
-      if (other && other.kind !== 'unit') return;          // the floating harbour's card does not move
-      G.changeLevel(u, target.lv + 1, other && other !== u ? other : null);
+      if (other && other !== u) { if (target.lv + 1 > u.level) { G.hud.message('That slot is taken: drop the card on a free slot', 'bad'); G.feedback.error(); } else if (target.lv + 1 < u.level) G.changeLevel(u, target.lv + 1); return; }
+      G.changeLevel(u, target.lv + 1);
     };
     window.addEventListener('mousemove', move);
     window.addEventListener('mouseup', up, true);   // capture: the HUD root stops mouseup from bubbling

@@ -31,25 +31,27 @@ const PICK_KEYS = {
 // formula is not in the scripts) - as wide as the arrow is long, at least the command bar's 2.7807
 function arrowSpacing(len, n) { const cols = Math.ceil(Math.sqrt(n * 1.6)); return Math.max(SPACING, Math.min(8, len / Math.max(1, cols - 1))); }
 
-// the placement grid: round dots drawn additively over the ground (ui/input.js updatePlaceGrid)
-const PLACE_GRID_R = 30;
+// the placement grid: round dots over the ground, drawn over everything at a fixed size on the screen
+// (ui/input.js updatePlaceGrid)
+const PLACE_GRID_R = 24, PLACE_STEP = 2;
 let dotTex = null;
 function placeGrid() {
   if (!dotTex) {
     const cv = document.createElement('canvas'); cv.width = cv.height = 32;
-    const g = cv.getContext('2d'), gr = g.createRadialGradient(16, 16, 0, 16, 16, 15);
-    gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.55, 'rgba(255,255,255,0.9)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
-    g.fillStyle = gr; g.fillRect(0, 0, 32, 32);
+    const g = cv.getContext('2d');
+    g.fillStyle = 'rgba(0,0,0,0.85)'; g.beginPath(); g.arc(16, 16, 14, 0, Math.PI * 2); g.fill();      // a dark rim: visible on light ground
+    g.fillStyle = '#fff'; g.beginPath(); g.arc(16, 16, 10.5, 0, Math.PI * 2); g.fill();
     dotTex = new THREE.CanvasTexture(cv);
   }
-  const N = Math.ceil(Math.PI * (PLACE_GRID_R / 2 + 1) ** 2);
+  const N = Math.ceil(Math.PI * (PLACE_GRID_R / PLACE_STEP + 1) ** 2) + 8;
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(N * 3), 3));
   geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(N * 3), 3));
   geo.setDrawRange(0, 0);
-  const pts = new THREE.Points(geo, new THREE.PointsMaterial({ size: 1.8, map: dotTex, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
+  const pts = new THREE.Points(geo, new THREE.PointsMaterial({ size: 9, sizeAttenuation: false, map: dotTex, vertexColors: true, transparent: true, alphaTest: 0.05,
+    depthWrite: false, depthTest: false, fog: false }));
   pts.frustumCulled = false;
-  pts.renderOrder = 2;
+  pts.renderOrder = 5;
   return pts;
 }
 
@@ -146,6 +148,23 @@ export class Input {
     }
     return { x0, y0, x1, y1, z: zmin, area: (x1 - x0) * (y1 - y0) };
   }
+  // distance along the mouse ray to a unit's pick volume (the model's pick parts, else its box; a little narrower than
+  // the box so that the bodies of a clump don't overlap as much), or null
+  unitRayHit(u, ray) {
+    const tpl = u.tpl;
+    if (!tpl || !u.obj) return null;
+    if (!tpl._unitBox) {
+      const bb = tpl.pick ? tpl.pick.clone() : new THREE.Box3().setFromObject(tpl.scene);
+      const c = bb.getCenter(new THREE.Vector3()), h = bb.getSize(new THREE.Vector3()).multiplyScalar(0.5);
+      h.x *= 0.8; h.z *= 0.8;
+      tpl._unitBox = new THREE.Box3(c.clone().sub(h), c.clone().add(h));
+    }
+    const P = this._pk || (this._pk = { inv: new THREE.Matrix4(), ray: new THREE.Ray(), a: new THREE.Vector3(), b: new THREE.Vector3(), c: new THREE.Vector3(), hit: new THREE.Vector3() });
+    u.obj.updateWorldMatrix(true, false);
+    P.inv.copy(u.obj.matrixWorld).invert();
+    if (!P.ray.copy(ray).applyMatrix4(P.inv).intersectBox(tpl._unitBox, P.hit)) return null;
+    return P.hit.applyMatrix4(u.obj.matrixWorld).distanceTo(ray.origin);
+  }
   // distance along the mouse ray to the box around a building's model (cheap; the order pickHit tries them in), or null
   boxHit(e, ray) {
     const tpl = e.tpl;
@@ -222,8 +241,20 @@ export class Input {
     const G = this.G;
     let best = null, ba = 1e12;
     const pad = 4;
+    const shown = (u) => u.alive && u.obj && !u.inside && u.obj.visible && !u.unselectable && !(u.owner !== G.me && (!G.fow.visible(u.pos.x, u.pos.z) || G.world.hiddenFrom(u, G.me)));
+    // as the original picks (the engine's ray against the objects' pick volumes): the unit whose volume the mouse
+    // ray meets first - in a clump the one in front, exactly the one under the cursor
+    const ray0 = this.ray(mx, my).clone();
+    let ud = Infinity;
     for (const u of G.world.units) {
-      if (!u.alive || !u.obj || u.inside || !u.obj.visible || u.unselectable || (u.owner !== G.me && (!G.fow.visible(u.pos.x, u.pos.z) || G.world.hiddenFrom(u, G.me)))) continue;
+      if (!shown(u)) continue;
+      const d = this.unitRayHit(u, ray0);
+      if (d !== null && d < ud) { ud = d; best = u; }
+    }
+    if (best) return best;
+    // nothing under the cursor itself: the nearest small figure around it (far zoom - a unit a few pixels tall)
+    for (const u of G.world.units) {
+      if (!shown(u)) continue;
       const r = this.pickRect(u);
       if (!r) continue;
       // tiny rectangles (far zoom) get a minimum click size
@@ -799,6 +830,7 @@ export class Input {
     const W = G.world, gfx = [st.gfx, W.data.classGfx(name), W.standIns && W.standIns.get(name.toLowerCase())].find((g) => g && W.template(g, true));
     const tpl = gfx ? W.template(gfx, true) : null;
     const obj = tpl ? cloneModel(tpl) : new THREE.Mesh(new THREE.BoxGeometry(6, 4, 6).translate(0, 2, 0));
+    if (G.particles) G.particles.untrack(obj);           // (a preview sprays no fire, smoke or fans)
     const mat = new THREE.MeshBasicMaterial({ color: 0x60ff60, transparent: true, opacity: 0.45, depthWrite: false, fog: false });
     obj.traverse((o) => { if (o.isMesh) { o.material = mat; o.castShadow = false; o.receiveShadow = false; } });
     G.scene.add(obj);
@@ -856,6 +888,7 @@ export class Input {
       if (!p || p.tpl !== tpl) {
         if (p) G.scene.remove(p.obj);
         const obj = tpl ? cloneModel(tpl) : gh.obj.clone();
+        if (tpl && G.particles) G.particles.untrack(obj);
         obj.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; } });
         G.scene.add(obj);
         p = gh.pool[k] = { obj, mats: {}, tpl };
@@ -900,7 +933,9 @@ export class Input {
     if (kind === 'tower' || kind === 'trap' || kind === 'gate' || ladder) {
       // (a ladder goes against any wall piece, an enemy's above all: game/systems/siege.js)
       const e = this.entityAt(this.mouse.x, this.mouse.y);
-      const w = e && e.kind === 'building' && e.def && e.def.wallKind === 'wall' && (e.owner === G.me || ladder) ? e : null;
+      let w = e && e.kind === 'building' && e.def && e.def.wallKind === 'wall' && (e.owner === G.me || ladder) ? e : null;
+      // (as the original's CalcWall: the wall-map tile under the cursor - the ground just beside a piece counts too)
+      if (!w && !ladder && G.world.wallMap) { const WM = G.world.wallMap, t = WM.at(...WM.tileOf(gh.x, gh.z)); if (t && t.wall && t.wall.alive && t.wall.owner === G.me) w = t.wall; }
       if (w) { gh.x = w.pos.x; gh.z = w.pos.z; }
     }
     gh.obj.position.set(gh.x, G.world.height(gh.x, gh.z), gh.z);
@@ -923,34 +958,32 @@ export class Input {
     gh.mat.color.setHex(gh.ok ? 0x60ff60 : 0xff4040);
     if (gh.grid) this.updatePlaceGrid(gh);
   }
-  // the dots of the placement grid around the ghost, one per 2 m cell of the pathfinder grid: green where a building
-  // may stand, red where something is in the way (an obstacle, a building or its foundation, water, unexplored ground,
-  // the map's border)
+  // the dots of the placement grid around the ghost (ObjPlaceChecker.EnableGridRendering, PlaceController.usl): a dot
+  // every 2 m, green where the building may be put down with its centre on that dot - any green dot is a place it
+  // fits, turned as it is now - red where it may not (something in the way under its footprint, water, unexplored
+  // ground, the map's border). Worked out again when the ghost moves to another 2 m cell or turns.
   updatePlaceGrid(gh) {
-    const G = this.G, W = G.world, nav = W.nav;
-    const f = W.footprint(gh.name, gh.x, gh.z, gh.rot, false, G.me);
-    const key = gh.x + ',' + gh.z + ',' + gh.rot + ',' + nav.version;
+    const G = this.G, W = G.world, nav = W.nav, S = PLACE_STEP;
+    const cx = Math.round(gh.x / S) * S, cz = Math.round(gh.z / S) * S;
+    const key = cx + ',' + cz + ',' + gh.rot + ',' + nav.version + ',' + W.buildings.length;
+    gh.grid.visible = gh.obj.visible;
     if (gh.gridKey === key) return;
     gh.gridKey = key;
-    const R = Math.min(PLACE_GRID_R, Math.max(f.hx, f.hz) + 10), c = nav.cell, P = W.play;
+    const R = PLACE_GRID_R;
     const pos = gh.grid.geometry.attributes.position, col = gh.grid.geometry.attributes.color;
     let n = 0;
-    const i0 = Math.floor((gh.x - R + nav.half) / c), i1 = Math.floor((gh.x + R + nav.half) / c);
-    const j0 = Math.floor((gh.z - R + nav.half) / c), j1 = Math.floor((gh.z + R + nav.half) / c);
-    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
-      if (i < 0 || j < 0 || i >= nav.n || j >= nav.n || n >= pos.count) continue;
-      const x = (i + 0.5) * c - nav.half, z = (j + 0.5) * c - nav.half, d = Math.hypot(x - gh.x, z - gh.z);
-      if (d > R) continue;
-      const k = j * nav.n + i;
-      const bad = nav.block[k] > 0 || W.reserved[k] > 0 || x < P.x0 + 6 || x > P.x1 - 6 || z < P.z0 + 6 || z > P.z1 - 6 || W.isWater(x, z, 0.1) || !G.fow.explored_(x, z);
-      pos.setXYZ(n, x, W.height(x, z) + 0.35, z);
-      const fade = Math.min(1, (R - d) / 4);           // fading out at the edge of the grid
-      if (bad) col.setXYZ(n, 1.0 * fade, 0.18 * fade, 0.12 * fade); else col.setXYZ(n, 0.3 * fade, 1.0 * fade, 0.3 * fade);
+    for (let dz = -R; dz <= R; dz += S) for (let dx = -R; dx <= R; dx += S) {
+      const d = Math.hypot(dx, dz);
+      if (d > R || n >= pos.count) continue;
+      const x = cx + dx, z = cz + dz;
+      const ok = G.fow.explored_(x, z) && !W.isWater(x, z, 0.1) && W.canPlace(gh.name, x, z, gh.rot, G.me);
+      pos.setXYZ(n, x, W.height(x, z) + 0.4, z);
+      const fade = Math.min(1, (R - d) / 6 + 0.25);    // fading towards the edge of the grid
+      if (ok) col.setXYZ(n, 0.25 * fade, 1.0 * fade, 0.3 * fade); else col.setXYZ(n, 1.0 * fade, 0.2 * fade, 0.15 * fade);
       n++;
     }
     gh.grid.geometry.setDrawRange(0, n);
     pos.needsUpdate = true; col.needsUpdate = true;
-    gh.grid.visible = gh.obj.visible;
   }
 
   // ------------------------------------------------------------------ keyboard

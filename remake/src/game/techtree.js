@@ -18,7 +18,14 @@ export const TRIBES = ['Hu', 'Aje', 'Ninigi', 'SEAS'];
 export const num = (v, d = 0) => { const x = parseFloat(v); return Number.isFinite(x) ? x : d; };
 export const bool = (v) => v === true || v === '1' || v === 'true' || v === 1;
 
-const split = (path) => path.split('/').filter(Boolean);
+// (the parts of a path, kept: the rules are read with the same few thousand paths many times a frame - splitting
+// them anew made a tenth of the garbage of a frame)
+const _parts = new Map();
+const split = (path) => {
+  let p = _parts.get(path);
+  if (!p) { p = path.split('/').filter(Boolean); if (_parts.size < 200000) _parts.set(path, p); }
+  return p;
+};
 // nested lookup
 export function nodeAt(root, path) {
   let n = root;

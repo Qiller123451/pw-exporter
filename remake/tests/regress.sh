@@ -20,6 +20,11 @@ run nests python3 tests/evaljs.py tests/nests.js "&tribe=Hu&enemy=Aje&map=maps/B
 run wildlife python3 tests/evaljs.py tests/wildlife.js "&tribe=Hu&enemy=Aje&map=maps/Base/Multiplayer/the%20river.ula"
 run debug python3 tests/evaljs.py tests/debug_mode.js "&tribe=Hu&enemy=Aje&debug"
 run debug_ninigi python3 tests/evaljs.py tests/debug_mode.js "&tribe=Ninigi&enemy=Aje&debug"
+# the debug options page of the campaign menu, the mission started with them, the pause menu's debug tools
+run debug_menu python3 tests/debug_menu.py 0
+# the debug options chosen before a game (game/cheats.js: resources, epochs, pyramid, damage, passive computer) and
+# objects put down (?spawn=, the debug tools)
+run debug_options python3 tests/evaljs.py tests/debug_options.js "&tribe=Hu&enemy=Aje&spawn=Stegosaurus&cheats=%7B%22res%22%3A%7B%22food%22%3A5000%2C%22skulls%22%3A2000%7D%2C%22storage%22%3A6000%2C%22pyramid%22%3A%5Bnull%2Cnull%2Cnull%2Cnull%2C6%5D%2C%22popMax%22%3A150%2C%22noHousing%22%3Atrue%2C%22gather%22%3A2%2C%22speed%22%3A3%2C%22me%22%3A%7B%22startEpoch%22%3A3%2C%22maxEpoch%22%3A4%2C%22dmg%22%3A2%2C%22def%22%3A4%7D%2C%22foe%22%3A%7B%22startEpoch%22%3A2%2C%22dmg%22%3A0.5%7D%2C%22ai%22%3A%22passive%22%7D"
 run looks_aje python3 tests/evaljs.py tests/looks.js "&tribe=Aje&enemy=Hu"
 run looks_ninigi python3 tests/evaljs.py tests/looks.js "&tribe=Ninigi&enemy=Hu"
 run walls python3 tests/evaljs.py tests/walls.js "&tribe=Hu&enemy=Aje&debug"
@@ -119,6 +124,8 @@ run play_10_aje python3 tests/evaljs.py tests/campaign_play_10.js "&campaign=10&
 # missions played with another tribe (game/campaign/tribes.js): the player's objects converted by role
 run tribes_04 python3 tests/evaljs.py tests/campaign_tribes.js "&campaign=4&tribe=Hu&allmissions"
 run tribes_13 python3 tests/evaljs.py tests/campaign_tribes.js "&campaign=13&tribe=SEAS&allmissions"
+# MIRAGE: the Dustriders' first mission bans the clay wall, not the bone palisade - the SEAS keep fence and gate
+run tribes_08_mirage env PWR_PORT=${SEQ_PORT:-8412} python3 tests/evaljs.py tests/campaign_tribes.js "&campaign=8&tribe=SEAS"
 # every menu card and portrait has its picture (ui/atlas.js; a mod's UI is layered over Base's: pipeline/build_ui.py)
 run icons_seas python3 tests/evaljs.py tests/icons.js "&tribe=SEAS&enemy=Ninigi"
 run icons_03_seas python3 tests/evaljs.py tests/icons.js "&campaign=3&tribe=SEAS"
@@ -166,6 +173,9 @@ run mission_ui python3 tests/evaljs.py tests/mission_ui.js "&campaign=1&notrigge
 run ai_match python3 tests/evaljs.py tests/ai_match.js "&tribe=Hu&enemy=Aje&aivai&aib=Giraffe,Dodo&aid=4&minutes=25"
 run ai_defence python3 tests/evaljs.py tests/ai_defence.js "&tribe=Hu&enemy=Aje&aid=4"
 run ai_campaign python3 tests/evaljs.py tests/ai_campaign.js "&tribe=Hu&enemy=Aje"
+# the SEAS details: no demotion, the placement preview and its dots, picking, wall stages, towers on fences, the turret's
+# muzzle flashes, the headquarters' epoch name
+run seas_details python3 tests/evaljs.py tests/seas_details.js "&tribe=SEAS&enemy=Hu"
 # the computer player's walls, outposts, trade, items, chat (ai/walls.js, outposts.js, trade.js, items.js, chat.js)
 run ai_walls python3 tests/evaljs.py tests/ai_walls.js "&tribe=Aje&enemy=Hu&aid=6"
 run ai_outpost python3 tests/evaljs.py tests/ai_outpost.js "&tribe=Hu&enemy=Aje&aid=6"

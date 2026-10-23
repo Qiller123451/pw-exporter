@@ -20,7 +20,7 @@ header { display: flex; align-items: center; gap: 10px; padding: 12px 22px; }
 main { max-width: 1040px; margin: 10px auto; padding: 0 22px; }
 h1 { font-size: 28px; margin: 18px 0 6px; }
 .lead { color: var(--dim); margin: 0 0 22px; }
-.cards { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
 @media (max-width: 760px) { .cards { grid-template-columns: 1fr; } }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 22px; display: flex; flex-direction: column; gap: 10px; }
 .card h2 { margin: 0; font-size: 21px; display: flex; align-items: center; gap: 10px; }

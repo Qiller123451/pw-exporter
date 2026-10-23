@@ -12,6 +12,8 @@ API under /api/) and the remake (under /remake/, see toolkit/remake.py). Listens
     GET  /exporter/                 the Model & Map Exporter (pwexport/web; its API: pwexport/app.py)
     GET  /remake/...                the remake (official game)
     GET  /remake/mod/<id>/...       the remake with a mod configuration's data (toolkit/remake.py)
+    GET  /workshop/                 the Workshop: new units, buildings, animals and decorations for the game and the
+                                    remake (workshop/, its API under /api/workshop/: workshop/api.py)
 """
 import json
 import os
@@ -32,11 +34,16 @@ from pwexport import app as exporter        # noqa: E402
 from . import VERSION                        # noqa: E402
 from .datadir import DataFolder              # noqa: E402
 from .remake import Remake                   # noqa: E402
+try:                                         # the Workshop (workshop/): the toolkit runs without it if it cannot load
+    from workshop.api import Workshop        # noqa: E402
+except Exception as _e:                      # noqa: BLE001
+    print('The Workshop is not available: %s' % _e)
+    Workshop = None
 
 WEB = os.path.join(HERE, 'web')
 
 
-def make_handler(app, remake, data):
+def make_handler(app, remake, data, workshop=None):
     Base = exporter.make_handler(app)
 
     class H(Base):
@@ -52,6 +59,8 @@ def make_handler(app, remake, data):
         def do_GET(self):
             u = urlparse(self.path)
             p = unquote(u.path)
+            if workshop and workshop.handle(self, 'GET'):
+                return
             try:
                 if p == '/api/toolkit/state':
                     return self.send_json(self.toolkit_state())
@@ -90,6 +99,8 @@ def make_handler(app, remake, data):
 
         def do_POST(self):
             p = urlparse(self.path).path
+            if workshop and workshop.handle(self, 'POST'):
+                return
             if p == '/api/toolkit/remake/build':
                 try:
                     b = self.body()
@@ -128,7 +139,7 @@ def serve(port=0, open_browser=True):
     srv = None
     for p in ([port] if port else list(range(8420, 8440)) + [0]):
         try:
-            srv = ThreadingHTTPServer(('127.0.0.1', p), make_handler(app, remake, data))
+            srv = ThreadingHTTPServer(('127.0.0.1', p), make_handler(app, remake, data, Workshop(app, remake) if Workshop else None))
             break
         except OSError:
             continue

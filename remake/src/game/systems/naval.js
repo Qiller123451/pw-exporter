@@ -40,7 +40,7 @@ export const Naval = {
       if (!t.node || !t.node.alive) { this.nextShoal(u, carried); return; }
       const d = Math.hypot(t.node.pos.x - u.pos.x, t.node.pos.z - u.pos.z);
       if (d > 6 + t.node.radius) {
-        if (!u.path.length) { u.setPath(t.node.pos.x, t.node.pos.z); if (!u.path.length) { u.task = { type: 'idle' }; return; } }
+        if (!u.path.length) { u.setPath(t.node.pos.x, t.node.pos.z); if (!u.path.length) { this.toIdle(u); return; } }
         u.moveAnim(u.steer(dt, u.speed));
         return;
       }
@@ -64,14 +64,14 @@ export const Naval = {
     if (t.phase === 'deliver') {
       if (!t.drop || !t.drop.alive) {
         t.drop = this.nearestFishDelivery(u);
-        if (!t.drop) { u.task = { type: 'idle' }; return; }
+        if (!t.drop) { this.toIdle(u); return; }
         const [x, z] = this.dockPoint(t.drop);
         u.setPath(x, z); t.dock = [x, z];
       }
       // arrived when close to the harbour (its footprint blocks the berth cells on the water grid)
       const sd = t.drop.surfDist(u.pos.x, u.pos.z);
       if (sd > 8 && !(sd < 20 && !u.path.length)) {
-        if (!u.path.length) { u.setPath(t.dock[0], t.dock[1]); if (!u.path.length) { u.task = { type: 'idle' }; return; } }
+        if (!u.path.length) { u.setPath(t.dock[0], t.dock[1]); if (!u.path.length) { this.toIdle(u); return; } }
         u.moveAnim(u.steer(dt, u.speed));
         return;
       }
@@ -89,7 +89,7 @@ export const Naval = {
     if (carried > 0) { t.phase = 'deliver'; t.drop = null; return; }
     const from = t.lastDrop || [u.pos.x, u.pos.z];
     const n = this.nearestResource(from[0], from[1], 'food', FISH_SEARCH, t.node, Object.assign(() => true, { water: true }));
-    if (n) { if (t.node) t.node.workers.delete(u); t.node = n; n.workers.add(u); t.phase = 'go'; u.setPath(n.pos.x, n.pos.z); } else u.task = { type: 'idle' };
+    if (n) { if (t.node) t.node.workers.delete(u); t.node = n; n.workers.add(u); t.phase = 'go'; u.setPath(n.pos.x, n.pos.z); } else this.toIdle(u);
   },
   nearestFishDelivery(u) {
     let best = null, bd = 1e9;
@@ -288,7 +288,7 @@ export const Naval = {
   // the next of the queued ones, or idle
   layNext(u) {
     const q = u.task.next || [];
-    u.task = { type: 'idle' };
+    this.toIdle(u);
     while (q.length) {
       const n = q.shift();
       if (this.layWaterThing(u, n.action, n.x, n.z, false, true)) continue;

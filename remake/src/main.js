@@ -6,7 +6,7 @@ import { PointBuy } from './game/pointbuy.js';
 import { watchRenderer, loopError, report, reportError, setReportContext, watchGlobalErrors } from './ui/diagnostics.js';
 import * as THREE from 'three';
 import { Renderer, RTSCamera } from './engine/renderer.js';
-import { initAssets, loadModel, Assets } from './engine/assets.js';
+import { initAssets, loadModel, Assets, cloneModel } from './engine/assets.js';
 import { HeightField, buildTerrain, FogOfWar, refreshTerrain, refreshSplat } from './engine/terrain.js';
 import { GroundBrushes, levelGround, brushCells } from './game/ground.js';
 import { PropField, FoliageField, treeSprites, holeUniforms, spriteLight, spriteTexture } from './engine/props.js';
@@ -47,6 +47,7 @@ import { listSaves, putSave, getSave, deleteSave, exportSave, importSave, quickI
 import { Campaign, loadCampaign } from './game/campaign/setup.js';
 import { Regions } from './game/campaign/regions.js';
 import { MissionUI } from './ui/mission.js';
+import { applyCheats, configCheats, spawnModels, spawnObject } from './game/cheats.js';
 
 const params = new URLSearchParams(location.search);
 const MANUAL = params.has('manual');
@@ -68,6 +69,7 @@ const REASON = {
   req: 'Requirements not met', cost: 'Not enough resources', housing: 'Population limit reached – build more housing',
   level: 'No free slot at this level of the army pyramid', full: 'Production queue is full', done: 'Already researched',
   place: 'Cannot build here', skulls: 'Not enough skulls', max: 'Already at the highest level',
+  down: 'A unit keeps the level it has reached',
   cooldown: 'Still recharging', unique: 'You already have this hero', target: 'Choose a target', storage: 'Storage is full',
   busy: 'Busy', illusion: 'Illusions cannot do that', hidden: 'Not available', disabled: 'Not available',
 };
@@ -281,6 +283,20 @@ async function buildWorld(cfg, S) {
       mode: cfg.slots ? cfg.mode || 'deathmatch' : 'deathmatch', defenderMin: cfg.defenderMin || 45, diplomacyLocked: !!(cfg.slots && (cfg.lockDiplomacy || cfg.mode === 'domination' || cfg.mode === 'defender')) },          // a multiplayer level (CLevelInfo.IsMultiplayer): the skirmish maps
   });
   G.mfx = new ModelFx(W);                          // the game's effect models (engine/modelfx.js, ui/gamefx.js)
+  // a unit put into production (anybody's): its model's shaders are compiled now, in the background, not in the frame
+  // it first shows - a new kind of unit cost that frame tens of milliseconds (a stall when a computer player started
+  // training, when a Stinger was done; the D3D shader compiler under Chrome on Windows is slow)
+  const warmed = new Set();
+  W.prewarm = (name, owner) => {
+    const st = G.data.stats(name, 1, owner), gfx = (st && st.gfx) || G.data.classGfx(name);
+    if (!gfx || warmed.has(gfx)) return;
+    warmed.add(gfx);
+    const tpl = W.template(gfx, true), R = G.renderer && G.renderer.renderer;
+    if (!tpl || !R || !R.compileAsync) return;
+    const m = cloneModel(tpl, owner && owner.partyColor != null ? owner.partyColor : null);
+    G.particles.untrack(m);
+    R.compileAsync(m, G.camera, G.scene).catch(() => {});
+  };
   // keep units inside the playable area and out of the water (ships use their own grid, see nav.water)
   const nav = W.nav;
   for (let j = 0; j < nav.n; j++) for (let i = 0; i < nav.n; i++) {
@@ -535,6 +551,8 @@ async function buildWorld(cfg, S) {
     for (const i of S.items || []) W.placeItem(i.cls, i.x, i.z, i.rot);
     if (S.itemSpawns && S.itemSpawns.length) W.generateItems(S.itemSpawns, S.itemPool.pool, S.itemPool.max);
   }
+  // the debug options chosen before the start (game/cheats.js; ui/debugopts.js)
+  applyCheats(G, configCheats(cfg));
   W.startWeather(S.weather);
   // the end of the game (GameOverMgr: skirmish maps only): its game type, flags, defender
   if (!G.campaign && !G.sequel) W.gameOverInit(S, cfg);
@@ -663,13 +681,15 @@ function createBrains(cfg) {
     // map's AI_Difficulty_Easy|Medium|Hard for the chosen campaign difficulty (CampaignMgr.usl:132-139).
     // Classes a brain will produce must be announced with G.campaign.needClass(cls) before the models load
     // (or the tribe added to G.campaign.fullTribes), see docs/CAMPAIGN_RUNTIME.md "Models".
+    // Raids as the original makes them (pool units only where a tribe has no army tables), the remake's bigger
+    // squads on Nightmare only.
     const C = G.campaign, key = ['easy', 'medium', 'hard'][C.difficulty] || 'medium';
     const levelName = 'Single ' + String(C.id).padStart(2, '0');
     for (const pl of C.players) {
       const d = pl && pl.data;
       if (!pl || pl === G.me || !d || !/^ai_/.test(d.control || '')) continue;
       const diff = d.ai_difficulty && d.ai_difficulty[key] != null ? d.ai_difficulty[key] : [1, 4, 8][C.difficulty] ?? 4;
-      G.brains.set(pl.id, new TribeAI(G, pl, { difficulty: diff, behaviour: d.control.slice(3) || 'Mikrobe', mapOptions: (C.data.map && C.data.map.ai_options) || {}, multimap: false, levelName }));
+      G.brains.set(pl.id, new TribeAI(G, pl, { difficulty: diff, behaviour: d.control.slice(3) || 'Mikrobe', mapOptions: (C.data.map && C.data.map.ai_options) || {}, multimap: false, levelName, extraSquads: !!C.nightmare }));
     }
     return;
   }
@@ -857,8 +877,8 @@ G.placeWall = (action, tiles, workers, queued = false) => {
   else if (n && !workers.length) G.hud.message('Select workers and right-click the foundation to build it');
   return n;
 };
-G.changeLevel = (u, lv, other) => {
-  const why = G.world.changeLevel(u, lv, other);
+G.changeLevel = (u, lv) => {
+  const why = G.world.changeLevel(u, lv);
   if (why && why !== 'same') { G.hud.message(REASON[why] || why, 'bad'); G.feedback.error(); }
   else if (!why) G.feedback.ui('ui_click_pyramid');
 };
@@ -939,16 +959,32 @@ function updateFow(force) {
 }
 
 const frustum = new THREE.Frustum(), pm = new THREE.Matrix4(), sph = new THREE.Sphere();
+// onScreen: in the camera's view (animations play, sounds are heard). A model is drawn - and casts its shadow - only
+// when it or its shadow can be in the view: the skinned models are never culled by three.js (assets.js cloneModel:
+// their bounds are the bind pose), so every unit and animated building of the map was drawn twice (with its shadow)
+// in every frame wherever it stood
+const SHADOW_REACH = 0.8;                          // a shadow's length per metre of height (the sun: renderer.js sunOffset)
 function cullUnits() {
+  G.camera.updateMatrixWorld();              // (a cutscene's shot was set this frame: lookAt does not update the matrices)
   pm.multiplyMatrices(G.camera.projectionMatrix, G.camera.matrixWorldInverse);
   frustum.setFromProjectionMatrix(pm);
   for (const u of G.world.units) {
     sph.center.copy(u.pos); sph.center.y += u.height * 0.5; sph.radius = Math.max(u.radius, u.height) + 1;
     u.onScreen = frustum.intersectsSphere(sph);
+    if (u.model) {
+      // (at least 12 m around: the smoke and fire of a unit just outside keep drifting into the view)
+      if (!u.onScreen) sph.radius += Math.max(12, u.height * SHADOW_REACH);
+      u.model.visible = u.onScreen || frustum.intersectsSphere(sph);
+    }
   }
   for (const b of G.world.buildings) {
-    sph.center.copy(b.pos); sph.radius = (b.radius || 5) + 12;
+    const h = b.ht || 10;
+    sph.center.copy(b.pos); sph.center.y += h * 0.5; sph.radius = Math.max((b.radius || 5) + 12, Math.hypot(b.radius || 5, h * 0.5) + 2);
     b.onScreen = frustum.intersectsSphere(sph);
+    if (b.model) {
+      if (!b.onScreen) sph.radius += h * SHADOW_REACH;
+      b.model.visible = b.onScreen || frustum.intersectsSphere(sph);
+    }
   }
 }
 
@@ -983,11 +1019,17 @@ function freezeStill() {
     if (seen && (!b.built || b.turret || b.cranes.length || o.userData.live || animating(b.anim) || (b.parts || []).some((p) => animating(p.anim)))) { setStill(o, false); continue; }
     // (the pose of the last animation: one that ran while nobody looked - a gate opened by the mission far away -
     // still has to show its end)
-    const a = b.anim, pose = !a || !a.cur ? '' : animating(a) ? a.curName : a.curName + ':' + a.cur.time.toFixed(2) + ':' + a.cur.getEffectiveWeight().toFixed(2);
-    const key = `${o.position.x},${o.position.y},${o.position.z},${o.rotation.y},${o.scale.x},${b.visKey},${pose}`;
+    const a = b.anim, cur = a && a.cur, run = !!cur && animating(a);
+    const pn = cur ? a.curName : '', pt = cur && !run ? Math.round(cur.time * 100) : 0, pw = cur && !run ? Math.round(cur.getEffectiveWeight() * 100) : 0;
     // a change (moved, other parts, another pose): drawn live this round, frozen once it holds (the new pose may
-    // only be applied by the next animation update)
-    if (key !== o.userData.stillKey) { o.userData.stillKey = key; setStill(o, false); continue; }
+    // only be applied by the next animation update). (Compared field by field: a key string per building and frame
+    // was garbage for the collector.)
+    const k = o.userData.stillKey || (o.userData.stillKey = {});
+    if (k.x !== o.position.x || k.y !== o.position.y || k.z !== o.position.z || k.r !== o.rotation.y || k.s !== o.scale.x || k.v !== b.visKey || k.pn !== pn || k.pt !== pt || k.pw !== pw) {
+      k.x = o.position.x; k.y = o.position.y; k.z = o.position.z; k.r = o.rotation.y; k.s = o.scale.x; k.v = b.visKey; k.pn = pn; k.pt = pt; k.pw = pw;
+      setStill(o, false);
+      continue;
+    }
     setStill(o, true);
   }
 }
@@ -1086,12 +1128,18 @@ const DRAW_STEPS = [
   ['minimap', (dt) => G.minimap.update(dt)],
   ['mission', (dt) => { if (G.mission) G.mission.update(dt); if (G.sequelUI) G.sequelUI.update(dt); }],
 ];
+// where a frame's time goes (the performance overlay, F9): ms per step, smoothed
+const prof = G.prof = {};
+const timed = (name, t0) => { const t = performance.now(); prof[name] = (prof[name] || 0) * 0.95 + (t - t0) * 0.05; return t; };
 function draw(dt, now) {
-  for (const [name, fn] of DRAW_STEPS) { try { fn(dt); } catch (e) { loopError(name, e); } }
+  let t = performance.now();
+  for (const [name, fn] of DRAW_STEPS) { try { fn(dt); } catch (e) { loopError(name, e); } t = timed(name, t); }
   try { G.renderer.render(now); } catch (e) { loopError('render', e); }
+  t = timed('render', t);
   // the model emitters after the render: their nodes' world matrices are those just drawn (new sprites are shown
   // from the next frame)
   try { G.particles.update(dt, G.camera, G.rtscam.target, G.renderer.renderer.getPixelRatio()); } catch (e) { loopError('particles', e); }
+  timed('particles', t);
 }
 
 // Autosave (IngameScreen.usl UpdateAutosaveTimer, Game.usl OnTick / OnAutosave): every 5 .. 60 minutes of real time
@@ -1120,8 +1168,11 @@ function frame(now) {
   if (!G.renderer.shouldRender(now)) return;
   const dt = Math.min(0.1, (now - (last || now)) / 1000);
   last = now;
+  const t0 = performance.now();
   if (!G.paused) { try { simulate(dt * (G.settings.speed || 1)); } catch (e) { loopError('simulation', e); } }
+  timed('simulation', t0);
   draw(dt, now);
+  timed('frame', t0);
   autosave(now);
   // 8 s after the start: check the game really runs (simulation time, fog of war, camera) - shows what's wrong
   if (!G.selfChecked && (G.frames = (G.frames || 0) + 1) > 30 && now - (G.startedAt || (G.startedAt = now)) > 8000) {
@@ -1225,6 +1276,8 @@ G.mapTools = { parseUla, originalSource, models: () => Assets.manifest.models };
 // models a map needs on top of the tribes' ones: its landscape objects, its animals, the carried wood/stone look
 function mapModels(S) {
   const need = new Set(S.models);
+  // ?spawn=<class>,<class>: their models too (put down after the start: the Workshop's "try it in the remake")
+  if (params.has('spawn')) for (const g of spawnModels(G.data, params.get('spawn').split(',').filter(Boolean))) need.add(g);
   for (const sp of new Set([...S.animals, ...(S.nests || [])].map((a) => a.species))) {
     for (let l = 1; l <= 5; l++) { const s = G.data.stats(sp, l, null); if (s && s.gfx) need.add(s.gfx.toLowerCase()); }   // gfx can change per level
     const cg = G.data.classGfx(sp);           // the class file's model when the tech tree gfx doesn't exist (Tsintaosaurus -> iguanodon)
@@ -1241,6 +1294,8 @@ function mapModels(S) {
 }
 async function startGame(cfg) {
   try {
+    // ?cheats=<json>: debug options (game/cheats.js; tests)
+    if (params.has('cheats') && !cfg.cheats) { try { cfg = { ...cfg, cheats: { on: true, ...JSON.parse(params.get('cheats')) } }; } catch (e) { console.warn('?cheats: ' + e.message); } }
     G.config = cfg;
     loadEl.classList.remove('done');
     loadEl.style.display = '';
@@ -1260,7 +1315,8 @@ async function startGame(cfg) {
       // the MIRAGE mod's data (ui/menu.js switches to it)
       if (Menu.dataMod(G) !== SEQUEL_MOD) throw new Error(`ParaWorld: Containment is played with the ${SEQUEL_MOD} mod's game data (this page has ${Menu.dataMod(G) || 'the official game'}'s): start it from the menu`);
       progress(0.03, 'Preparing the mission…');
-      const locked = lockedBefore(cfg.sequel);              // what later missions bring in
+      const ch = configCheats(cfg);
+      const locked = ch && ch.unlock ? new Set() : lockedBefore(cfg.sequel);              // what later missions bring in (debug option "no mission bans": nothing)
       const d = sequelData(G.raw.tt, G.raw.json, locked);
       G.data = new Rules(d.tt, d.extra);
       G.campaign = null;
@@ -1321,6 +1377,18 @@ async function startGame(cfg) {
     // the level's playlist; a generated map goes by its setting's atmosphere file ("jungle.txt")
     G.audio.mus.startGame({ levelName: S.levelName || '', atmos: S.atmos || `${String(S.setting || '').toLowerCase()}.txt`, tribe: G.me.tribe || cfg.me });
     G.audio.atmo.start(S.kind === 'original' ? S.atmos : `${String(S.setting || 'jungle').toLowerCase()}.txt`);   // ("No Atmos": none)
+    // ?spawn=<class>,...[&spawnside=me|foe|wild][&spawnlevel=n]: those objects beside your start (the Workshop)
+    if (params.has('spawn') && !saved) {
+      const h = G.homeEntity(), side = params.get('spawnside') || '', lv = +params.get('spawnlevel') || 1;
+      params.get('spawn').split(',').filter(Boolean).forEach((n, i) => {
+        const ix = G.data.info(n), a = i * 1.3 + 0.6, r = (h ? h.radius || 3 : 3) + (ix && ix.type === 'BLDG' ? 22 : 9);
+        const x = (h ? h.pos.x : 0) + Math.cos(a) * r, z = (h ? h.pos.z : 0) + Math.sin(a) * r;
+        const got = spawnObject(G, n, side || (ix && ix.tribe === 'World' ? 'wild' : 'me'), x, z, lv);
+        if (typeof got === 'string') G.hud.message(got, 'bad');
+        else { G.hud.message(`${G.data.text(n, got.owner).name || n} is here`, 'good'); G.spawned = (G.spawned || []).concat(got); }
+      });
+      if (G.spawned && G.spawned[0]) G.centerOn(G.spawned[0]);
+    }
     if (!MANUAL) requestAnimationFrame(frame);
     G.ready = true;
   } catch (e) {
@@ -1338,7 +1406,7 @@ G.endMission = (won, info = {}) => {
   const W = G.world, t = Math.floor(W.time), C = G.campaign;
   const show = () => G.menu.end(!!won, {
     time: `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`, kills: G.me.kills, lost: G.me.lost, epoch: EPOCH[G.me.epoch()],
-    mission: C ? { title: C.map.title || C.map.name, text: info.text || '', next: won && C.next() ? C.next() : null, difficulty: C.difficulty, points: info.points }
+    mission: C ? { title: C.map.title || C.map.name, text: info.text || '', next: won && C.next() ? C.next() : null, difficulty: C.nightmare ? 3 : C.difficulty, points: info.points }
       : G.sequel ? { sequel: true, title: G.sequel.def.title, text: info.text || '', next: won && G.sequel.id < LAST_MISSION ? { id: G.sequel.id + 1 } : null, difficulty: G.sequel.difficulty } : null,
     text: info.text || '',
   });

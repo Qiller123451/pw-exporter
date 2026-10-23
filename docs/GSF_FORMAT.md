@@ -151,8 +151,13 @@ collision" list of SEK's exporter; attr = the record's visibility bits): type 0 
 - Animates a mesh chunk (buildings, vehicles). `+64` key table (n × [pos3, quat4], absolute; quat conjugated as
   above), `+72` u16 per-frame key index, `+76` frame count. Alternative layout: `+52` 4x4 matrix per frame.
 - 0x40000002 = particle emitter animation: `+8` is the guid of the emitter it drives (3212 emitters of Base: the
-  blood of finishing moves, a sinking ship's smoke). Its keys are not converted; the converter lists the names of the
-  animations that drive an emitter (`extras.emitter.anims`) and the remake lets it spray only while one of them plays.
+  blood of finishing moves, a sinking ship's smoke), `+12` (1) not known, `+16` the self-relative offset of the positions
+  (8 in the game's archives: they follow the chunk at `+24`; the Blender add-on writes them elsewhere), `+20` the number
+  of frames; a position per frame (3 floats, the model's frame, as the emitter's `+16`). The converter lists the names of the
+  animations that drive an emitter (`extras.emitter.anims`; the remake lets it spray only while one of them plays)
+  and exports the positions as the emitter node's translation track in that animation, for emitters hung from the
+  model's root (the SEAS turret's muzzle flashes rest 4 m under the turret: their keys put them at the barrel on the
+  frames that fire and below the model's origin, where the client sprays nothing, on the others).
 
 ## Links (0xB, 0x8000000B)
 - pos[3], quat[4], 4-char name (`HndR`, `HndL`, `Shld`, `Back`, `Ride`, …). The skinned version adds a skeleton index and 4 bone

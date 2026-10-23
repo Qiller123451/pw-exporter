@@ -215,7 +215,7 @@ export const Economy = {
     if (!u.carry) { t.phase = 'go'; return; }
     if (!t.drop || !t.drop.alive || !t.drop.isDropoff) {
       t.drop = this.nearestDropoff(u, u.carry.res);
-      if (!t.drop) { u.vel.set(0, 0, 0); if (!u.busyAnim) u.anim.play(u.standAnim()); t.noDropT = (t.noDropT || 0) + dt; if (t.noDropT > 3) { u.task = { type: 'idle' }; } return; }
+      if (!t.drop) { u.vel.set(0, 0, 0); if (!u.busyAnim) u.anim.play(u.standAnim()); t.noDropT = (t.noDropT || 0) + dt; if (t.noDropT > 3) { this.toIdle(u); } return; }
       const [x, z] = this.approachPoint(u, t.drop);
       u.setPath(x, z);
     }
@@ -248,7 +248,7 @@ export const Economy = {
   // a load reaches the storehouse: a computer player's gather factor (CAiPlayer.AddResource, Player.usl:600) multiplies
   // it; -> the part of the load that did not fit (a remainder below one unit is dropped)
   gain(p, res, amount) {
-    const g = p.aiMods ? p.aiMods.gather || 1 : 1, before = p.res[res] || 0;
+    const g = (p.aiMods ? p.aiMods.gather || 1 : 1) * (p.cheat ? p.cheat.gather : 1), before = p.res[res] || 0;
     const left = p.deliver(res, amount * g, this.time);
     if (p.gained && res in p.gained) p.gained[res] += Math.max(0, (p.res[res] || 0) - before);     // (statistics: what was stored)
     return g === 1 ? left : left < 1 ? 0 : left / g;
@@ -274,7 +274,7 @@ export const Economy = {
     if (u.carry && u.carry.amount > 0) { t.phase = 'deliver'; t.drop = null; t.node = n; if (n) n.workers.add(u); return; }
     if (t.phase === 'putdown' || t.phase === 'pickup') u.busyAnim = false;
     if (n) { this.startGather(u, n); return; }
-    u.task = { type: 'idle' };
+    this.toIdle(u);
     u.attachTool(null);
   },
   nearestResource(x, z, res, r, exclude, filter) {
@@ -349,10 +349,13 @@ export const Economy = {
     };
     for (const b of this.buildings) if (b.alive && b.owner === p && b.built) add(b);
     for (const u of this.units) if (u.alive && u.owner === p && u.stats.limits && (u.stats.limits.max_units || u.stats.limits.max_food)) add(u);
+    // (debug options, game/cheats.js: no houses needed - the limit itself; a storage limit of at least that much)
+    if (p.cheat && p.cheat.noHousing) mu = p.popMax;
     p.maxUnits = Math.max(0, Math.min(p.popMax, mu + (p.aiMods ? p.aiMods.unitLimit || 0 : 0)));
-    if (p.capsFixed) return;                       // storage limits set by a mission (world.setCaps)
+    const st = p.cheat && p.cheat.storage != null ? p.cheat.storage : 0;
+    if (p.capsFixed) { if (st) for (const r of RES) p.caps[r] = Math.max(p.caps[r], st); return; }   // storage limits set by a mission (world.setCaps)
     const before = { ...p.caps };
-    for (const r of RES) p.caps[r] = Math.max(300, caps[r]);
+    for (const r of RES) p.caps[r] = Math.max(300, caps[r], st);
     // losing a storehouse cuts the stock down to the new limit
     for (const r of RES) if (p.caps[r] < before[r] && p.res[r] > p.caps[r]) p.res[r] = p.caps[r];
   },
@@ -376,9 +379,9 @@ export const Economy = {
   },
   tradeUpdate(u, dt) {
     const t = u.task;
-    if (!this.isTradeBuilding(t.to) || !this.isTradeBuilding(t.from)) { u.task = { type: 'idle' }; return; }
+    if (!this.isTradeBuilding(t.to) || !this.isTradeBuilding(t.from)) { this.toIdle(u); return; }
     if (u.edgeDist(t.to) > 3 && u.path.length) { const sp = u.steer(dt, u.speed); u.moveAnim(sp); return; }
-    if (u.edgeDist(t.to) > 8) { const [x, z] = this.approachPoint(u, t.to); u.setPath(x, z); if (!u.path.length) u.task = { type: 'idle' }; return; }
+    if (u.edgeDist(t.to) > 8) { const [x, z] = this.approachPoint(u, t.to); u.setPath(x, z); if (!u.path.length) this.toIdle(u); return; }
     const D = Math.hypot(t.to.pos.x - t.from.pos.x, t.to.pos.z - t.from.pos.z);
     const win = Math.max(1, 5 * Math.pow(D / 50, 1.3219));
     const p = t.to.owner;

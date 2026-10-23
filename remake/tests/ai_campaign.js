@@ -154,5 +154,37 @@ if (W.waterNav) {
   for (let t = 0; t < 300 && !landed; t += 10) { step(10); landed = !a4 || a4.state !== 'sail'; }
   ok(landed && m4.filter((u) => u.alive && !u.naval).every((u) => !u.inside), 'AIFT ship_land: the wave lands and the transports are gone');
 } else info('no water on this map: the landing is not tested');
+// --- a tribe without army tables (Hu) in the campaign: the original's waves - pool units only, nothing spawned
+// (AiGoalSingleplayerAttack without a table); with extraSquads (skirmish, Nightmare) the remake's own squads
+{
+  const fh = own(foe)[0];
+  for (let k = 0; k < 6 && fh; k++) W.spawnUnit(fcls[foe.tribe], foe, fh.pos.x + 12 + k * 2, fh.pos.z + 12);
+  const H = new TribeAI(G, foe, { difficulty: 2, behaviour: 'Mikrobe', mapOptions: { harbour: false }, multimap: false, extraSquads: false });
+  const before = new Set(W.units);
+  const fighters = W.units.filter((u) => u.alive && u.owner === foe && !u.def.unique && u.cls !== 'WORK' && !/worker/.test(u.name));
+  const idH = H.startAttack({ type: 'SuicideAttack_1', targets: own(p).slice(0, 1), spawn: true, ignoreLocations: true, spawnPosition: { x: home.x, z: home.z } });
+  const spawned = W.units.filter((u) => !before.has(u) && u.owner === foe);
+  const aH = H.attacks.find((x) => x.id === idH);
+  ok(H.extraSquads === false && spawned.length === 0 && aH && aH.units.size >= 1 && aH.units.size <= 8, `no table, extraSquads false: pool units only, nothing spawned (${spawned.length} spawned, ${aH ? aH.units.size : 0} from the pool of ${fighters.length})`);
+  const N = new TribeAI(G, foe, { difficulty: 2, behaviour: 'Mikrobe', mapOptions: { harbour: false }, multimap: false });
+  ok(N.extraSquads === true, 'skirmish brains keep the remake\'s squads (extraSquads)');
+  if (aH) aH.end('test');
+  // no standing army without Units.txt (MOD:96, 1060-1137): the campaign brain's ministry of defence trains nothing
+  // (the fight module's extra units come one at a time); the skirmish brain trains its derived mix
+  for (const r of ['food', 'wood', 'stone']) foe.res[r] = 5000;
+  for (const u of fighters) if (u.alive) W.kill(u, null);          // (room in the houses: housing is not what this checks)
+  G.step(2);
+  const wa = G.data.actions(foe).find((a) => a.results && a.results[0] && a.results[0].obj === fcls[foe.tribe]);
+  const at = wa && wa.locs.map((l) => l.at).find((n) => G.data.info(n) && G.data.info(n).type === 'BLDG');
+  if (at && fh && !W.buildings.some((b) => b.alive && b.owner === foe && b.name === at)) W.placeBuilding(at, foe, fh.pos.x - 30, fh.pos.z - 30, 0, true);
+  const SH = H.census(true);
+  for (let k = 0; k < 4; k++) H.armyThink(SH);
+  ok(!H.modJob, 'campaign Hu: the ministry of defence trains nothing (no Units.txt)' + (H.modJob ? ' ' + H.modJob.cls : ''));
+  const SN = N.census(true);
+  for (let k = 0; k < 6 && !N.modJob; k++) N.armyThink(SN);
+  const dm = N.derivedMix(SN), T0 = N.trainable(SN, fcls[foe.tribe]);
+  ok(!!N.modJob, 'skirmish Hu: its standing army from the derived mix' + (N.modJob ? '' : ' ' + JSON.stringify(N.modJob ? N.modJob.cls : { noDef: N.prm.noDefence, need: N.unitNeed, mix: Object.keys(dm || {}).map((k) => k + ':' + (dm[k] || []).map((g) => g.units.map((u) => u.cls).join('+')).join(',')).join(' '), T: T0 && { prod: !!T0.producer, why: T0.why }, at, pyr: G.world.pyramidFor(foe), atL: foe.atLevel })));
+  if (N.modJob) W.cancelQueue(N.modJob.producer, N.modJob.producer.queue.indexOf(N.modJob.item));
+}
 ok(!err, 'no exception' + (err ? ' - ' + err.split('\n').slice(0, 3).join(' | ') : ''));
 return out.join('\n');

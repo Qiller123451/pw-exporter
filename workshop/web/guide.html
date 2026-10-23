@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ParaWorld Workshop - guide</title>
+<link rel="icon" href="/launcher/icon.svg">
+<link rel="stylesheet" href="/workshop/workshop.css">
+</head>
+<body>
+<header id="top">
+  <a class="home" href="/workshop/" title="Back to the Workshop">⌂</a>
+  <div class="brand"><img src="/launcher/icon.svg" alt=""><span>ParaWorld Workshop · Guide</span></div>
+</header>
+<article class="guide" id="doc">Loading…</article>
+<script>
+// docs/WORKSHOP.md, drawn with a small Markdown reader (headings, lists, tables, code, links, pictures)
+const esc = (t) => t.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+function inline(t) {
+  return esc(t)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (m, a, u) => `<img alt="${a}" src="${u.startsWith('http') ? u : '/api/workshop/doc/' + u}">`)
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, a, u) => `<a href="${u.startsWith('#') || u.startsWith('http') ? u : '/api/workshop/doc/' + u}">${a}</a>`)
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1<i>$2</i>');
+}
+function md(src) {
+  const out = [], lines = src.replace(/\r/g, '').split('\n');
+  let i = 0;
+  const slug = (t) => t.toLowerCase().replace(/[^a-z0-9 -]/g, '').trim().replace(/ +/g, '-');
+  while (i < lines.length) {
+    const l = lines[i];
+    if (/^```/.test(l)) { const b = []; i++; while (i < lines.length && !/^```/.test(lines[i])) b.push(lines[i++]); i++; out.push(`<pre><code>${esc(b.join('\n'))}</code></pre>`); continue; }
+    const h = /^(#{1,4}) (.*)/.exec(l);
+    if (h) { out.push(`<h${h[1].length} id="${slug(h[2])}">${inline(h[2])}</h${h[1].length}>`); i++; continue; }
+    if (/^\|/.test(l)) {
+      const rows = []; while (i < lines.length && /^\|/.test(lines[i])) rows.push(lines[i++]);
+      const cells = (r) => r.replace(/^\||\|$/g, '').split('|').map((c) => inline(c.trim()));
+      out.push('<table><tr>' + cells(rows[0]).map((c) => `<th>${c}</th>`).join('') + '</tr>' + rows.slice(2).map((r) => '<tr>' + cells(r).map((c) => `<td>${c}</td>`).join('') + '</tr>').join('') + '</table>');
+      continue;
+    }
+    if (/^\s*([-*]|\d+\.) /.test(l)) {
+      const ol = /^\s*\d+\./.test(l), items = [];
+      while (i < lines.length && (/^\s*([-*]|\d+\.) /.test(lines[i]) || (/^\s{2,}\S/.test(lines[i]) && items.length))) {
+        if (/^\s*([-*]|\d+\.) /.test(lines[i])) items.push(lines[i].replace(/^\s*([-*]|\d+\.) /, '')); else items[items.length - 1] += ' ' + lines[i].trim();
+        i++;
+      }
+      out.push(`<${ol ? 'ol' : 'ul'}>` + items.map((t) => `<li>${inline(t)}</li>`).join('') + `</${ol ? 'ol' : 'ul'}>`);
+      continue;
+    }
+    if (!l.trim()) { i++; continue; }
+    const p = []; while (i < lines.length && lines[i].trim() && !/^(#|```|\||\s*([-*]|\d+\.) )/.test(lines[i])) p.push(lines[i++]);
+    out.push(`<p>${inline(p.join(' '))}</p>`);
+  }
+  return out.join('\n');
+}
+fetch('/api/workshop/doc/WORKSHOP.md').then((r) => r.text()).then((t) => { document.getElementById('doc').innerHTML = md(t); if (location.hash) { const e = document.getElementById(location.hash.slice(1)); if (e) e.scrollIntoView(); } });
+</script>
+</body>
+</html>

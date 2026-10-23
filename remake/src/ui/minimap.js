@@ -66,8 +66,16 @@ export function paintCells(data, col, forest, table, state, scape = true, woods 
 
 // fixed orientation: the angle snapped to the nearest odd multiple of 45 degrees (the engine's quadrant table)
 export const snapDiamond = (a) => Math.PI / 4 + Math.round((a - Math.PI / 4) / (Math.PI / 2)) * Math.PI / 2;
-const lighten = (c) => [c[0] * 150 / 256 + 255 * 106 / 256, c[1] * 150 / 256 + 255 * 106 / 256, c[2] * 150 / 256 + 255 * 106 / 256];
 const rgba = (c, a = 1) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a})`;
+// the fill styles of the dots, made once per colour and opacity (drawn 30 times a second: a string per dot was garbage)
+const STYLES = new Map();
+const styleOf = (r, g, b, a) => {
+  const k = (((r | 0) << 16) | ((g | 0) << 8) | (b | 0)) * 128 + Math.round(a * 100);
+  let st = STYLES.get(k);
+  if (st === undefined) { st = `rgba(${r | 0},${g | 0},${b | 0},${Math.round(a * 100) / 100})`; STYLES.set(k, st); }
+  return st;
+};
+const LIGHT = 255 * 106 / 256, DARK = 150 / 256;
 
 export class Minimap {
   // canvas: the 256 x 256 control; S: the map source (rect, water, setting); table: the setting's colour table
@@ -194,13 +202,17 @@ export class Minimap {
   }
   drawDots(ctx, F) {
     const G = this.G, W = G.world, f = G.fow;
-    // (rims first, under every dot: a neighbour's rim never darkens a dot)
-    const rims = [], fills = [];
-    const dot = (x, z, size, c, a, rim) => {
-      const [tx, ty] = this.w2t(x, z, F);
+    // (rims first, under every dot: a neighbour's rim never darkens a dot. The lists are kept between frames:
+    // x, y, size, style in a row)
+    const rims = this._rims || (this._rims = []), fills = this._fills || (this._fills = []);
+    let nr = 0, nf = 0;
+    const s0 = this.k * this.zoom, ox = TEX / 2 - F[0] * s0, oz = TEX / 2 - F[1] * s0;
+    const dot = (x, z, size, c, a, rim, light) => {
+      const tx = ox + x * s0, ty = oz + z * s0;
       const x0 = Math.round(tx - size / 2), y0 = Math.round(ty - size / 2), n = Math.round(size);
-      if (rim) rims.push([x0 - 1, y0 - 1, n + 2, `rgba(0,0,0,${0.75 * a})`]);
-      fills.push([x0, y0, n, rgba(c, a)]);
+      if (rim) { rims[nr++] = x0 - 1; rims[nr++] = y0 - 1; rims[nr++] = n + 2; rims[nr++] = styleOf(0, 0, 0, 0.75 * a); }
+      fills[nf++] = x0; fills[nf++] = y0; fills[nf++] = n;
+      fills[nf++] = light ? styleOf(c[0] * DARK + LIGHT, c[1] * DARK + LIGHT, c[2] * DARK + LIGHT, a) : styleOf(c[0], c[1], c[2], a);
     };
     const [ax, ay] = this.w2t(0, 0, F), [bx, by] = this.w2t(10, 0, F), tpm = Math.hypot(bx - ax, by - ay) / 10;   // texels per metre
     const seen = (x, z) => (f.visible(x, z) ? 2 : f.explored_(x, z) ? 1 : 0);
@@ -222,15 +234,15 @@ export class Minimap {
       if (!b.alive || b.parked || !b.owner) continue;
       const own = G.sees(b.owner), s = own ? 2 : seen(b.pos.x, b.pos.z);
       if (!s) continue;
-      dot(b.pos.x, b.pos.z, Math.max(SIZE.building, Math.min(12, (b.radius || 0) * 1.4 * tpm)), lighten(this.ownerColor(b.owner, s === 2 ? 1 : 4, b)), s === 2 ? 1 : 0.5, true);
+      dot(b.pos.x, b.pos.z, Math.max(SIZE.building, Math.min(12, (b.radius || 0) * 1.4 * tpm)), this.ownerColor(b.owner, s === 2 ? 1 : 4, b), s === 2 ? 1 : 0.5, true, true);
     }
     for (const u of W.units) {
       if (!u.alive || u.parked || u.inside || !u.owner) continue;
       if (!G.sees(u.owner) && !f.visible(u.pos.x, u.pos.z)) continue;
       dot(u.pos.x, u.pos.z, SIZE.unit, this.ownerColor(u.owner, 2, u), 1, true);
     }
-    for (const [x, y, n, c] of rims) { ctx.fillStyle = c; ctx.fillRect(x, y, n, n); }
-    for (const [x, y, n, c] of fills) { ctx.fillStyle = c; ctx.fillRect(x, y, n, n); }
+    for (let i = 0; i < nr; i += 4) { ctx.fillStyle = rims[i + 3]; ctx.fillRect(rims[i], rims[i + 1], rims[i + 2], rims[i + 2]); }
+    for (let i = 0; i < nf; i += 4) { ctx.fillStyle = fills[i + 3]; ctx.fillRect(fills[i], fills[i + 1], fills[i + 2], fills[i + 2]); }
   }
   // the camera's ground footprint (white lines)
   drawCamera(ctx, F) {

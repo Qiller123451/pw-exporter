@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ParaWorld Workshop</title>
+<link rel="icon" href="/launcher/icon.svg">
+<link rel="stylesheet" href="/workshop/workshop.css">
+<!-- the 3D view is the Model & Map Exporter's (pwexport/web/viewer.js) -->
+<script type="importmap">{ "imports": { "three": "/exporter/vendor/three/three.module.js", "three/addons/": "/exporter/vendor/three/addons/" } }</script>
+</head>
+<body>
+<header id="top">
+  <a class="home" href="/" title="Back to the toolkit">⌂</a>
+  <div class="brand"><img src="/launcher/icon.svg" alt=""><span>ParaWorld Workshop</span></div>
+  <div class="spacer"></div>
+  <a class="help" href="/workshop/guide.html" target="_blank" rel="noopener">Guide</a>
+</header>
+<div id="app">
+  <aside id="side">
+    <section>
+      <h3>Mods</h3>
+      <div id="projects" class="list"></div>
+      <button id="new-project" class="primary small">New mod…</button>
+    </section>
+    <section id="objects-box" class="hidden">
+      <h3 id="objects-title">Objects</h3>
+      <div id="objects" class="list"></div>
+      <button id="new-object" class="small">New object…</button>
+      <button id="mod-page" class="small">Build &amp; install…</button>
+    </section>
+  </aside>
+  <main id="main"></main>
+  <section id="view-box">
+    <div id="view"></div>
+    <div id="view-bar"><select id="anim"><option value="">rest pose</option></select><button id="snap" title="Use this view as the icon">📷 Icon from this view</button></div>
+    <div id="view-note" class="note"></div>
+  </section>
+</div>
+<div id="toast" class="hidden"></div>
+<script type="module" src="/workshop/workshop.js"></script>
+</body>
+</html>

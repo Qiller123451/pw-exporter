@@ -126,6 +126,7 @@ export class PropField {
         n = 0;
         for (const it of vis) { tmp.multiplyMatrices(it.m, pm); tmp.toArray(arr, n * 16); n++; }
         im.count = n;
+        im.visible = n > 0;                // (an instanced mesh with no instances is still a draw call, and one more in the shadow pass)
         im.instanceMatrix.clearUpdateRanges();
         im.instanceMatrix.addUpdateRange(0, n * 16);
         im.instanceMatrix.needsUpdate = true;

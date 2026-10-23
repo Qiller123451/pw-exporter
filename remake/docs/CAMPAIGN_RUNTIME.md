@@ -13,7 +13,7 @@ action needs. §11 describes the trigger engine that makes the mission play (`sr
 
 | what | how |
 |---|---|
-| config | `{ campaign: <mission id 0-16>, difficulty: 0 | 1 | 2, tribe: '' | 'Hu' | 'Aje' | 'Ninigi' | 'SEAS' }` (easy, medium, hard; tribe: §1.1) instead of the skirmish config |
+| config | `{ campaign: <mission id 0-16>, difficulty: 0 | 1 | 2 | 3, tribe: '' | 'Hu' | 'Aje' | 'Ninigi' | 'SEAS' }` (easy, medium, hard, nightmare - the remake's own: hard with the remake's bigger computer raids, COMPUTER_PLAYER.md; tribe: §1.1) instead of the skirmish config |
 | URL (tests) | `index.html?manual&campaign=11&difficulty=1` (also `&tribe=SEAS`, `&reveal`, `&debug`) |
 | menu | title → Campaign → mission list (localised titles and descriptions) → your tribe → difficulty → game data (toolkit only: the official game or a mod, §1.2) → Start mission |
 | restart / next | `sessionStorage 'pwr.autostart'` holds the config, the page reloads (as for skirmish). "Next mission" on the end screen starts `G.campaign.next()` |
@@ -126,7 +126,7 @@ slots of a mission (`player.ai === true`) are to get one each, asleep until `AIB
 | field | content |
 |---|---|
 | `data` | the mission JSON (`players`, `objects`, `groups`, `regions`, `quests`, `variables`, `triggers`, `defaults`, `texts`, `dialogs`, `sequences`, `refs` …) |
-| `id`, `difficulty` | mission number 0-16; 0 easy, 1 medium, 2 hard |
+| `id`, `difficulty`, `nightmare` | mission number 0-16; 0 easy, 1 medium, 2 hard (Nightmare: 2, and `nightmare` true) |
 | `map` | `data.map` (title, description, `default_camera`, `black_start`, `start_time` …) |
 | `index`, `entry` | the campaign index and this mission's entry |
 | `players[8]` | `Player` per slot, `null` for a slot that is not present. `player(slot)` = the same with a range check |

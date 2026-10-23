@@ -66,19 +66,19 @@ export const Items = {
   // ---------------------------------------------------------------- picking up (task 'pickup', PickUp.usl)
   pickupUpdate(u, dt) {
     const t = u.task, it = t.target;
-    if (!it || !it.alive || it.item.carrier) { u.task = { type: 'idle' }; return; }
-    if (u.item) { this.emit('msg', { player: u.owner, key: '_NT_PickUpFailInvFull', text: 'Inventory full' }); u.task = { type: 'idle' }; return; }
+    if (!it || !it.alive || it.item.carrier) { this.toIdle(u); return; }
+    if (u.item) { this.emit('msg', { player: u.owner, key: '_NT_PickUpFailInvFull', text: 'Inventory full' }); this.toIdle(u); return; }
     const d = Math.hypot(it.pos.x - u.pos.x, it.pos.z - u.pos.z);
     if (t.phase === 'take') {
       if ((t.wait -= dt) > 0) return;
       this.takeItem(u, it);
-      u.task = { type: 'idle' };
+      this.toIdle(u);
       u.anchor.set(u.pos.x, u.pos.z);
       return;
     }
     if (d > REACH) {
       if (!t.walking || (!u.path.length && (t.tries = (t.tries || 0) + 1) < 4)) { u.setPath(it.pos.x, it.pos.z); t.walking = true; }
-      if (!u.path.length) { u.task = { type: 'idle' }; return; }
+      if (!u.path.length) { this.toIdle(u); return; }
       u.moveAnim(u.steer(dt, u.speed, 0.5));
       return;
     }
@@ -86,7 +86,7 @@ export const Items = {
     u.path = []; u.vel.set(0, 0, 0);
     t.phase = 'take';
     t.wait = 0;
-    if (u.cls === 'CHTR' && u.anim.has('pick_up')) { u.anim.play('pick_up', { restart: true }); u.busyAnim = true; t.wait = u.anim.duration('pick_up') || 1; }
+    if (u.cls === 'CHTR' && u.anim.has('pick_up')) { u.anim.play('pick_up', { restart: true, loop: false }); u.busyAnim = true; t.wait = u.anim.duration('pick_up') || 1; }
   },
   // FightingObj.AddItem / CItem.OnTaken: the item goes into the unit's inventory and works
   takeItem(u, it) {

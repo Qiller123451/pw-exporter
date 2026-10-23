@@ -355,6 +355,8 @@ export class World {
       if (u.flyChange > this.time) continue;                               // rising / landing jetpack (MIRAGE Hu.usl:165)
       if (u.st.camo.has('entr')) this.digOut(u);
       if (u.st.camo.has('aje') && o.type !== 'move') this.setCamo(u, 'aje', false);
+      // a finishing move plays to its end (FinishingMove.Break() = false): the order follows it
+      if (u.finishing && u.task.type === 'finish') { u.task.next = o; continue; }
       this.releaseTask(u);
       u.busyAnim = false;
       // a new order drops the queued wall tiles (Q_Build: G.placeWall), unless it is the queue's own first step
@@ -449,6 +451,23 @@ export class World {
     t.then = o;
     return true;
   }
+  // a task that gives up: what it held (a gathering slot, a building site, a field - also of a task waiting under a
+  // wall walk) is let go first, or the slot stayed taken for the rest of the game
+  toIdle(u) {
+    this.releaseTask(u);
+    const r = u.task.resume;
+    if (r && typeof r === 'object' && r.type) { u.task = r; this.releaseTask(u); }
+    u.task = { type: 'idle' };
+    u.busyAnim = false;
+  }
+  // the states a unit keeps only while its task runs - on a wall, on a ladder, docked, dug in: ended when a script or
+  // a transport takes the unit out of its task (teleport, parking, a new owner, boarding), or they stuck: a unit
+  // hovering at the wall's height that no order moved any more
+  dropStates(u) {
+    if (u.onWall || u.wjump || u.climbing) { u.onWall = null; u.wjump = null; u.wpath = []; u.climbing = false; u.wallH = null; if (this.setOnWall) this.setOnWall(u, false); }
+    if (u.docked || u.dockTile) { if (this.siegeGone) this.siegeGone(u); u.docked = null; u.dockTile = null; }
+    if (u.st && u.st.camo && u.st.camo.has('entr') && this.setCamo) this.setCamo(u, 'entr', false);
+  }
   releaseTask(u) {
     const t = u.task;
     if (t.type === 'cast') this.castCancel(u);
@@ -489,6 +508,10 @@ export class World {
     if (active(u, 'trapped', this.time)) { u.path = []; u.vel.set(0, 0, 0); this.animTick(u, dt); return; }
     if ((u.onWall || u.wjump || u.climbing) && this.wallPreUpdate(u, dt)) { this.animTick(u, dt); return; }
     if ((this.waterNav || u.naval) && this.navalUnitUpdate(u, dt)) { this.animTick(u, dt); return; }
+    // however a finishing move ended (a teleport, parking ...), its protection ends with it (FinishingMove.USLOnLeave)
+    if (u.finishing && u.task.type !== 'finish') { u.finishing = false; u.busyAnim = false; }
+    // on a ladder without the climb (a hit made it fight - engage): down to the ground
+    if (u.climbing && u.task.type !== 'climb' && this.wallFall) this.wallFall(u, false);
     const t = u.task;
     switch (t.type) {
       case 'heal': this.healUpdate(u, dt); break;

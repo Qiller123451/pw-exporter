@@ -452,9 +452,10 @@ export const ACTIONS = {
     // the world reports the change with its events; conditions should see it within this step too
     E.push('diplomacy', 'onDiplomacy', null);
   },
-  POPL(E, p) { const P = E.C.player(slotOf(p.player_id, 0)); if (P) P.popMax = toInt(p.limit); },
+  // (a debug option's unit limit or pyramid, game/cheats.js, stays)
+  POPL(E, p) { const P = E.C.player(slotOf(p.player_id, 0)); if (P && !(P.cheat && P.cheat.popMax != null)) P.popMax = toInt(p.limit); },
   // AF:3143-3241: unit slots per level; a missing open_i = 0
-  BLSL(E, p) { const P = E.C.player(slotOf(p.player_id, 0)); if (P) P.pyramid = [1, 2, 3, 4, 5].map((i) => toInt(p['open_' + i] || '0')); },
+  BLSL(E, p) { const P = E.C.player(slotOf(p.player_id, 0)); if (P && !(P.cheat && P.cheat.pyramid)) P.pyramid = [1, 2, 3, 4, 5].map((i) => toInt(p['open_' + i] || '0')); },
   PLCP(E, p) { const P = E.C.player(slotOf(p.player, 0)); if (P) E.W.setCaps(P, { food: p.food, wood: p.wood, stone: p.stone }); },
   SNFA(E, p) { const P = E.C.player(slotOf(p.player, 0)); if (P) P.animalsNeutral = toInt(p.neutral) & 3; },
   ARGN(E, p) { const r = E.C.regions.find(p.rgn_guid); if (r) { r.setEnabled(toInt(p.dest_state) === 1, p.sub_idx == null || p.sub_idx === '' ? -1 : toInt(p.sub_idx)); E.touch(); } },

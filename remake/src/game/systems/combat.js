@@ -11,6 +11,7 @@
 import * as THREE from 'three';
 import { Projectile, headingTo, wrap } from '../entities.js';
 import { DELAYED } from '../delayed.js';
+import { cheatDamage } from '../cheats.js';
 import { AnimCtl } from '../anim.js';
 import { applyState } from '../../engine/parts.js';
 import { attackBoni, tempDef, tempRangedDef, rangeBonus, active } from './effects.js';
@@ -148,6 +149,7 @@ export const Combat = {
       if (wildTruce(u, e)) return;                 // missions: a player the wildlife leaves alone / who leaves it alone (SNFA)
       if (e.isNest && e !== cur) return;           // a nest of a campaign map (campaign/setup.js) is only attacked on an order
       if (isWall(e) && e !== cur && !opts.walls) return;
+      if (u.unreach && u.unreach.size && (u.unreach.get(e) || 0) > this.time) return;    // no way to it a moment ago
       // the human player's units don't see through the fog of war
       if (u.owner && u.owner.id === 0 && this.fow && e.kind === 'unit' && !this.fow.visible(e.pos.x, e.pos.z)) return;
       const d = this.reach(u, e);
@@ -159,6 +161,15 @@ export const Combat = {
     this.uHash.query(u.pos.x, u.pos.z, r + 6, test);
     if (!best || best.kind !== 'unit' || (u.def && u.def.attackType === 1)) this.bHash.query(u.pos.x, u.pos.z, r + 20, test);
     return best;
+  },
+  // a target the unit found no way to: left alone for 20 s (findTarget)
+  unreachable(u, e) { (u.unreach || (u.unreach = new Map())).set(e, this.time + 20); },
+  // could the unit hit e standing at p (the end of the way it found): its primary weapon's range on the ground
+  reachFrom(u, e, p) {
+    const cs = u.cs(u.weapons.long);
+    if (!cs || !p) return false;
+    const r = this.attackRangeOf(u, cs) + (cs.w.projectile ? 0.5 * Math.max(0, u.pos.y - e.pos.y) : u.radius + 2) + (e.radius || 1);
+    return Math.hypot(p[0] - e.pos.x, p[1] - e.pos.z) <= r;
   },
   // kept for older callers
   nearestEnemy(u, r, filter) { return this.findTarget(u, r, { filter }); },
@@ -295,8 +306,12 @@ export const Combat = {
         else if (tgt.kind === 'building') { const [x, z2] = this.approachPoint(u, tgt); u.setPath(x, z2); }
         else u.setPath(tgt.pos.x, tgt.pos.z);
         u.repathT = d < 30 ? 0.3 : 1.2;
-        // follow counter: give up on targets we can't reach (Fight.usl:527)
-        if (!u.path.length) { t.fails = (t.fails || 0) + 1; if (t.fails > 3) return this.endAttack(u); } else t.fails = 0;
+        // follow counter: give up on targets we can't reach (Fight.usl:527) - no way at all, or only a way to the foot
+        // of the cliff (the island's shore) from where its weapon does not reach the target: then it leaves that
+        // one alone for a while, or an attack wave would stand under a unit on a cliff instead of going on
+        if (!u.path.length) { t.fails = (t.fails || 0) + 1; if (t.fails > 3) { this.unreachable(u, tgt); return this.endAttack(u); } }
+        else if (u.noWay && !this.reachFrom(u, tgt, u.path[u.path.length - 1])) { t.fails = (t.fails || 0) + 1; if (t.fails > 2) { this.unreachable(u, tgt); return this.endAttack(u); } }
+        else t.fails = 0;
       }
       const sp = u.steer(dt, u.runSpeed, 0.3);
       u.moveAnim(sp, u.wild);
@@ -536,6 +551,8 @@ export const Combat = {
     if (V.parentGate && V.parentGate.alive) V = V.parentGate;      // a gate's wing passes all damage to the gate (B:2266)
     if (!V.alive) return;
     if (this.invulnerable(V, true)) return;
+    // debug options (game/cheats.js): the sides' damage and defence factors; a factor of 0 takes nothing
+    if (this.cheats && d > 0) { d = cheatDamage(this, d, A, V); if (!(d > 0)) return; }
     const loss = Math.max(Math.ceil(d), 1);
     // a blow that would kill: a game mode may keep it alive at 1 hit point (the sequel's tranquilized creatures fall asleep)
     if (V.hp - loss <= 0 && this.hooks.lethal && this.hooks.lethal(V, A)) { V.hp = 1; V.lastHit = this.time; return; }
@@ -574,7 +591,7 @@ export const Combat = {
     if (active(V, 'levelInvul', t) || active(V, 'doping', t)) return true;
     if (!damageOnly && active(V, 'invul', t)) return true;
     if (active(V, 'peace', t)) return true;                          // ceasefire (MIRAGE FO:5744)
-    if (V.finishing) return true;                                    // during its finishing move
+    if (V.finishing && V.task.type === 'finish') return true;       // during its finishing move (FinishingMove.usl:204)
     if (V.zeppelin) return true;                                     // the trader's zeppelin: Damage() is empty (Vehicle.usl:852)
     return V.invulnT > 0;
   },
@@ -765,6 +782,7 @@ export const Combat = {
   },
   unitDied(e, att) {
     this.releaseTask(e);
+    if (this.siegeGone) this.siegeGone(e);              // a docked siege tower frees its wall piece
     this.uHash.remove(e);
     if (e.passengers && this.unloadAll) this.unloadAll(e, true);
     if (e.inside && this.leaveTransport) this.leaveTransport(e);

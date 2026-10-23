@@ -12,7 +12,7 @@
 //   places:   [{kind: 'town' | 'strip' | 'farm' | 'camp' | 'industry' | 'launch' | 'dam' | 'model' | 'block' | 'quay' |
 //             'avenue' | 'lamps', x, z, rot, ...}]
 //             (launch: pad false when the mission places the launch pad itself; model: y, scale; London (art/sequel/
-//             london.py): block - x0, z0, x1, z1, sides ('nesw': the edges with houses), styles; quay / avenue /
+//             london.py): block - x0, z0, x1, z1, sides ('nesw': the edges with houses); quay / avenue /
 //             lamps - path, off (metres to the left of the path's direction, negative: right), step, steps (x of
 //             the river stairs), gaps (x where a bridge meets the bank))
 //   forests:  [{x, z, r, n, kind}]     rocks: [{x, z, r, n}]    resources: [{x, z, wood, stone, food}]
@@ -65,18 +65,41 @@ const bell = (d, r) => (d >= r ? 0 : 0.5 + 0.5 * Math.cos(Math.PI * d / r));
 // heading that turns a model's front (-z) towards (dx, dz)
 const face = (dx, dz) => Math.atan2(-dx, -dz);
 
-// a London block (art/sequel/london.py): terraces round the edges named by `sides` ('n' the edge at z0, 's' at z1,
-// 'w' at x0, 'e' at x1), their fronts to the street; a round corner house where two of them meet. The models are
-// 1.2 times life size: a terrace of three houses is 25.2 m along the street, 14.4 m deep and stands 8.4 m back from
-// its front line (the area railings); a corner house 16.8 m square.
-const TERRACE_W = 25.2, CORNER_W = 16.8, FRONT = 8.4;
-const TERRACES = ['stucco', 'portland', 'brick', 'red', 'grey'];
+// a London block (art/sequel/houses.py): rows of houses round the edges named by `sides` ('n' the edge at z0, 's' at
+// z1, 'w' at x0, 'e' at x1), their fronts to the street, and a corner building where two of them meet. The models
+// are 1.2 times life size: the rows are 16.8, 25.2 or 33.6 m along the street (two, three or four houses), 14.4 m
+// deep and stand 8.4 m back from their front line (the area railings); a corner building is 16.8 m square. An edge
+// is filled with rows of mixed lengths (each a different model from its neighbour) so that little is left over.
+const ROWS = { 16.8: ['sq_row14_1', 'sq_row14_2', 'sq_row14_3', 'sq_row14_4'],
+  25.2: ['sq_row21_1', 'sq_row21_2', 'sq_row21_3', 'sq_row21_4', 'sq_row21_5', 'sq_row21_6'],
+  33.6: ['sq_row28_1', 'sq_row28_2', 'sq_row28_3', 'sq_row28_4'] };
+const ROW_W = Object.keys(ROWS).map(Number), CORNER_W = 16.8, FRONT = 8.4;
+const CORNERS = ['sq_corner_dome', 'sq_corner_turret', 'sq_corner_curve', 'sq_corner_chamfer'];
+// the rows' lengths along an edge `len` long: of a few random fillings the one that leaves least over
+function fillRows(len, pick) {
+  let best = [], left = len;
+  for (let t = 0; t < 16; t++) {
+    const ws = [];
+    let rest = len;
+    for (;;) {
+      const fit = ROW_W.filter((w) => w <= rest + 1e-6);
+      if (!fit.length) break;
+      const w = pick(fit);
+      ws.push(w);
+      rest -= w;
+    }
+    if (rest < left - 1e-6) { best = ws; left = rest; }
+  }
+  return { ws: best, left };
+}
 function londonBlock(p, put, pick) {
-  const sides = p.sides || 'nesw', styles = p.styles || TERRACES;
+  const sides = p.sides || 'nesw';
   const E = { n: [[p.x0, p.z0], [p.x1, p.z0], [0, -1]], s: [[p.x1, p.z1], [p.x0, p.z1], [0, 1]], w: [[p.x0, p.z1], [p.x0, p.z0], [-1, 0]], e: [[p.x1, p.z0], [p.x1, p.z1], [1, 0]] };
   const order = 'nesw';
   // corners: where an edge meets the next one round the block
   const corner = (a, b) => sides.includes(a) && sides.includes(b);
+  let last = null;
+  const other = (list) => { const l = list.filter((n) => n !== last); return (last = pick(l.length ? l : list)); };
   for (let i = 0; i < 4; i++) {
     const k = order[i], nk = order[(i + 1) % 4];
     if (!sides.includes(k)) continue;
@@ -84,17 +107,18 @@ function londonBlock(p, put, pick) {
     const L = Math.hypot(bx - ax, bz - az), dx = (bx - ax) / L, dz = (bz - az) / L;
     const c0 = corner(order[(i + 3) % 4], k), c1 = corner(k, nk);
     const s0 = c0 ? CORNER_W : 0, s1 = c1 ? CORNER_W : 0;
-    const n = Math.floor((L - s0 - s1) / TERRACE_W + 1e-6), left = (L - s0 - s1 - n * TERRACE_W) / 2;
-    for (let j = 0; j < n; j++) {
-      const t = s0 + left + (j + 0.5) * TERRACE_W;
-      put('sq_terrace_' + pick(styles), ax + dx * t - nx * FRONT, az + dz * t - nz * FRONT, face(nx, nz), { r: 0, force: true });
+    const { ws, left } = fillRows(L - s0 - s1, pick);
+    let t = s0 + left / 2;
+    for (const w of ws) {
+      put(other(ROWS[w]), ax + dx * (t + w / 2) - nx * FRONT, az + dz * (t + w / 2) - nz * FRONT, face(nx, nz), { r: 0, force: true });
+      t += w;
     }
     if (c1) {
-      // the corner house's round looks out between this edge's normal and the next's
+      // the corner building's corner looks out between this edge's normal and the next's
       const [, , [mx, mz]] = E[nk];
       const cx = bx - nx * CORNER_W / 2 - mx * CORNER_W / 2, cz = bz - nz * CORNER_W / 2 - mz * CORNER_W / 2;
-      // the model's round is at its local (+x, -z); a turn by rot shows local direction angle q at q - rot
-      put(pick(['sq_terrace_corner', 'sq_terrace_corner_red']), cx, cz, -Math.PI / 4 - Math.atan2(nz + mz, nx + mx), { r: 0, force: true });
+      // the model's corner is at its local (+x, -z); a turn by rot shows local direction angle q at q - rot
+      put(other(CORNERS), cx, cz, -Math.PI / 4 - Math.atan2(nz + mz, nx + mx), { r: 0, force: true });
     }
   }
 }

@@ -25,5 +25,23 @@ const t0 = W.time;
 for (let i = 0; i < 60; i++) G.step(10, 0.1);
 check('the mission runs (60 s, no trigger errors)', W.time > t0 + 50 && !(C.errors || []).length && !G.over, { t: Math.round(W.time), errors: (C.errors || []).slice(0, 3), over: G.over, end: G.endInfo });
 check('nothing is missing', !C.warnings.some((w) => /could not be created for the player|start army unit not created|start building not created/.test(w)), C.warnings.slice(0, 8));
+// a ban of the level that the chosen tribe's equivalent shares with a class the level allows does not take the
+// equivalent away (tribes.js filters): the Dustriders' first mission bans the clay wall and its gate, not the bone
+// palisade and its gate - the SEAS keep their fence and gate
+{
+  const fs = (me.data && me.data.tech_filters) || [];
+  const bans = fs.filter((f) => /AntiActions\/[A-Za-z]+\/Build\//.test(f)).map((f) => f.split('/').pop().trim().toLowerCase());
+  if (C.swap && bans.length) {
+    const kept = [];
+    const sources = G.data.foreignActions(me, C.missionTribe).filter((a) => a.kind === 'Build' && a.results[0]).map((a) => a.results[0].obj);
+    for (const b of bans) {
+      const e = (C.swap.equivalent(b) || '').toLowerCase();
+      if (e && sources.some((c) => !bans.includes(c.toLowerCase()) && (C.swap.equivalent(c) || '').toLowerCase() === e)) kept.push(e);
+    }
+    const acts = G.data.actions(me).filter((a) => a.results && a.results[0]);
+    const lost = kept.filter((e) => !acts.some((a) => a.results[0].obj.toLowerCase() === e && a.visible !== false && !a.disabled));
+    check('a ban shared with an allowed class keeps the equivalent', !lost.length, { kept, lost });
+  }
+}
 return out.join('\n') + '\n   engine: ' + (engine ? 'on' : 'off') + ', units ' + own.filter((e) => e.kind === 'unit').map((e) => e.name).slice(0, 14).join(' ') +
   '\n   buildings ' + own.filter((e) => e.kind === 'building').map((e) => e.name).join(' ');

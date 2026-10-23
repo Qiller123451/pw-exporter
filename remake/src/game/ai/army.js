@@ -64,7 +64,11 @@ export const Army = {
     this.promote(S);
     const j = this.modJob;
     if (j) { if (j.producer.alive && j.producer.queue.includes(j.item) && W.time - j.t < 120) return; this.modJob = null; }
-    const mix = DATA.unitMix(p.tribe, S.age) || this.derivedMix(S);
+    // a tribe without Units.txt (Hu, Ninigi: no settings folder in the installation): the original's ministry of
+    // defence trains nothing (MOD:96, 1060-1137) - their army is the fight module's extra units (xtraThink). The mix
+    // derived from the tech tree is the remake's own: skirmish and the campaign's Nightmare (extraSquads)
+    const mix = DATA.unitMix(p.tribe, S.age) || (this.extraSquads ? this.derivedMix(S) : null);
+    if (!mix) return;
     const pyr = W.pyramidFor ? W.pyramidFor(p) : this.D.pyramid;
     const reserved = this.prm.highDefense ? [0, 0, 0, 0, 0] : RESERVED;
     const lords = new Set(S.heroes.filter((h) => h.level >= 5).map((h) => h.name));        // GetAvailableNPCs
@@ -123,6 +127,9 @@ export const Army = {
     const p = this.p, W = this.W, R = this.reserve || {};
     if (p.tribe === 'SEAS' || this.d <= 1 || this.prm.noDefence || this.economyOff) return;
     if (p.res.stone - (R.stone || 0) <= 100 || p.res.wood - (R.wood || 0) <= 200 || p.res.food - (R.food || 0) <= 200) return;
+    // one extra unit in production at a time (FM:621: a request is dropped while the last one is still being made)
+    const xj = this.xtraJob;
+    if (!this.extraSquads && xj && xj.producer.alive && xj.producer.queue.includes(xj.item)) return;
     const mix = DATA.unitMix(p.tribe, S.age) || this.derivedMix(S);
     for (let lv = 5; lv >= 1; lv--) {
       const groups = (mix['Level_' + lv] || []).slice().sort(() => Math.random() - 0.5);
@@ -133,7 +140,7 @@ export const Army = {
         if (!T || !T.producer || T.producer.queue.length) continue;
         const c = T.action.cost;
         if (['food', 'wood', 'stone', 'skulls'].some((r) => (c[r] || 0) > 0 && p.res[r] - c[r] < (R[r] || 0))) continue;
-        if (W.queueAction(T.producer, T.action) === null) return;
+        if (W.queueAction(T.producer, T.action) === null) { this.xtraJob = { producer: T.producer, item: T.producer.queue[T.producer.queue.length - 1] }; return; }
       }
     }
   },
@@ -158,8 +165,9 @@ export const Army = {
       if (!want || u.level >= want || u.task.type === 'attack') continue;
       if (!best || u.level < best.level) best = u;
     }
-    // a full pyramid row: one of its fighters moves up (inside the Kindergarten's ceilings) and makes room below
-    if (!best) {
+    // a full pyramid row: one of its fighters moves up (inside the Kindergarten's ceilings) and makes room below - the
+    // remake's own (skirmish, Nightmare); the original's only level-ups are the Kindergarten's
+    if (!best && this.extraSquads) {
       const pyr = W.pyramidFor ? W.pyramidFor(p) : this.D.pyramid;
       for (let lv = 1; lv <= 4 && !best; lv++) {
         if (p.atLevel[lv - 1] + p.queuedAtLevel[lv - 1] < pyr[lv - 1] || p.atLevel[lv] + p.queuedAtLevel[lv] >= pyr[lv]) continue;

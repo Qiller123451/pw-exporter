@@ -199,6 +199,7 @@ export function modelInfo(name) {
   return Assets.manifest.models[name.toLowerCase()] || null;
 }
 
+const SMALL_PART = 0.8;          // m: the radius below which a rigid part casts no shadow
 // Load (once) and prepare a template. opts.static: merge all meshes (props/buildings without animation)
 export function loadModel(name, opts = {}) {
   const key = name.toLowerCase() + (opts.static ? '#s' : '') + (opts.wallArms ? '#w' : '') + (opts.gate ? '#g' : '');
@@ -305,6 +306,25 @@ export function loadModel(name, opts = {}) {
       if (fourcc === 'Anim' || fourcc === 'Vehi') applyMask(scene, animalMask({ owned: fourcc === 'Vehi' }));
       else if (fourcc === 'Char') applyMask(scene, 1 << 16);      // VIS_FLAG_CHTR_ACTIVATED parts (healer kit) start hidden
       else applyState(scene, 4, 0, 1);
+      // a material on both skinned and rigid meshes of the model (a unit's body and its weapon): three.js looked its
+      // shader up again at every switch between the two kinds - the skinned meshes get a twin of it
+      const rigid = new Set();
+      scene.traverse((o) => { if (o.isMesh && !o.isSkinnedMesh) for (const m of [].concat(o.material)) rigid.add(m); });
+      const twins = new Map();
+      const twin = (m) => {
+        if (!rigid.has(m)) return m;
+        if (!twins.has(m)) { const c = m.clone(); c.userData = { ...m.userData }; c.onBeforeCompile = m.onBeforeCompile; c.customProgramCacheKey = m.customProgramCacheKey; twins.set(m, c); }
+        return twins.get(m);
+      };
+      scene.traverse((o) => { if (o.isSkinnedMesh) o.material = Array.isArray(o.material) ? o.material.map(twin) : twin(o.material); });
+      // small rigid parts (a weapon, a cup, a lantern) cast no shadow: their shadows are a few pixels, but each is one
+      // more draw in the shadow pass for every unit and building carrying it
+      scene.updateMatrixWorld(true);
+      scene.traverse((o) => {
+        if (!o.isMesh || o.isSkinnedMesh || !o.castShadow) return;
+        if (!o.geometry.boundingSphere) o.geometry.computeBoundingSphere();
+        if (o.geometry.boundingSphere.radius * Math.cbrt(Math.abs(o.matrixWorld.determinant())) < SMALL_PART) o.castShadow = false;
+      });
       let clips = gltf.animations;
       // clips made of a start, a loop and an end part (the loop marks of the GSF animation chunks, manifest
       // models[m].loops = {clip: [t0, t1]}): the parts as extra clips "<name>#s", "<name>#l", "<name>#e" - AnimCtl
@@ -324,10 +344,27 @@ export function loadModel(name, opts = {}) {
   return p;
 }
 
+// the shadow pass draws every caster with three.js's one depth material: switching it between skinned and rigid
+// meshes (units, weapons, buildings in the order of the scene) made three.js look its shader up again for almost every
+// caster. Skinned meshes get depth materials of their own: one, or one per cut-out material (alpha test: the
+// texture's holes stay holes in the shadow)
+const _skinDepth = new Map();
+function skinDepth(m) {
+  const mat = Array.isArray(m) ? m[0] : m;
+  const cut = mat && mat.map && mat.alphaTest > 0;
+  const key = cut ? mat.uuid : '';
+  let d = _skinDepth.get(key);
+  if (!d) {
+    d = new THREE.MeshDepthMaterial();
+    if (cut) { d.map = mat.map; d.alphaTest = mat.alphaTest; }
+    _skinDepth.set(key, d);
+  }
+  return d;
+}
 // party: the owner's colour as 0xRRGGBB (null = untinted). Party-colour materials are swapped for a tinted copy.
 export function cloneModel(tpl, party = null) {
   const s = SkeletonUtils.clone(tpl.scene);
-  s.traverse((o) => { if (o.isSkinnedMesh) o.frustumCulled = false; });
+  s.traverse((o) => { if (o.isSkinnedMesh) { o.frustumCulled = false; o.customDepthMaterial = skinDepth(o.material); } });
   if (party != null) tintParty(s, party);
   if (Assets.onClone) Assets.onClone(s);        // the particle emitters of the model (engine/particles.js)
   return s;
