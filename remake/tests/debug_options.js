@@ -23,7 +23,8 @@ W.recomputeCaps(me);
 check('six level-5 units', top.filter((u) => u.level === 5).length === 6 && me.atLevel[4] >= 6, { n: top.length, lv: top.map((u) => u.level), at: me.atLevel });
 G.hud.pyrKey = null; G.hud.refreshPyramid();
 const cards = [...G.hud.pyr.querySelectorAll('.pcard')].filter((d) => top.includes(d._u));
-check('six cards on the top row (five beside the pyramid)', cards.length === 6 && cards.filter((d) => parseFloat(d.style.left) >= 180).length === 5, cards.map((d) => d.style.left));
+// (level 5 has one place in the pyramid: the extra ones go into its tab at the size of level-1 cards first, ui/hud.js slotRects)
+check('six cards in the top tab, none beside the pyramid', cards.length === 6 && cards.every((d) => parseFloat(d.style.left) < 180), cards.map((d) => d.style.left + ' ' + d.style.top));
 check('a 7th level-5 unit does not fit', me.slotFree(5, pyr) === 'level', me.slotFree(5, pyr));
 // damage: yours ×2, the enemy's ×0.5, your defence ×4
 const foe = W.spawnUnit(cls.replace(/^hu_/, 'aje_').replace('aje_berserk', 'aje_warrior'), ai, h.pos.x + 40, h.pos.z + 40, 1, 0) || W.units.find((u) => u.alive && u.owner === ai && u.kind === 'unit');

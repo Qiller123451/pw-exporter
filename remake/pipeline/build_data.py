@@ -344,7 +344,7 @@ def main(out=None, log=print):
                                                      open(hero, encoding='latin1').read() if hero else '')}
     # multi-part objects (riders, turrets, build-ups, drawbars, flags ...) as the scripts assemble them
     comp = {k: [dict({x: p[x] for x in ('i', 'kind', 'gfx', 'variants', 'by', 'link', 'pi', 'anim', 'attack_anim', 'cond', 'arg', 'flex')},
-                     **({'offset': p['offset']} if p.get('offset') else {}))
+                     **{x: p[x] for x in ('offset', 'weapon_class') if p.get(x)})
                 for p in v if p['cond'] not in ('weapon', 'tool', 'carry', 'special')]
             for k, v in paths.composites().items()}
     data = {'texts': texts, 'ui': ui, 'idle': idle, 'composites': {k: v for k, v in comp.items() if v}, 'start': start, 'script': script, 'classParents': parents, 'classgfx': classgfx, 'resources': resources, 'npc': npc,

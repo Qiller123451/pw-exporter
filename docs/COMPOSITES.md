@@ -132,6 +132,14 @@ what it links.
   creates are gunners with the unit's captain class.
 - **Weapons** come from the tech tree as in the table; the level flag of mounts is added on `flag` and shown when
   the model has that link.
+- **Turrets.** A weapon build-up turns only its primary part, the first object linked to it
+  (`BuildUpBase.usl` `RotateToEnemy`: `GetPrimaryLinkedObj`, MIRAGE `GetPrimaryLinkedObjFight`): that one is the
+  `turret`, what else hangs on the build-up is carried along (`buildup`). A turret on an additional build-up whose
+  weapon class is set (`SetWeaponClass("hu_titan_ballista")`, with `SetAdditionalWeapon`) shoots by itself: its entry
+  has `weapon_class` (the table's titan and seismosaurus ballistas / gatlings get it from their note). The remake's
+  gunner turrets (`combat.gunnerUpdate`) and the Workshop's (`workshop/addons.py`) use it.
+- **`DestroyBuildUp()`** (`TransportObj.usl`) takes every build-up down with what is linked to it; the captain stays
+  (it rides by `RideAction`). The Workshop's add-on scripts start with it.
 - **Self-check.** `python -m pwexport.modparts <game folder>` runs the reader on the base game and compares its
   build-ups, turrets, wagons and riders with the table: 180 of 185 objects come out the same. The 5 others: a turret
   on an upgrade model of `hu_large_tower` (the scripts give it on the tower itself), the second seat of

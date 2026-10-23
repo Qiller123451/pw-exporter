@@ -26,5 +26,6 @@ with sync_playwright() as p:
     if m:
         src = open(_os.path.join(_os.path.dirname(_os.path.abspath(sys.argv[1])), m.group(1))).read() + '\n' + src
     print(pg.evaluate('(async () => {' + src + '})()'), flush=True)
+    if _os.environ.get('PWR_SHOT'): pg.screenshot(path=_os.environ['PWR_SHOT'])     # PWR_SHOT=file.png: the page afterwards
     for l in logs[-15:]: print(l[:300])
     b.close()

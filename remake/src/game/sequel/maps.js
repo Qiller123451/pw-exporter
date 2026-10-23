@@ -30,6 +30,9 @@ const SETTINGS = {
     rocks: /^northland_(stone_0\d|boulders_01|small_rock_0\d)$/, stone: 'resource_stone_nor', bush: 'northland_fruit_bush' },
   Icewaste: { trees: /^icewaste_(tree_0\d|birch_0\d|oak_0\d)$/, shrubs: /^icewaste_(bush_0\d|shrub_0\d_a|fern_0\d|juniper_0\d)$/,
     rocks: /^ice_(smallrock_0\d|middlerock_0\d|snow_middlerock_0\d)$/, stone: 'resource_stone_ice', bush: 'icewaste_fruit_bush' },
+  // (the scenarios' fire mountain: game/scenarios/missions.js)
+  Ashvalley: { trees: /^ash_(dragontree_0\d|joshua_tree_0\d)$/, shrubs: /^ash_(shrub_0\d|underwood_0\d|ashgrass_0\d)$/,
+    rocks: /^ash_(stone_0\d|smallstones_0\d|basalt0[1-4])$/, stone: 'resource_stone_ash', bush: 'ashvalley_fruit_bush' },
   Jungle: { trees: /^jungle_(tree_0\d|tree_med_0\d)$/, shrubs: /^jungle_(bush_0\d|underwood_0\d|flowers_0\d)$/,
     rocks: /^jungle_smallrock_0\d$|^jung_middle_rock_0\d$/, stone: 'resource_stone_jun', bush: 'jungle_fruit_bush' },
 };

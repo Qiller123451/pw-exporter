@@ -565,12 +565,24 @@ export class HUD {
     const slot = (u, i) => { const m = parseInt(u.menupos, 10); return m >= 0 ? m : m === -2 ? 1e6 + i : 1e3 + i; };
     if (this.menu === 'build') {
       const acts = G.buildActions();
-      for (const [k, t] of [['ECON', 'Economy'], ['COMB', 'Military'], ['DEFE', 'Defence']]) rows.push([t, byPos(acts.filter((a) => (a.loc.ui || {}).subcat === k))]);
+      // MIRAGE puts more in the build menu: subcat UNIT (the SEAS carrier, the launch pads, the floating harbour, the
+      // final boss) - a row of its own, like any other subcat the remake doesn't know
+      const BROWS = [['ECON', 'Economy'], ['COMB', 'Military'], ['DEFE', 'Defence'], ['UNIT', 'Special']];
+      for (const [k, t] of BROWS) rows.push([t, byPos(acts.filter((a) => (a.loc.ui || {}).subcat === k))]);
+      const brest = acts.filter((a) => !BROWS.some(([k]) => k === (a.loc.ui || {}).subcat));
+      if (brest.length) rows.push(['More', byPos(brest)]);
     } else if (this.menu === 'produce') {
       // Dustriders: UMGR (the farms' modes), UPGR, UNIT; the others: UPGR, UNIT
       const acts = G.producerActions(sel[0]);
       const sub = (a) => (a.loc.ui || {}).subcat || (a.kind === 'Build' ? 'UNIT' : 'UPGR');
-      for (const [k, t] of [['UMGR', 'Modes'], ['UPGR', 'Upgrades'], ['UNIT', 'Units']]) rows.push([t, byPos(acts.filter((a) => sub(a) === k))]);
+      // MIRAGE adds rows: ENTY (taverns: the heroes are split over UNIT and ENTY; the SEAS garage's dinosaurs, the Norse
+      // animal farm's), EXTE / RESE (laboratory, weapons builder), CONV (the brachiosaurus' and catapult rex's
+      // conversions); a subcat the remake doesn't know yet still gets a row rather than disappearing
+      const ROWS = [['UMGR', 'Modes'], ['UPGR', 'Upgrades'], ['EXTE', 'Extensions'], ['RESE', 'Research'], ['CONV', 'Conversions'], ['UNIT', 'Units'], ['ENTY', 'Units']];
+      const known = ROWS.map(([k]) => k);
+      for (const [k, t] of ROWS) rows.push([t, byPos(acts.filter((a) => sub(a) === k))]);
+      const rest = acts.filter((a) => !known.includes(sub(a)));
+      if (rest.length) rows.push(['More', byPos(rest)]);
     } else if (this.menu === 'special') {
       // SPEC rows by subcat: "UNIT" (the heroes' moves), none (the units' moves), then any other (the Dustriders'
       // BuildDown ...); the building commands (gates, markets) above them
@@ -686,6 +698,12 @@ export class HUD {
     this.cardUnits = [[], [], [], [], []];
     for (let lv = 0; lv < 5; lv++) {
       const slots = this.slotRects(lv, this.rowN[lv]);
+      if (slots.compact) {
+        // the compact row covers the pyramid picture's own (big) frames of the row
+        const own = PYR[lv], top = Math.min(...own.map((r) => r[1])), bottom = Math.max(...own.map((r) => r[1] + r[3]));
+        const bg = el('div', 'pxrow', this.pyr);
+        Object.assign(bg.style, { left: '4px', top: (top - 3) + 'px', width: '167px', height: (bottom - top + 6) + 'px' });
+      }
       const list = byLevel[lv].sort((a, b) => a.name.localeCompare(b.name));
       slots.forEach((r, i) => {
         const u = list[i];
@@ -693,7 +711,7 @@ export class HUD {
         const q = !u ? queued[lv][i - list.length] : null;
         if (!u && !q) {
           // a free place beside the pyramid (it has no picture of its own)
-          if (i >= PYR[lv].length) { const x = el('div', 'pxslot', this.pyr); Object.assign(x.style, { left: r[0] + 'px', top: r[1] + 'px', width: r[2] + 'px', height: r[3] + 'px' }); }
+          if (i >= PYR[lv].length || slots.compact) { const x = el('div', 'pxslot', this.pyr); Object.assign(x.style, { left: r[0] + 'px', top: r[1] + 'px', width: r[2] + 'px', height: r[3] + 'px' }); }
           return;
         }
         const d = el('div', 'pcard' + (u && G.sel.has(u) ? ' sel' : '') + (q ? ' queued' : ''), this.pyr);
@@ -745,11 +763,30 @@ export class HUD {
   // (production.js changeLevel).
   // the places of row lv for n units: the pyramid's own, then more to the right of the pyramid on the row's lines
   // (a debug option's bigger pyramid, game/cheats.js)
+  // Rows 3-5 (big cards): first more places inside the row itself, as cards of the first row's size (27 px, the
+  // pyramid's five columns, as many lines as the row's height takes: row 3 2 x 5, row 4 1 x 5, row 5 2 x 5); only
+  // what does not fit there goes beside the pyramid. The compact row has no picture of its own: every free place of
+  // it gets a frame (out.compact).
   slotRects(lv, n) {
     const own = PYR[lv];
     if (!(n > own.length)) return own;
-    const out = own.slice(), ys = [...new Set(own.map((r) => r[1]))], w = own[0][2], h = own[0][3];
-    for (let j = 0; j < n - own.length; j++) out.push([184 + Math.floor(j / ys.length) * (w + 5), ys[j % ys.length], w, h]);
+    let base = own;
+    if (lv >= 2) {
+      const S = PYR[0][0][2], COLS = [8, 41, 74, 107, 140];
+      const top = Math.min(...own.map((r) => r[1])), bottom = Math.max(...own.map((r) => r[1] + r[3])), H = bottom - top;
+      const lines = Math.max(1, Math.floor((H - S) / (S + 3)) + 1);
+      const pitch = lines > 1 ? Math.min(36, (H - S) / (lines - 1)) : 0, y0 = top + (H - S - (lines - 1) * pitch) / 2;
+      if (lines * COLS.length > own.length) {
+        base = [];
+        for (let l = 0; l < lines; l++) for (const x of COLS) base.push([x, Math.round(y0 + l * pitch), S, S]);
+        base.compact = true;
+      }
+    }
+    const out = base.slice(0, Math.min(n, base.length));
+    out.compact = !!base.compact;
+    if (n <= base.length) return out;
+    const ys = [...new Set(base.map((r) => r[1]))], w = base[0][2], h = base[0][3];
+    for (let j = 0; j < n - base.length; j++) out.push([184 + Math.floor(j / ys.length) * (w + 5), ys[j % ys.length], w, h]);
     return out;
   }
   pyramidSlotAt(cx, cy) {

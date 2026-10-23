@@ -40,14 +40,21 @@ const KIND_INFO = {
 };
 // the model kinds (GSF four-character codes) each kind of object usually has
 const FOURCC = { unit: ['Char', 'Anim', 'Vehi', 'Ship'], building: ['Bldg', 'Wall', 'Fiel'], animal: ['Anim'], decoration: ['Deko', 'Misc', 'Vgtn', 'Ress', 'Bldg'] };
-const STEPS = [['what', 'What it is'], ['model', 'Model'], ['anims', 'Animations'], ['numbers', 'Numbers'], ['texts', 'Name & icon'], ['check', 'Check']];
+const STEPS = [['what', 'What it is'], ['model', 'Model'], ['addons', 'Add-ons'], ['anims', 'Animations'], ['numbers', 'Numbers & fighting'], ['texts', 'Name & icon'], ['check', 'Check']];
+const ROLE_INFO = {
+  main: ['Main turret', 'the unit\'s own weapon: it turns to the target and the shots leave from its "Proj" link'],
+  gunner: ['Gunner turret', 'a turret with a gunner: it aims and shoots by itself with a weapon of its own'],
+  part: ['Part', 'carried along: armour, crates, a flag, a gun that does not aim'],
+};
 
-const S = { state: null, project: null, obj: null, step: 'what', tpl: {}, templates: {}, gameModels: {}, saveT: 0, preview: null };
+const S = { state: null, project: null, obj: null, step: 'what', tpl: {}, templates: {}, gameModels: {}, saveT: 0, preview: null,
+  ao: {}, minfo: {}, riders: {}, weapons: {}, sel: null, gmode: 'translate', parts: {} };
 let viewer = null;
 
 // ---------------------------------------------------------------------------- start
 async function boot() {
   viewer = new Viewer($('#view'));
+  window.workshop = { S, viewer };            // (for the tests: workshop/tests/ui_test.py, ui_addons.py)
   $('#anim').onchange = () => { viewer.play(0, $('#anim').value || null); };
   $('#snap').onclick = guard(snapIcon);
   $('#new-project').onclick = newProjectDialog;
@@ -127,7 +134,7 @@ function render() {
   const steps = el('div', { class: 'steps' });
   STEPS.forEach(([k, t], i) => steps.append(el('button', { class: (S.step === k ? 'on ' : '') + (stepDone(o, k) ? 'ok' : ''), onclick: () => { S.step = k; render(); } }, el('span', { class: 'n', text: i + 1 }), t)));
   m.append(steps);
-  const page = { what: stepWhat, model: stepModel, anims: stepAnims, numbers: stepNumbers, texts: stepTexts, check: stepCheck }[S.step] || stepWhat;
+  const page = { what: stepWhat, model: stepModel, addons: stepAddons, anims: stepAnims, numbers: stepNumbers, texts: stepTexts, check: stepCheck }[S.step] || stepWhat;
   const body = el('div');
   m.append(body);
   guard(async () => { body.append(await page(o)); })();
@@ -137,6 +144,7 @@ function render() {
     i < STEPS.length - 1 ? el('button', { class: 'primary', onclick: () => { S.step = STEPS[i + 1][0]; render(); } }, 'Next →')
       : el('button', { class: 'primary', onclick: () => { S.obj = null; render(); } }, 'Build & install the mod →')));
   showModel(o);
+  if (S.step !== 'addons') viewer.gizmo(null);
 }
 
 function stepDone(o, k) {
@@ -144,6 +152,7 @@ function stepDone(o, k) {
   if (k === 'what') return !!o.template;
   if (k === 'model') return m.source === 'game' || (m.file && m.name);
   if (k === 'texts') return !!(o.texts && o.texts.name);
+  if (k === 'addons') return o.addons != null || !!o.rider;
   return false;
 }
 
@@ -261,7 +270,7 @@ async function newObjectDialog() {
 async function stepWhat(o) {
   const P = S.project;
   const holder = el('div');
-  const pick = async () => { holder.innerHTML = ''; holder.append(await templatePicker(() => o.kind, () => o.template, (t) => { o.template = t.id; o.model.anims = {}; changed(); toast(`Behaves like ${t.title || t.id} now`); })); };
+  const pick = async () => { holder.innerHTML = ''; holder.append(await templatePicker(() => o.kind, () => o.template, (t) => { o.template = t.id; o.model.anims = {}; o.addons = null; o.rider = null; changed(); toast(`Behaves like ${t.title || t.id} now`); })); };
   const t = await templateInfo(P.base || '', o.template);
   await pick();
   return el('div', {},
@@ -415,8 +424,11 @@ async function stepNumbers(o) {
     c.append(...numField('Damage (level 1)', () => w.damage, (v) => { if (v == null) delete w.damage; else w.damage = v; }, t.weapon.damage));
     c.append(...numField('Range (m)', () => w.range, (v) => { if (v == null) delete w.range; else w.range = v; }, t.weapon.range));
     c.append(...numField('Attacks per minute', () => w.frequency, (v) => { if (v == null) delete w.frequency; else w.frequency = v; }, t.weapon.frequency));
-    cards.push(el('div', { class: 'card' }, el('h3', { text: 'Weapon' }), c, el('p', { class: 'note', text: 'The weapons of the higher levels keep their ratio to level 1.' })));
+    const main = (o.addons || []).find((a) => a.role === 'main');
+    cards.push(el('div', { class: 'card' }, el('h3', { text: 'Fighting: its own weapon' }), c,
+      el('p', { class: 'note', text: `The weapons of the higher levels keep their ratio to level 1.${main ? ` The main turret (${main.id}) aims it.` : ''}` })));
   }
+  if (o.kind === 'unit' || o.kind === 'animal') cards.push(await gunnerCards(o));
   cards.push(el('p', { class: 'note', text: 'Empty fields keep the template\'s value.' }));
   return el('div', {}, ...cards);
 }
@@ -539,24 +551,297 @@ async function preview(o) {
   return api.get(`/api/workshop/preview?project=${enc(S.project.id)}&obj=${enc(o.id)}`);
 }
 let shownKey = '';
-async function showModel(o) {
-  const key = JSON.stringify([S.project.id, o.id, o.model.source, o.model.file, o.model.name, o.template]);
-  if (key === shownKey) return;
+// the object with its add-ons, gunners and rider (the template's while the modder has not changed them)
+async function showModel(o, force = false) {
+  const P = S.project;
+  const ao = (o.kind === 'unit' || o.kind === 'animal') ? await addonsOf(o).catch(() => null) : null;
+  const adds = ao ? curAddons(o, ao) : [];
+  const rider = ao ? curRider(o, ao) : null;
+  const struct = adds.map((a) => [a.id, a.role, a.model, a.parent, a.link, a.gunner && a.gunner.link]);
+  const key = JSON.stringify([P.id, o.id, o.model.source, o.model.file, o.model.name, o.template, struct, rider && [rider.cls, rider.parent, rider.link, rider.hidden, rider.anim]]);
+  if (key === shownKey && !force) return;
   shownKey = key;
   $('#view-note').textContent = 'Loading the model…';
   try {
     const p = await preview(o);
+    const specs = [{ url: p.url + '?v=' + Date.now() }];
+    const index = { body: 0 }, play = [];
+    S.parts = {};
+    const capCls = (rider && rider.cls) || (ao && ao.setup.captainclass) || null;
+    for (const a of orderParents(adds)) {
+      const par = index[a.parent || 'body'];
+      if (par === undefined) continue;
+      const mi = await modelInfo(a.model).catch(() => null);
+      if (!mi) continue;
+      index[a.id] = S.parts[a.id] = specs.length;
+      specs.push({ url: mi.url, parent: par, link: a.link || '', offset: a.pos, rot: a.rot, scale: a.scale || 1 });
+      if (a.gunner && a.gunner.link && capCls) {
+        const ri = await riderInfo(capCls);
+        if (ri) { play.push([specs.length, pickAnim(ri.anims, 'balista_stand', 'hu_balista_steamtank_sitpos', 'ride_idle_0', 'standanim')]); specs.push({ url: ri.url, parent: index[a.id], link: a.gunner.link }); }
+      }
+    }
+    if (rider && !rider.hidden && rider.cls && index[rider.parent || 'body'] !== undefined) {
+      const ri = await riderInfo(rider.cls);
+      if (ri) {
+        S.parts.rider = specs.length;
+        play.push([specs.length, rider.anim || pickAnim(ri.anims, 'ride_idle_0', 'standanim')]);
+        specs.push({ url: ri.url, parent: index[rider.parent || 'body'], link: rider.link || '', offset: rider.pos, rot: rider.rot });
+      }
+    }
     if (shownKey !== key) return;
-    await viewer.show([{ url: p.url + '?v=' + Date.now() }]);
+    await viewer.show(specs, true);
+    if (!S.framed || S.framed !== o.id) { viewer.frame(); S.framed = o.id; }
+    for (const [i, a] of play) if (a) viewer.play(i, a);
     const sel = $('#anim'); sel.innerHTML = '';
     sel.append(el('option', { value: '' }, 'rest pose'), ...p.anims.map((a) => el('option', { value: a }, a)));
     const idle = p.anims.find((a) => a === 'standanim') || p.anims.find((a) => /^standanim|^idle/.test(a)) || p.anims.find((a) => /idle/.test(a) && !/^ns\d/i.test(a));
     if (idle) { sel.value = idle; viewer.play(0, idle); }
-    $('#view-note').textContent = `${p.fourcc} · ${p.anims.length} animations · ${p.links.length} links`;
+    $('#view-note').textContent = `${p.fourcc} · ${p.anims.length} animations · ${p.links.length} links${adds.length ? ` · ${adds.length} add-on${adds.length === 1 ? '' : 's'}` : ''}`;
+    if (S.step === 'addons') setGizmo();
   } catch (e) {
     $('#view-note').textContent = e.message;
     viewer.clear();
   }
+}
+const pickAnim = (list, ...want) => want.find((a) => (list || []).includes(a)) || null;
+function orderParents(adds) {
+  const by = Object.fromEntries(adds.map((a) => [a.id, a])), out = [], done = new Set();
+  const visit = (a, d = 0) => { if (done.has(a.id) || d > 32) return; if (a.parent && a.parent !== 'body' && by[a.parent]) visit(by[a.parent], d + 1); done.add(a.id); out.push(a); };
+  adds.forEach((a) => visit(a));
+  return out;
+}
+
+// ---------------------------------------------------------------------------- add-ons (workshop/addons.py)
+async function addonsOf(o) {
+  await saveNow();
+  const k = S.project.id + '|' + o.id + '|' + o.template;
+  if (!S.ao[k]) S.ao[k] = await api.get(`/api/workshop/addons?project=${enc(S.project.id)}&obj=${enc(o.id)}`);
+  return S.ao[k];
+}
+const curAddons = (o, ao) => o.addons || ao.addons || [];
+const curRider = (o, ao) => o.rider || ao.rider || null;
+async function modelInfo(m) {
+  if (!m || !m.name) throw new Error('no model');
+  const k = [S.project.id, m.source || 'game', m.file || '', m.name].join('|');
+  if (!S.minfo[k]) S.minfo[k] = api.get(`/api/workshop/modelinfo?project=${enc(S.project.id)}&source=${enc(m.source || 'game')}&name=${enc(m.name)}&file=${enc(m.file || '')}`);
+  return S.minfo[k];
+}
+async function ridersOf() {
+  const b = S.project.base || '';
+  if (!S.riders[b]) S.riders[b] = await api.get(`/api/workshop/riders?base=${enc(b)}`);
+  return S.riders[b];
+}
+async function riderInfo(cls) {
+  const r = (await ridersOf()).find((x) => x.cls.toLowerCase() === String(cls).toLowerCase());
+  return r && r.gfx ? modelInfo({ source: 'game', name: r.gfx }).catch(() => null) : null;
+}
+async function weaponsOf() {
+  const b = S.project.base || '';
+  if (!S.weapons[b]) S.weapons[b] = await api.get(`/api/workshop/weapons?base=${enc(b)}`);
+  return S.weapons[b];
+}
+// the first change makes the template's add-ons the object's own
+function ownAddons(o, ao) { if (!o.addons) o.addons = JSON.parse(JSON.stringify(ao.addons || [])); return o.addons; }
+function ownRider(o, ao) { if (!o.rider) o.rider = JSON.parse(JSON.stringify(ao.rider || { cls: '', parent: 'body', link: '', pos: [0, 0, 0], rot: [0, 0, 0], anim: '', attack_anim: '', hidden: false })); return o.rider; }
+
+// the gizmo follows the add-on (or the rider) picked in the list
+function setGizmo() {
+  const i = S.sel ? S.parts[S.sel] : null;
+  viewer.gizmo(i == null ? null : i, S.gmode, (v) => {
+    const o = cur(); if (!o) return;
+    const ao = S.ao[S.project.id + '|' + o.id + '|' + o.template];
+    const x = S.sel === 'rider' ? ownRider(o, ao) : ownAddons(o, ao).find((a) => a.id === S.sel);
+    if (!x) return;
+    x.pos = v.offset; x.rot = v.rot; if (S.sel !== 'rider') x.scale = v.scale;
+    const box = $('#xform');
+    if (box && box.fill) box.fill(x);
+    changed();
+  });
+}
+function vec3Fields(get, set, step, label) {
+  const ins = [0, 1, 2].map((k) => el('input', { type: 'number', step, onchange: (e) => { const v = (get() || [0, 0, 0]).slice(); v[k] = +e.target.value || 0; set(v); } }));
+  const fill = () => { const v = get() || [0, 0, 0]; ins.forEach((x, k) => { x.value = +(+v[k]).toFixed(3); }); };
+  fill();
+  return { row: [el('label', { text: label }), el('div', { class: 'vec' }, ...ins)], fill };
+}
+// position / rotation / scale of the picked add-on (or the rider) as numbers, the gizmo's mode
+function transformBox(o, x, isRider) {
+  const box = el('div', { id: 'xform', class: 'card' });
+  const apply = () => { const i = S.parts[S.sel]; if (i != null) viewer.placePart(i, x.pos, x.rot, isRider ? 1 : x.scale); changed(); };
+  const pos = vec3Fields(() => x.pos, (v) => { x.pos = v; apply(); }, 0.05, 'Position (m)');
+  const rot = vec3Fields(() => x.rot, (v) => { x.rot = v; apply(); }, 5, 'Rotation (°)');
+  const sc = el('input', { type: 'number', step: 0.05, min: 0.05, max: 20, value: x.scale || 1, onchange: (e) => { x.scale = Math.min(20, Math.max(0.05, +e.target.value || 1)); apply(); } });
+  box.fill = (v) => { pos.fill(); rot.fill(); sc.value = +(+(v.scale || 1)).toFixed(3); };
+  const modes = el('div', { class: 'seg' }, ...[['translate', 'Move'], ['rotate', 'Turn'], ...(isRider ? [] : [['scale', 'Size']])].map(([m, t]) =>
+    el('button', { class: 'small' + (S.gmode === m ? ' on' : ''), onclick: (e) => { S.gmode = m; [...e.target.parentNode.children].forEach((b) => b.classList.toggle('on', b === e.target)); setGizmo(); } }, t)));
+  box.append(el('h3', { text: isRider ? 'The rider\'s seat' : `Add-on ${x.id}` }),
+    el('p', { class: 'note', text: 'Drag the handles in the 3D view, or type the numbers. They count from the link it hangs on (its axes, as in Blender).' }),
+    modes, el('div', { class: 'grid xf' }, ...pos.row, ...rot.row, ...(isRider ? [] : [el('label', { text: 'Size' }), sc])),
+    el('div', { class: 'actions' }, el('button', { class: 'small', onclick: () => { x.pos = [0, 0, 0]; x.rot = [0, 0, 0]; if (!isRider) x.scale = 1; box.fill(x); apply(); } }, 'Back onto the link')));
+  return box;
+}
+
+async function stepAddons(o) {
+  const P = S.project;
+  if (o.kind !== 'unit' && o.kind !== 'animal') return el('div', { class: 'card' }, el('p', { text: 'Buildings and decorations have no add-ons here: in the game only units and animals carry them (towers have their turret in their own script).' }));
+  const ao = await addonsOf(o), setup = ao.setup;
+  if (!setup.transport) {
+    return el('div', { class: 'card' }, el('h3', { text: 'Add-ons' }), el('p', { class: 'note', html: `In the game, add-ons (turrets, build-ups, gunners, riders) hang on animals, vehicles and ships only. The template <code>${o.template}</code> is a <code>${setup.script || '?'}</code> - pick an animal, vehicle or ship as the template to give it some.` }));
+  }
+  const adds = curAddons(o, ao);
+  const rider = curRider(o, ao);
+  const body = await preview(o).catch(() => ({ links: [] }));
+  const linksOf = async (par) => {
+    if (!par || par === 'body') return body.links || [];
+    const a = adds.find((x) => x.id === par);
+    return a ? ((await modelInfo(a.model).catch(() => ({ links: [] }))).links || []) : [];
+  };
+  const redraw = () => { changed(true); };
+  const tb = el('tbody');
+  for (const a of adds) {
+    const role = el('select', { onchange: (e) => {
+      const L = ownAddons(o, ao), x = L.find((y) => y.id === a.id);
+      if (e.target.value === 'main') for (const y of L) if (y.role === 'main') y.role = 'part';     // (one main turret)
+      x.role = e.target.value;
+      if (x.role === 'gunner' && !x.weapon) x.weapon = {};
+      redraw();
+    } },
+      ...Object.entries(ROLE_INFO).map(([k, [t]]) => el('option', { value: k, selected: a.role === k, disabled: k === 'main' && !setup.can_main }, t)));
+    const parent = el('select', { onchange: (e) => { const x = ownAddons(o, ao).find((y) => y.id === a.id); x.parent = e.target.value; x.link = ''; redraw(); } },
+      el('option', { value: 'body', selected: (a.parent || 'body') === 'body' }, 'the body'), ...adds.filter((x) => x.id !== a.id).map((x) => el('option', { value: x.id, selected: a.parent === x.id }, x.id)));
+    const ls = await linksOf(a.parent);
+    const link = el('select', { onchange: (e) => { const x = ownAddons(o, ao).find((y) => y.id === a.id); x.link = e.target.value; redraw(); } },
+      el('option', { value: '', selected: !a.link }, '(its origin)'), ...ls.map((l) => el('option', { value: l, selected: a.link === l }, l || '(unnamed)')).filter((x) => x.value !== ''));
+    if (a.link && !ls.includes(a.link)) link.append(el('option', { value: a.link, selected: true }, `${a.link} (missing!)`));
+    const moved = (a.pos || []).some((v) => Math.abs(v) > 1e-6) || (a.rot || []).some((v) => Math.abs(v) > 1e-6) || Math.abs((a.scale || 1) - 1) > 1e-6;
+    tb.append(el('tr', { class: 'click' + (S.sel === a.id ? ' sel' : ''), onclick: (e) => { if (e.target.closest('select,button')) return; S.sel = S.sel === a.id ? null : a.id; render(); } },
+      el('td', {}, el('b', { text: a.id }), el('small', { class: 'note', text: (a.origin === 'template' ? ' template' : '') + (a.model.source === 'upload' ? ' · yours' : '')
+        + (moved ? ` · moved${Math.abs((a.scale || 1) - 1) > 1e-6 ? ` ×${+(+a.scale).toFixed(2)}` : ''}` : '') }), el('br'), el('code', { text: a.model.name })),
+      el('td', {}, role), el('td', {}, parent), el('td', {}, link),
+      el('td', {}, el('button', { class: 'small', title: 'Remove', onclick: () => { const L = ownAddons(o, ao); const gone = new Set([a.id]); let grew = true;
+        while (grew) { grew = false; for (const x of L) if (!gone.has(x.id) && gone.has(x.parent)) { gone.add(x.id); grew = true; } }
+        o.addons = L.filter((x) => !gone.has(x.id)); if (o.rider && gone.has(o.rider.parent)) { o.rider.parent = 'body'; o.rider.link = ''; } if (gone.has(S.sel)) S.sel = null; redraw(); } }, '✕'))));
+  }
+  const cards = [];
+  cards.push(el('div', { class: 'card' }, el('h3', { text: 'Add-ons' }),
+    el('p', { class: 'note', html: o.addons ? 'Your add-ons. In the game a script class of the mod puts them on instead of the template\'s (<i>Scripts/Server/classes/' + P.id.toLowerCase() + '</i>).'
+      : `What the template's script (<code>${setup.script}</code>) puts on it. Change anything and they become this object's own.` }),
+    adds.length ? el('div', { class: 'table addons', style: 'max-height:300px' }, el('table', {}, el('thead', {}, el('tr', {}, el('th', { text: 'Add-on' }), el('th', { text: 'Role' }), el('th', { text: 'On' }), el('th', { text: 'Link' }), el('th', { text: '' }))), tb))
+      : el('p', { class: 'note', text: 'No add-ons.' }),
+    el('p', { class: 'note', text: 'Click a row to move, turn or size it in the 3D view. ' + Object.values(ROLE_INFO).map(([t, d]) => `${t}: ${d}.`).join(' ') + (setup.can_main ? '' : ` (${o.template} cannot aim a main turret: ${setup.weapon ? 'it carries another kind of build-up' : 'it does not fight'}.)`) }),
+    el('div', { class: 'actions' }, el('button', { class: 'primary small', onclick: () => addAddonDialog(o, ao) }, 'Add an add-on…'),
+      o.addons ? el('button', { class: 'small', onclick: () => { if (confirm('Back to the template\'s add-ons?')) { o.addons = null; S.sel = null; redraw(); } } }, 'Back to the template\'s') : null)));
+  const sel = S.sel && S.sel !== 'rider' ? adds.find((a) => a.id === S.sel) : null;
+  if (sel) {
+    cards.push(transformBox(o, sel, false));
+    if (sel.role === 'gunner') {
+      const ls = (await modelInfo(sel.model).catch(() => ({ links: [] }))).links || [];
+      cards.push(el('div', { class: 'card' }, el('h3', { text: 'Its gunner' }),
+        el('div', { class: 'grid' }, el('label', { text: 'Sits at' }), el('select', { onchange: (e) => { ownAddons(o, ao).find((x) => x.id === sel.id).gunner = e.target.value ? { link: e.target.value } : null; redraw(); } },
+          el('option', { value: '' }, 'no gunner shown'), ...ls.filter(Boolean).map((l) => el('option', { value: l, selected: (sel.gunner || {}).link === l }, l)))),
+        el('p', { class: 'note', text: 'The gunner is the unit\'s rider class (below). The turret\'s weapon: "Numbers & fighting".' })));
+    }
+  }
+  // the rider
+  const riders = await ridersOf();
+  const R = rider || {};
+  const rsel = el('select', { onchange: (e) => { const r = ownRider(o, ao); r.cls = e.target.value; r.hidden = !e.target.value; redraw(); } },
+    el('option', { value: '', selected: !R.cls || R.hidden }, 'no rider'),
+    el('optgroup', { label: 'Riders and captains' }, ...riders.filter((r) => r.captain).map((r) => el('option', { value: r.cls, selected: !R.hidden && R.cls === r.cls }, `${r.cls} (${r.tribe})`))),
+    el('optgroup', { label: 'Characters' }, ...riders.filter((r) => !r.captain).map((r) => el('option', { value: r.cls, selected: !R.hidden && R.cls === r.cls }, `${r.cls} (${r.tribe})`))));
+  const main = adds.find((a) => a.role === 'main');
+  const rpar = el('select', { onchange: (e) => { const r = ownRider(o, ao); r.parent = e.target.value; r.link = ''; redraw(); } },
+    el('option', { value: 'body', selected: (R.parent || 'body') === 'body' }, 'the body'), main ? el('option', { value: main.id, selected: R.parent === main.id }, `the main turret (${main.id})`) : null);
+  const rls = await linksOf(R.parent || 'body');
+  const rlink = el('select', { onchange: (e) => { ownRider(o, ao).link = e.target.value; redraw(); } },
+    el('option', { value: '', selected: !R.link }, '(its origin)'), ...rls.filter(Boolean).map((l) => el('option', { value: l, selected: R.link === l }, l)));
+  const ri = R.cls && !R.hidden ? await riderInfo(R.cls) : null;
+  const animSel = (k, label) => el('select', { onchange: (e) => { ownRider(o, ao)[k] = e.target.value; redraw(); } },
+    el('option', { value: '' }, label), ...((ri && ri.anims) || []).filter((a) => !/^ns\d/i.test(a)).map((a) => el('option', { value: a, selected: R[k] === a }, a)));
+  cards.push(el('div', { class: 'card' }, el('h3', { text: 'Rider' }),
+    el('div', { class: 'grid' }, el('label', { text: 'Who' }), rsel,
+      ...(R.cls && !R.hidden ? [el('label', { text: 'Sits on' }), rpar, el('label', { text: 'At the link' }), rlink,
+        el('label', { text: 'Pose' }), animSel('anim', '(the template\'s)'), el('label', { text: 'Pose when it shoots' }), animSel('attack_anim', '(none)')] : [])),
+    el('p', { class: 'note', text: `The rider steers the unit and mans the gunner turrets (the game shows the same class on every turret). ${setup.captainclass ? `The template's: ${setup.captainclass}.` : 'The template has none.'}` }),
+    R.cls && !R.hidden ? el('div', { class: 'actions' }, el('button', { class: 'small' + (S.sel === 'rider' ? ' on' : ''), onclick: () => { S.sel = S.sel === 'rider' ? null : 'rider'; render(); } }, S.sel === 'rider' ? 'Done moving the seat' : 'Move the seat in the 3D view'),
+      o.rider ? el('button', { class: 'small', onclick: () => { o.rider = null; if (S.sel === 'rider') S.sel = null; redraw(); } }, 'Back to the template\'s rider') : null) : null));
+  if (S.sel === 'rider' && R.cls && !R.hidden) cards.push(transformBox(o, ownRider(o, ao), true));
+  for (const p of (P.problems || []).filter((x) => x.startsWith(o.id + ':') || x.startsWith(o.id + ','))) cards.unshift(el('p', { class: 'bad', text: p }));
+  setTimeout(setGizmo, 0);
+  return el('div', {}, ...cards);
+}
+
+async function addAddonDialog(o, ao) {
+  const P = S.project;
+  const all = S.gameModels[P.base || ''] || (S.gameModels[P.base || ''] = await api.get(`/api/workshop/gamemodels?base=${enc(P.base || '')}`));
+  let pick = null, up = null;
+  const PART = /_top$|turret|cannon|gatling|ballista|catapult|launcher|buildup|_gun|machinegun|mortar|harpoon/i;
+  const search = el('input', { type: 'search', placeholder: 'Search the game\'s models (turrets first)' });
+  const table = el('div', { class: 'table' });
+  const fill = () => {
+    const q = search.value.trim().toLowerCase();
+    const rows = all.filter((x) => !q || (x.name + ' ' + x.archive).toLowerCase().includes(q)).sort((a, b) => (PART.test(b.name) - PART.test(a.name)) || a.name.localeCompare(b.name)).slice(0, 300);
+    const tb = el('tbody');
+    for (const x of rows) tb.append(el('tr', { class: 'click' + (pick && pick.name === x.name ? ' sel' : ''), onclick: () => { pick = { source: 'game', name: x.name }; up = null; fill(); } },
+      el('td', {}, el('code', { text: x.name })), el('td', { text: x.fourcc }), el('td', { class: 'note', text: x.archive })));
+    table.innerHTML = '';
+    table.append(el('table', {}, tb));
+  };
+  search.oninput = fill;
+  fill();
+  const file = el('input', { type: 'file', accept: '.gsf' });
+  const upList = el('div');
+  file.onchange = guard(async () => {
+    const f = file.files[0]; if (!f) return;
+    const r = await api.upload(P.id, f);
+    upList.innerHTML = '';
+    for (const m of r.models || []) upList.append(el('label', { class: 'note' }, el('input', { type: 'radio', name: 'upm', onchange: () => { pick = { source: 'upload', file: r.file, name: m.name }; } }), ` ${m.name} (${m.fourcc})`));
+  });
+  const role = el('select', {}, ...Object.entries(ROLE_INFO).map(([k, [t]]) => el('option', { value: k, disabled: k === 'main' && (!ao.setup.can_main || curAddons(o, ao).some((a) => a.role === 'main')), selected: k === 'part' }, t)));
+  modal('Add an add-on', el('div', {}, el('div', { class: 'pick' }, search), table,
+    el('p', { class: 'note', text: 'Or a model of your own (an archive the Blender add-on wrote):' }), file, upList,
+    el('div', { class: 'grid' }, el('label', { text: 'Role' }), role)), async () => {
+    if (!pick) throw new Error('Pick a model in the list.');
+    const L = ownAddons(o, ao);
+    let n = 1; while (L.some((a) => a.id === 'a' + n)) n++;
+    const a = { id: 'a' + n, origin: 'new', role: role.value, model: pick, parent: 'body', link: '', pos: [0, 0, 0], rot: [0, 0, 0], scale: 1, gunner: null, weapon: null };
+    if (a.role === 'gunner') {
+      a.weapon = {};
+      const mi = await modelInfo(pick).catch(() => null);
+      const seat = mi && (mi.links || []).find((l) => /^Dri\d/.test(l));
+      if (seat) a.gunner = { link: seat };
+    }
+    // where it goes first: the template's main link ("we", "con" ...) or the body's origin
+    const body = await preview(o).catch(() => ({ links: [] }));
+    a.link = (body.links || []).find((l) => ['we', 'con', 'Ride', 'con2'].includes(l)) || '';
+    L.push(a);
+    S.sel = a.id; S.gmode = 'translate';
+    changed(true);
+  }, 'Add');
+}
+
+// the weapons of the gunner turrets (Numbers step)
+async function gunnerCards(o) {
+  const ao = await addonsOf(o).catch(() => null);
+  if (!ao || !ao.setup.transport) return null;
+  const gun = curAddons(o, ao).filter((a) => a.role === 'gunner');
+  if (!gun.length) return el('p', { class: 'note', text: 'No gunner turrets (step "Add-ons"): the unit fights with its own weapon only.' });
+  const ws = await weaponsOf();
+  const box = el('div', { class: 'card' }, el('h3', { text: 'Fighting: the gunner turrets' }),
+    el('p', { class: 'note', text: 'Each gunner turret shoots by itself with a copy of a weapon of the game (its projectile, its sound), changed by the numbers here. Empty: the copied weapon\'s value.' }));
+  for (const a of gun) {
+    const w = a.weapon || {};
+    const src = ws.find((x) => x.path === w.from) || (w.class ? ws.find((x) => x.users.includes(w.class)) : null);
+    const sel = el('select', { onchange: (e) => { const x = ownAddons(o, ao).find((y) => y.id === a.id); x.weapon = Object.assign(x.weapon || {}, { from: e.target.value || null }); if (!x.weapon.from) delete x.weapon.from; changed(true); } },
+      el('option', { value: '' }, w.class ? `the template's (${w.class})` : 'the unit\'s own (or its tribe\'s first ranged weapon)'),
+      ...ws.map((x) => el('option', { value: x.path, selected: w.from === x.path }, `${x.tribe} · ${x.key} (${x.users.slice(0, 2).join(', ') || '-'}) · ${pretty(x.damage)} dmg, ${pretty(x.range)} m`)));
+    const c = el('div', { class: 'nums' });
+    const set = (k) => (v) => { const x = ownAddons(o, ao).find((y) => y.id === a.id); x.weapon = x.weapon || {}; if (v == null) delete x.weapon[k]; else x.weapon[k] = v; };
+    c.append(...numField('Damage', () => w.damage, set('damage'), src && src.damage), ...numField('Range (m)', () => w.range, set('range'), src && src.range),
+      ...numField('Attacks per minute', () => w.frequency, set('frequency'), src && src.frequency));
+    box.append(el('h4', {}, `${a.id} · `, el('code', { text: a.model.name })), el('div', { class: 'pick' }, sel), c);
+  }
+  return box;
 }
 
 // the 3D view as the object's icon

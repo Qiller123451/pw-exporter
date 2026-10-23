@@ -3,6 +3,8 @@
 // game/sequel/runtime.js is the model it shows.
 import * as THREE from 'three';
 import { CAST } from '../game/sequel/cast.js';
+import { MISSIONS } from '../game/sequel/missions.js';
+import { SCENARIOS, TRIBE_NAMES } from '../game/scenarios/missions.js';
 import { POWERS, RIFT_RANGE } from '../game/sequel/runtime.js';
 import { attachHeight } from '../game/sequel/power.js';
 import { SEQUEL_CLASSES, tagsOf } from '../game/sequel/rules.js';
@@ -79,8 +81,9 @@ export class SequelUI {
     G.setPaused(true);
     const news = (d.unlocks || []).map((u) => (SEQUEL_CLASSES[Array.isArray(u) ? u[0] : u] || {}).desc).filter(Boolean).join(', ');   // (missions.js unlocks)
     const box = el('div', 'sqbrief', document.body);
-    box.innerHTML = `<div class="in"><small>ParaWorld: Containment · Mission ${d.id} of 10</small><h2>${esc(d.title)}</h2>
-      <p class="where">${esc(d.place)} — ${esc(d.date)}</p>${d.briefing.map((p) => `<p>${esc(p)}</p>`).join('')}${news ? `<p class="where">New: ${esc(news)}</p>` : ''}
+    const head = M.kind === 'scenario' ? `ParaWorld Scenarios · ${d.id} of ${SCENARIOS.length} · playing as the ${TRIBE_NAMES[M.tribe]}` : `ParaWorld: Containment · Mission ${d.id} of ${MISSIONS.length}`;
+    box.innerHTML = `<div class="in"><small>${head}</small><h2>${esc(d.title)}</h2>
+      <p class="where">${esc(d.place)}${d.date ? ' — ' + esc(d.date) : ''}</p>${d.briefing.map((p) => `<p>${esc(p)}</p>`).join('')}${news ? `<p class="where">New: ${esc(news)}</p>` : ''}
       <button class="pwbtn">Begin</button></div>`;
     box.querySelector('button').onclick = () => { box.remove(); M.started = true; G.setPaused(false); };
   }
@@ -121,9 +124,11 @@ export class SequelUI {
         sealing.map((p) => `<div class="seal"><i>⟳</i>Sealing the rift <em>${p}%</em><b style="width:${p}%"></b></div>`).join('');
     }
     // a mission clock (missions with a countdown keep it in state.dawn / launch / full)
-    const end = M.state.dawn || M.state.launch || M.state.full || M.state.extract;
-    if (end && !M.ended && M.time < end) { this.timer.classList.remove('hidden'); this.timer.textContent = clock(end - M.time); } else this.timer.classList.add('hidden');
+    // (state.clock: any mission's countdown, state.clockLabel what it counts down to - the scenarios')
+    const end = M.state.dawn || M.state.launch || M.state.full || M.state.extract || M.state.clock;
+    if (end && !M.ended && M.time < end) { this.timer.classList.remove('hidden'); this.timer.textContent = (M.state.clockLabel ? M.state.clockLabel + ' ' : '') + clock(end - M.time); } else this.timer.classList.add('hidden');
     // electricity: the stock, what the connected plants make, plants cut off from the grid
+    this.pow.classList.toggle('hidden', M.kind === 'scenario' && !(M.def.powers || []).length);     // (a scenario: no electricity, no powers)
     const R = M.grid.rates(), stock = Math.floor(this.G.me.res.power || 0);
     const pk2 = `${stock}|${R.on}|${R.cut}|${R.plants}`;
     if (pk2 !== this.pwKey) {

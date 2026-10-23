@@ -34,6 +34,9 @@ function arrowSpacing(len, n) { const cols = Math.ceil(Math.sqrt(n * 1.6)); retu
 // the placement grid: round dots over the ground, drawn over everything at a fixed size on the screen
 // (ui/input.js updatePlaceGrid)
 const PLACE_GRID_R = 24, PLACE_STEP = 2;
+// the ghost of a building jumps to the nearest green dot of the placement grid within this many metres when the
+// cursor's own spot does not fit (the user's wish: with few green dots it is hard to hit one)
+const PLACE_SNAP_R = 8;
 let dotTex = null;
 function placeGrid() {
   if (!dotTex) {
@@ -252,7 +255,11 @@ export class Input {
       if (d !== null && d < ud) { ud = d; best = u; }
     }
     if (best) return best;
-    // nothing under the cursor itself: the nearest small figure around it (far zoom - a unit a few pixels tall)
+    // nothing under the cursor itself: the nearest small figure around it (far zoom - a unit a few pixels tall).
+    // Only a fallback: a building whose surface is under the cursor wins over figures caught by the widened click
+    // box, and over figures behind that surface - units crowding at the foot of a building they attack covered most
+    // of it, and a right-click on it ordered a move (the user: "cannot attack buildings that are low on hp")
+    let inRect = false;
     for (const u of G.world.units) {
       if (!shown(u)) continue;
       const r = this.pickRect(u);
@@ -262,9 +269,9 @@ export class Input {
       const hw = Math.max(10, (r.x1 - r.x0) / 2) + pad, hh = Math.max(12, (r.y1 - r.y0) / 2) + pad;
       if (Math.abs(mx - cx) > hw || Math.abs(my - cy) > hh) continue;
       const score = r.area + Math.hypot(mx - cx, my - cy) * 4;
-      if (score < ba) { ba = score; best = u; }
+      if (score < ba) { ba = score; best = u; inRect = r.y1 - r.y0 < 28 && mx >= r.x0 && mx <= r.x1 && my >= r.y0 && my <= r.y1; }
     }
-    if (best) return best;
+    const fig = best;
     const g = this.groundPoint(mx, my);
     const ray = this.ray(mx, my).clone();
     const gate = (b) => (b.parentGate && b.parentGate.alive ? b.parentGate : b);   // a gate's wing selects the gate
@@ -302,6 +309,11 @@ export class Input {
       const d = this.pickHit(w, ray);
       if (d !== null && d < hd) { hd = d; hit = w; }
     }
+    if (hit && fig) {
+      // a small figure (far zoom: its volume is hard to hit) drawn under the cursor in front of the surface hit
+      const fy = fig.pos.y + Math.min(2, (fig.height || 2) * 0.5);
+      if (inRect && Math.hypot(fig.pos.x - ray.origin.x, fy - ray.origin.y, fig.pos.z - ray.origin.z) < hd + (fig.radius || 1)) return fig;
+    } else if (fig) return fig;
     if (hit) return hit.kind === 'res' || hit.kind === 'well' || hit.kind === 'item' ? hit : gate(hit);
     if (g) {                                   // the ground right next to a small resource (bushes, stones in the grass)
       let rb = null, rd = 1;
@@ -385,18 +397,18 @@ export class Input {
     if (m.dragging) {
       m.dragging = false;
       const x0 = Math.min(m.sx, m.x), x1 = Math.max(m.sx, m.x), y0 = Math.min(m.sy, m.y), y1 = Math.max(m.sy, m.y);
-      const list = [];
       const c = new THREE.Vector3();
-      for (const u of G.world.units) {
-        if (!u.alive || u.owner !== G.me || u.inside || u.autonomous || u.parked || u.unselectable) continue;
+      // an entity is inside when its centre or a good part of its rectangle is in the box
+      const inBox = (u) => {
         const r = this.pickRect(u);
         let sx, sy;
-        if (r) { sx = (r.x0 + r.x1) / 2; sy = (r.y0 + r.y1) / 2; } else { c.copy(u.pos); c.y += u.height * 0.4; const s = this.toScreen(c); if (s.z > 1) continue; sx = s.x; sy = s.y; }
-        // a unit is inside when its centre or a good part of its rectangle is in the box
-        const inside = (sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1) ||
-          (r && Math.max(0, Math.min(x1, r.x1) - Math.max(x0, r.x0)) * Math.max(0, Math.min(y1, r.y1) - Math.max(y0, r.y0)) > 0.4 * r.area);
-        if (inside) list.push(u);
-      }
+        if (r) { sx = (r.x0 + r.x1) / 2; sy = (r.y0 + r.y1) / 2; } else { c.copy(u.pos); c.y += (u.height || 2) * 0.4; const s = this.toScreen(c); if (s.z > 1) return false; sx = s.x; sy = s.y; }
+        return (sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1) ||
+          !!(r && Math.max(0, Math.min(x1, r.x1) - Math.max(x0, r.x0)) * Math.max(0, Math.min(y1, r.y1) - Math.max(y0, r.y0)) > 0.4 * r.area);
+      };
+      let list = G.world.units.filter((u) => u.alive && u.owner === G.me && !u.inside && !u.autonomous && !u.parked && !u.unselectable && inBox(u));
+      // no unit in the box: the own buildings in it (not the wall pieces - a wall line would swamp the selection)
+      if (!list.length) list = G.world.buildings.filter((b) => b.alive && b.owner === G.me && !b.unselectable && b.def && b.def.wallKind !== 'wall' && inBox(b));
       if (e.shiftKey) { for (const u of list) G.sel.add(u); G.selChanged(); }
       else if (list.length) G.select(list);
       else G.select([]);
@@ -929,7 +941,7 @@ export class Input {
     gh.x = Math.round(g.x); gh.z = Math.round(g.z);
     // towers and traps go onto wall tiles: pointing at a wall piece (whose top hides the ground behind it) means
     // its tile, not the ground point the ray reaches behind the wall
-    const gdef = G.data.def(gh.name, G.me) || {}, kind = gdef.wallKind, ladder = gdef.script === 'CLadder';
+    const gdef = G.data.def(gh.name, G.me) || {}, kind = gdef.wallKind, ladder = !!gdef.ladder;
     if (kind === 'tower' || kind === 'trap' || kind === 'gate' || ladder) {
       // (a ladder goes against any wall piece, an enemy's above all: game/systems/siege.js)
       const e = this.entityAt(this.mouse.x, this.mouse.y);
@@ -945,7 +957,18 @@ export class Input {
     // coastal buildings (harbours) snap to the shore: show the ghost where it will really stand
     const ws = this.myUnits().filter((u) => u.canBuild);
     const from = ws.length ? [ws.reduce((s, u) => s + u.pos.x, 0) / ws.length, ws.reduce((s, u) => s + u.pos.z, 0) / ws.length] : null;
-    const at = G.world.placement(gh.name, gh.x, gh.z, gh.rot, G.me, from);
+    // the grid around the cursor (before any snapping: the dots stay where the mouse is)
+    if (gh.grid) this.updatePlaceGrid(gh, gh.x, gh.z);
+    let at = G.world.placement(gh.name, gh.x, gh.z, gh.rot, G.me, from);
+    if (!at.ok && gh.grid && gh.okDots && gh.okDots.length && !kind) {
+      // the spot under the cursor does not fit: the nearest green dot within PLACE_SNAP_R takes it
+      let best = null, bd = PLACE_SNAP_R;
+      for (const [x, z] of gh.okDots) { const d = Math.hypot(x - gh.x, z - gh.z); if (d <= bd) { bd = d; best = [x, z]; } }
+      if (best) {
+        const at2 = G.world.placement(gh.name, best[0], best[1], gh.rot, G.me, from);
+        if (at2.ok) { at = at2; gh.x = best[0]; gh.z = best[1]; gh.obj.position.set(gh.x, G.world.height(gh.x, gh.z), gh.z); }
+      }
+    }
     if (at.x !== gh.x || at.z !== gh.z || at.rot !== gh.rot) {
       gh.x = at.x; gh.z = at.z; gh.rot = at.rot;
       gh.obj.position.set(gh.x, Math.max(G.world.height(gh.x, gh.z), G.world.waterLevel != null ? G.world.waterLevel + 1.5 : -1e9), gh.z);
@@ -956,15 +979,14 @@ export class Input {
     if (kind === 'gate' && at.fit) { gh.obj.userData.gateEnds = at.fit.d % 2 === 0; applyState(gh.obj, 4, 0, G.me.epoch()); }
     gh.ok = at.ok && G.fow.explored_(gh.x, gh.z);
     gh.mat.color.setHex(gh.ok ? 0x60ff60 : 0xff4040);
-    if (gh.grid) this.updatePlaceGrid(gh);
   }
   // the dots of the placement grid around the ghost (ObjPlaceChecker.EnableGridRendering, PlaceController.usl): a dot
   // every 2 m, green where the building may be put down with its centre on that dot - any green dot is a place it
   // fits, turned as it is now - red where it may not (something in the way under its footprint, water, unexplored
   // ground, the map's border). Worked out again when the ghost moves to another 2 m cell or turns.
-  updatePlaceGrid(gh) {
+  updatePlaceGrid(gh, x0 = gh.x, z0 = gh.z) {
     const G = this.G, W = G.world, nav = W.nav, S = PLACE_STEP;
-    const cx = Math.round(gh.x / S) * S, cz = Math.round(gh.z / S) * S;
+    const cx = Math.round(x0 / S) * S, cz = Math.round(z0 / S) * S;
     const key = cx + ',' + cz + ',' + gh.rot + ',' + nav.version + ',' + W.buildings.length;
     gh.grid.visible = gh.obj.visible;
     if (gh.gridKey === key) return;
@@ -972,11 +994,13 @@ export class Input {
     const R = PLACE_GRID_R;
     const pos = gh.grid.geometry.attributes.position, col = gh.grid.geometry.attributes.color;
     let n = 0;
+    gh.okDots = [];                                    // (the green ones: the ghost snaps to them, updateGhost)
     for (let dz = -R; dz <= R; dz += S) for (let dx = -R; dx <= R; dx += S) {
       const d = Math.hypot(dx, dz);
       if (d > R || n >= pos.count) continue;
       const x = cx + dx, z = cz + dz;
       const ok = G.fow.explored_(x, z) && !W.isWater(x, z, 0.1) && W.canPlace(gh.name, x, z, gh.rot, G.me);
+      if (ok) gh.okDots.push([x, z]);
       pos.setXYZ(n, x, W.height(x, z) + 0.4, z);
       const fade = Math.min(1, (R - d) / 6 + 0.25);    // fading towards the edge of the grid
       if (ok) col.setXYZ(n, 0.25 * fade, 1.0 * fade, 0.3 * fade); else col.setXYZ(n, 1.0 * fade, 0.2 * fade, 0.15 * fade);

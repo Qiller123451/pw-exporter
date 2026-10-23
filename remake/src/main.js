@@ -43,6 +43,7 @@ import { sequelData, SEQUEL_MOD } from './game/sequel/rules.js';
 import { lockedBefore, LAST_MISSION, SEQUEL_ORDER, renumbered } from './game/sequel/missions.js';
 import { onRoad } from './game/sequel/maps.js';
 import { SequelUI } from './ui/sequel_ui.js';
+import { SCENARIOS } from './game/scenarios/missions.js';
 import { listSaves, putSave, getSave, deleteSave, exportSave, importSave, quickId } from './ui/saves.js';
 import { Campaign, loadCampaign } from './game/campaign/setup.js';
 import { Regions } from './game/campaign/regions.js';
@@ -175,7 +176,9 @@ async function loadModels(tribes, need = new Set()) {
   await Promise.all([worker(), worker(), worker(), worker(), worker(), worker()]);
 }
 function tpl(name, soft) {
-  const t = name && G.templates.get(name.toLowerCase());
+  let t = name && G.templates.get(name.toLowerCase());
+  // ?stubart: a model the assets lack stands in as the SEAS turret tower's (testing the sequel without its art)
+  if (!t && name && params.has('stubart')) t = G.templates.get(/^sq_|_b$/.test(name.toLowerCase()) ? 'seas_turret_tower' : '') || [...G.templates.values()].find((x) => x && x.info) || null;
   if (!t && !soft) throw new Error('missing model ' + name);
   return t || null;
 }
@@ -1202,6 +1205,8 @@ function quickConfig() {
   // ?campaign=<mission 0-16>[&difficulty=0|1|2][&tribe=Hu|Aje|Ninigi|SEAS]: a campaign mission (tribe: played with that tribe)
   // ?sequel=<mission 1-11>[&difficulty=0|1|2]: a mission of the sequel campaign (docs/SEQUEL.md)
   if (params.has('sequel')) return { sequel: +params.get('sequel'), difficulty: params.has('difficulty') ? +params.get('difficulty') : 1, debug: params.has('debug') && params.get('debug') !== '0' };
+  // ?scenario=<1-5>&tribe=<Hu|Aje|Ninigi|SEAS>[&difficulty=0|1|2]: a scenario (docs/SCENARIOS.md)
+  if (params.has('scenario')) return { scenario: +params.get('scenario'), tribe: params.get('tribe') || 'Hu', difficulty: params.has('difficulty') ? +params.get('difficulty') : 1, debug: params.has('debug') && params.get('debug') !== '0' };
   if (params.has('campaign')) return { campaign: +params.get('campaign'), difficulty: params.has('difficulty') ? +params.get('difficulty') : 1, tribe: params.get('tribe') || '', debug: params.has('debug') && params.get('debug') !== '0' };
   const k = { ...G.settings.skirmish };
   if (params.has('tribe')) k.me = params.get('tribe');
@@ -1327,6 +1332,17 @@ async function startGame(cfg) {
       const need = mapModels(S);
       for (const m of G.sequel.models()) need.add(m);
       await loadModels(G.sequel.tribes(), need);
+    } else if (cfg.scenario != null) {
+      // a scenario (docs/SCENARIOS.md): the sequel's mission runtime with the game's own rules and data, played as
+      // any tribe (game/scenarios/missions.js)
+      progress(0.03, 'Preparing the scenario…');
+      G.campaign = null;
+      G.sequel = new Sequel(G, cfg);
+      G.sequel.locked = new Set();
+      S = G.sequel.source();
+      const need = mapModels(S);
+      for (const m of G.sequel.models()) need.add(m);
+      await loadModels(G.sequel.tribes(), need);
     } else if (cfg.campaign != null) {
       // a campaign mission (game/campaign/setup.js): its map's landscape + the world of the mission data
       progress(0.03, 'Reading the mission…');
@@ -1407,6 +1423,7 @@ G.endMission = (won, info = {}) => {
   const show = () => G.menu.end(!!won, {
     time: `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`, kills: G.me.kills, lost: G.me.lost, epoch: EPOCH[G.me.epoch()],
     mission: C ? { title: C.map.title || C.map.name, text: info.text || '', next: won && C.next() ? C.next() : null, difficulty: C.nightmare ? 3 : C.difficulty, points: info.points }
+      : G.sequel && G.sequel.kind === 'scenario' ? { sequel: true, scenario: true, tribe: G.sequel.tribe, title: G.sequel.def.title, text: info.text || '', next: won && G.sequel.id < SCENARIOS.length ? { id: G.sequel.id + 1 } : null, difficulty: G.sequel.difficulty }
       : G.sequel ? { sequel: true, title: G.sequel.def.title, text: info.text || '', next: won && G.sequel.id < LAST_MISSION ? { id: G.sequel.id + 1 } : null, difficulty: G.sequel.difficulty } : null,
     text: info.text || '',
   });
@@ -1423,6 +1440,7 @@ G.endMission = (won, info = {}) => {
 // ---------------------------------------------------------------- saved games (game/save.js, ui/saves.js)
 G.saveSettings = saveSettings;
 G.saveTitle = () => {
+  if (G.sequel && G.sequel.kind === 'scenario') return `Scenario ${G.sequel.id}: ${G.sequel.def.title} (${G.sequel.tribe})`;
   if (G.sequel) return `Containment ${G.sequel.id}: ${G.sequel.def.title}`;
   const C = G.campaign;
   if (C) return C.map.title || C.map.name || 'Mission ' + C.id;

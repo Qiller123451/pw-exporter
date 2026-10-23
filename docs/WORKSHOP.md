@@ -27,9 +27,11 @@ toolkit runs.
 2. **New object…**. Choose the kind (unit, building, wild animal, decoration) and the object of the game it should
    behave like - the *template*. Give it a class name such as `mycreatures_champion`.
 3. **Model**: keep the template's model, pick another model of the game, or upload your own `.gsf`.
-4. **Animations**, **Numbers**, **Name & icon**: match the animations, set hit points, costs, damage, write its name
-   and description, take an icon.
-5. **Build & install…** → **Build & install**. Start ParaWorld with the mod, or **Try it in the remake**.
+4. **Add-ons** (units that are animals, vehicles or ships): keep the template's turrets and rider, or mix in others,
+   place them anywhere, make them gunners that shoot by themselves, swap the rider.
+5. **Animations**, **Numbers & fighting**, **Name & icon**: match the animations, set hit points, costs, damage, write
+   its name and description, take an icon.
+6. **Build & install…** → **Build & install**. Start ParaWorld with the mod, or **Try it in the remake**.
 
 ![The Workshop's start](screenshots/workshop/01_welcome.png)
 
@@ -101,7 +103,42 @@ The 3D view on the right shows the model as the game draws it, with its animatio
 For units of the Norsemen and others whose model changes with the level (`hu_warrior_s1` … `s5`), tick **Keep the
 template's own models for levels 2-5** to change only level 1; otherwise every level shows your model.
 
-### 5. Animations
+### 5. Add-ons
+
+![Add-ons: the Black widow's turret](screenshots/workshop/13_addons.png)
+
+Units that are animals, vehicles or ships carry **add-ons**: turrets, gun platforms, build-ups, crates, riders. In the
+game they are not part of the unit's model - the unit's script puts them on when the unit appears (the Black widow's
+script hangs the gun `seas_wehrspinne_top` on its body's link `we`, and its rider on the gun). This step shows what the
+template's script puts on, in the list and in the 3D view, and lets you change all of it:
+
+- **Add an add-on…**: any model of the game (turrets, cannons and build-ups are listed first) or a model of your own
+  archive. Remove one with ✕ (what hangs on it goes with it).
+- **Role** of each add-on:
+
+  | Role | What it does in the game |
+  |---|---|
+  | Main turret | the unit's own weapon turns it towards the target, and the shots leave from its `Proj` link. One per unit; the template must fight and have no other kind of main build-up (no passenger platform) |
+  | Gunner turret | a turret with a gunner of its own: it aims and shoots by itself with its own weapon, at the unit's target or at any enemy in its range - like the titan triceratops' two ballistas. As many as you like |
+  | Part | carried along: armour, crates, flags, a gun that does not aim |
+
+- **On** and **Link**: what it hangs on (the body or another add-on) and at which of its links - or at its origin.
+- **Move, turn, size**: click a row, then drag the handles in the 3D view (**Move** / **Turn** / **Size**) or type the
+  numbers. They count from the link in that link's axes (as in Blender). **Back onto the link** puts it back. A part's
+  size and place do not change what hangs on it.
+- **Its gunner** (gunner turrets): the link of the turret the gunner sits at.
+- **Rider**: who steers the unit and mans the gunner turrets - any rider or captain class of the game, or any
+  character - where he sits (on the body or on the main turret, at a link, moved and turned like an add-on: **Move the
+  seat in the 3D view**) and his poses (sitting, shooting).
+
+![A gunner turret added and placed](screenshots/workshop/14_addons_gunner.png)
+
+**Back to the template's** undoes it all. How the game gets it: a small script class of the mod (below, "What the mod
+contains") takes the template's build-ups down when the unit appears and puts yours up instead; a moved or turned
+add-on hangs on a new link (`Ws01`, `Ws02` ...) that the Workshop writes into the model that carries it; a sized one
+is a copy of its model in the mod's archive, made bigger or smaller with its skeleton, links and animations.
+
+### 6. Animations
 
 ![Animations](screenshots/workshop/05_animations.png)
 
@@ -114,7 +151,7 @@ its pose for that moment.
 Below, the **links** of the template's model: the points where scripts attach weapons, riders, flags and effects. If
 your model lacks one the object should use, add a link of that name in Blender (the add-on's manual: links).
 
-### 6. Numbers
+### 7. Numbers & fighting
 
 ![Numbers](screenshots/workshop/06_numbers.png)
 
@@ -128,7 +165,15 @@ Every field shows the template's value; an empty field keeps it.
 | Trained in | another building of the template's build locations |
 | Damage, range, attacks per minute | the weapon of level 1; the weapons of the higher levels keep their ratio to it |
 
-### 7. Name & icon
+**The gunner turrets** (Add-ons) get a weapon each: pick the weapon of the game it copies - its projectile, its sound,
+its reach - and change damage, range and attacks per minute. Without a choice a new gunner copies the unit's own
+ranged weapon (or its tribe's first one), a gunner of the template keeps the template's (the titan's ballistas:
+`hu_titan_ballista`). A gunner's weapon is the turret's own entry in the tech tree (`Weapons/<object>_<add-on>`), usable
+from the unit's first level.
+
+![The gunner's weapon](screenshots/workshop/15_gunner_weapon.png)
+
+### 8. Name & icon
 
 ![Name and icon](screenshots/workshop/07_texts.png)
 
@@ -141,13 +186,13 @@ Every field shows the template's value; an empty field keeps it.
   the name the material asks for, and adds it to the texture detail table. A picture for a texture the game has
   replaces it for this mod.
 
-### 8. Check
+### 9. Check
 
 ![Check](screenshots/workshop/08_check.png)
 
 A summary: template, model, model kind, missing animations, name, and anything that would stop the build.
 
-### 9. Build and install
+### 10. Build and install
 
 ![Build](screenshots/workshop/10_build.png)
 
@@ -218,6 +263,8 @@ file with the mod's additions (as MIRAGE ships its own tech tree).
 | `Data\<id>\Locale\<lang>\Texts\Help\*.seml` | the encyclopedia files with the new entries (name, tooltip, description) |
 | `Data\<id>\UI\All_def.txt`, `UI\hud\cards\cards_<id>.tga` | the icon atlas with the new icons |
 | `Data\<id>\Texture\...dds`, `Texture\detailtable.txt` | textures you gave, and their entries in the detail table |
+| `Data\<id>\Scripts\Server\classes\<id>\<id>.usl` | only with changed add-ons or rider: a script class `CWs_<object>` per such object. It inherits the template's script class (so the object behaves as before) and, when the object appears, takes the template's build-ups down (`DestroyBuildUp`) and puts the add-ons up (`SetBuildUp`, `AddAdditionalBuildUp`, `AddObj`, a gunner `universal_captain` with `AddObjCaptain`, `SetWeaponClass`, `SetAdditionalWeapon`); `GetCaptainLink` seats the rider. The add-ons are classes of their own (`<object>_<add-on>`: `CTaskBuildUp` for turrets, `CProduct` for parts) |
+| `Data\<id>\Scripts\Server\Server.ini` | the list of script files the game compiles: the configuration's, with the mod's `.usl` added (as MIRAGE ships its own list with its scripts) |
 
 The remake reads the same files when it prepares a configuration's data (`remake/docs/DATA_PIPELINE.md`): the rules
 from the tech tree, the models from the archive, the icons from `All_def.txt`, the texts from the help files.
@@ -225,7 +272,11 @@ from the tech tree, the models from the archive, the icons from `All_def.txt`, t
 ## Limits
 
 - **No new behaviour.** An object behaves like its template. New abilities need new scripts, which the Workshop does not
-  write.
+  write - the only script it writes puts the add-ons together.
+- **Add-ons** hang on animals, vehicles and ships (the game's build-ups belong to those). The rider sits on the body or
+  on the main turret (the game's `GetCaptainLink` knows no other place); all gunners show the unit's rider class. A
+  template whose script puts parts on again later (an upgrade that rebuilds its weapon) puts its own ones then.
+  Sizes are uniform (the same in every direction).
 - **Sounds** come with the template's animation names (a sound plays when the model's animation of that name has it).
   Your own sounds need the add-on's sound list in the archive.
 - **Texts in one language** per project (the language of the project); other languages show the class name.
@@ -246,6 +297,8 @@ from the tech tree, the models from the archive, the icons from `All_def.txt`, t
 | The button is missing in the building | the template has no build action in that configuration (warning of the build), or the mod is not started (`-enable <id>`) |
 | The name shows as `_mycreatures_...` | the game does not read the mod's texts: install with "let the game read the mod's texts" ticked |
 | The remake does not offer the mod | it is not installed, or the remake's data of that configuration is not prepared yet (launcher) |
+| ParaWorld stops at the start with a script error in `<id>.usl` | the add-ons' script did not compile with this version of the game's scripts: report it with the file (it is short) - meanwhile **Back to the template's** in the Add-ons step builds the mod without it |
+| A gunner turret does not shoot | its weapon has no projectile or reaches less than the enemy's distance: Numbers & fighting |
 
 ## For developers
 
@@ -256,6 +309,8 @@ The Workshop is the Python package `workshop/` of the toolkit and its page `work
 | `gamedata.py` | a configuration's tech tree, class lists, help files, icon atlas, archives; the templates |
 | `ttree.py` | ParaWorld's tree text files (tech tree, class lists): read and written back byte for byte |
 | `gsfedit.py` | the mod's archive: models copied out of archives with the Blender add-on's core (`blender/io_scene_paraworld_gsf/core`), renamed, animations renamed for the scripts |
+| `addons.py` | add-ons: what the template's script puts on (read with `pwexport/modparts.py`), the checks, the plan of a build (classes, links, copies, weapons, the script class) |
+| `gsfxform.py` | new links in a model (keeping the bone the link they start from hangs on), a model scaled with its skeleton, links, effects and animations |
 | `build.py` | writes the mod (the table above) |
 | `dds.py` | DXT5 `.dds` with mipmaps, TGA |
 | `install.py` | install, uninstall, zip |

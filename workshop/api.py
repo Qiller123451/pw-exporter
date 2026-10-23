@@ -12,6 +12,11 @@
     POST /api/workshop/upload?project=&name=   the file's bytes -> {file, models (for a .gsf)}
     GET  /api/workshop/models?project=&file=   the models of an uploaded archive
     GET  /api/workshop/preview?project=&obj=   the object's model as glTF for the 3D view -> {url, anims, links}
+    GET  /api/workshop/addons?project=&obj=    its add-ons and rider: the template's (from its script) and the
+                                            modder's (workshop/addons.py)
+    GET  /api/workshop/modelinfo?project=&source=&name=&file=   any model (game / uploaded) as glTF for the 3D view
+    GET  /api/workshop/weapons?base=        the ranged weapons a gunner's weapon can be copied from
+    GET  /api/workshop/riders?base=         the captain classes and characters that can ride or man a turret
     GET  /api/workshop/file/<project>/<rel>    a file of a project (previews, uploaded pictures)
     GET  /api/workshop/textures?project=&obj=  the textures the object's model uses, and which the game has
     GET  /api/workshop/extract?base=&name=     a model of the game as an archive of its own (for Blender)
@@ -35,6 +40,7 @@ from . import project as P
 from . import build as B
 from . import gsfedit
 from . import install as I
+from . import addons as AO
 from .gamedata import GameData, KINDS, TRIBES
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -50,6 +56,7 @@ class Workshop:
         self._data = {}
         self._models = {}
         self.lock = threading.Lock()
+        self.mlock = threading.Lock()   # converting models for the 3D view
 
     # ------------------------------------------------------------------ helpers
     def root(self):
@@ -183,6 +190,61 @@ class Workshop:
         return {'url': '/api/workshop/file/%s/preview/%s' % (pid, os.path.basename(glb)), 'anims': info.get('anims', []),
                 'links': info.get('links', []), 'fourcc': info.get('fourcc'), 'bbox': info.get('bbox')}
 
+    def model_info(self, pid, m):
+        """a model of the game or of the project (an add-on, a rider) as .glb for the 3D view: {url, anims, links,
+        fourcc, bbox}. Game models are kept per configuration (<workshop home>/_models/<config>/), uploaded ones in
+        the project's preview folder."""
+        p = self.project(pid)
+        d = self.data(p.base)
+        if m.get('source') == 'upload':
+            path, name = p.file(m.get('file')), m.get('name')
+            out_dir, url = os.path.join(p.folder, 'preview'), '/api/workshop/file/%s/preview/' % pid
+        else:
+            path, name = d.find_model(m.get('name') or '')
+            cfg = re.sub(r'[^A-Za-z0-9_]+', '_', p.base or 'official')
+            out_dir, url = os.path.join(self.projects_home(), '_models', cfg), '/api/workshop/model/%s/' % cfg
+        if not path or not name or not os.path.isfile(path):
+            raise ValueError('the game has no model %s' % m.get('name'))
+        from pwexport import gsf
+        os.makedirs(out_dir, exist_ok=True)
+        stamp = '%s|%s|%d|%d|%s' % (path, name, os.path.getsize(path), int(os.path.getmtime(path)), gsf.VERSION)
+        base = ('up_' if m.get('source') == 'upload' else '') + re.sub(r'[^A-Za-z0-9_]+', '_', name)
+        glb = os.path.join(out_dir, base + '.glb')
+        st = glb + '.stamp'
+        with self.mlock:
+            if not (os.path.isfile(glb) and os.path.isfile(st) and open(st).read() == stamp):
+                gsf.Archive(path).export(name, glb, data_dir=d.game.data, all_parts=True, log=lambda *x: None)
+                with open(st, 'w') as f:
+                    f.write(stamp)
+        info = next((x for x in gsfedit.describe(path) if x['name'].lower() == name.lower()), {})
+        return {'url': url + os.path.basename(glb), 'name': name, 'anims': info.get('anims', []), 'links': info.get('links', []),
+                'fourcc': info.get('fourcc'), 'bbox': info.get('bbox')}
+
+    def setup(self, base, tid):
+        """what the template's script puts on it (addons.template_setup), kept per configuration"""
+        key = (self.root(), base or '', tid)
+        cache = self.__dict__.setdefault('_setups', {})
+        if key not in cache:
+            cache[key] = AO.template_setup(self.data(base), tid)
+        return cache[key]
+
+    def addons(self, pid, oid):
+        """the template's add-ons and rider: {setup, addons, rider} (the object's own are in the project)"""
+        p = self.project(pid)
+        o = p.obj(oid)
+        setup = self.setup(p.base, o['template'])
+        return {'setup': setup, 'addons': AO.default_addons(setup), 'rider': AO.default_rider(setup)}
+
+    def addon_problems(self, p, d):
+        out = []
+        for o in p.objects:
+            if o.get('addons') is not None or o.get('rider'):
+                try:
+                    out += AO.check(o, self.setup(p.base, o['template']))
+                except Exception as e:              # noqa: BLE001
+                    out.append('%s: %s' % (o['id'], e))
+        return out
+
     def textures(self, pid, oid):
         """the textures the object's model uses: [{name, game (the game has it), file (the project's picture)}]"""
         p = self.project(pid)
@@ -204,7 +266,7 @@ class Workshop:
     def build(self, pid):
         p = self.project(pid)
         d = self.data(p.base)
-        problems = p.check(known=list(d.tt_objects()) + list(d.classes))
+        problems = p.check(known=list(d.tt_objects()) + list(d.classes)) + self.addon_problems(p, d)
         if problems:
             return {'ok': False, 'problems': problems}
         out = os.path.join(p.folder, 'build')
@@ -283,7 +345,7 @@ class Workshop:
             if r == 'project':
                 p = self.project(q['id'])
                 d = self.data(p.base)
-                return h.send_json({**p.json(), 'problems': p.check(known=list(d.tt_objects()) + list(d.classes)),
+                return h.send_json({**p.json(), 'problems': p.check(known=list(d.tt_objects()) + list(d.classes)) + self.addon_problems(p, d),
                                     'installed': I.installed(self.root(), p.id),
                                     'built': os.path.isfile(os.path.join(p.folder, 'build', 'Data', 'Info', p.id + '.info'))})
             if r == 'models':
@@ -291,6 +353,21 @@ class Workshop:
                 return h.send_json(gsfedit.describe(p.file(q['file'])))
             if r == 'preview':
                 return h.send_json(self.preview(q['project'], q['obj']))
+            if r == 'addons':
+                return h.send_json(self.addons(q['project'], q['obj']))
+            if r == 'modelinfo':
+                return h.send_json(self.model_info(q['project'], {k: q.get(k) for k in ('source', 'name', 'file')}))
+            if r == 'weapons':
+                return h.send_json(AO.all_weapons(self.data(q.get('base', ''))))
+            if r == 'riders':
+                return h.send_json(AO.riders(self.data(q.get('base', ''))))
+            if r.startswith('model/'):
+                cfg, _, f = r[len('model/'):].partition('/')
+                d = os.path.realpath(os.path.join(self.projects_home(), '_models', re.sub(r'[^A-Za-z0-9_]+', '_', cfg)))
+                fp = os.path.realpath(os.path.join(d, f))
+                if not fp.startswith(d + os.sep):
+                    raise ValueError('bad model file')
+                return h.send_file(fp)
             if r.startswith('file/'):
                 pid, _, rel = r[len('file/'):].partition('/')
                 p = self.project(pid)

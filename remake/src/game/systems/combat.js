@@ -13,6 +13,7 @@ import { Projectile, headingTo, wrap } from '../entities.js';
 import { DELAYED } from '../delayed.js';
 import { cheatDamage } from '../cheats.js';
 import { AnimCtl } from '../anim.js';
+import { turnPart } from '../compose.js';
 import { applyState } from '../../engine/parts.js';
 import { attackBoni, tempDef, tempRangedDef, rangeBonus, active } from './effects.js';
 
@@ -190,7 +191,7 @@ export const Combat = {
     if (!u.alive || u.inside || !target) return false;
     if (u.task.user && !opts.user && u.task.type !== 'idle' && u.task.type !== 'hold') return false;
     if ((u.stance === 3 || u.stance === -1) && !opts.user) return false;
-    if (!u.weapons.long) return false;
+    if (!u.weapons.long || u.disarmed) return false;
     if (u.cannotFight && !u.isWorker && !opts.user) return false;     // transports, hovercraft, carts ... don't pick fights
     if (u.isWorker && !opts.user && !opts.defend && u.task.type !== 'idle') { u.prevTask = u.task; }
     this.releaseTask(u);
@@ -236,7 +237,7 @@ export const Combat = {
   attackUpdate(u, dt) {
     const t = u.task;
     const tgt = t.target;
-    if (!this.validTarget(u, tgt, t) || active(u, 'peace', this.time)) return this.endAttack(u);   // (ceasefire: InvalidFighter)
+    if (!this.validTarget(u, tgt, t) || active(u, 'peace', this.time) || u.disarmed) return this.endAttack(u);   // (ceasefire: InvalidFighter)
     if (active(u, 'trapped', this.time)) { u.vel.set(0, 0, 0); return; }
     // wild animals give up when the target leaves their territory
     if (u.wild && Math.hypot(u.pos.x - u.home.x, u.pos.z - u.home.y) > 70) { this.animalWalk(u, u.home.x, u.home.y); return; }
@@ -696,7 +697,44 @@ export const Combat = {
 
   // ------------------------------------------------------------------ towers and bunkers (CTower / CBunker)
   // towers the player can aim: built, own, with a ranged weapon (bunkers too - their garrison shoots)
-  canAimTower(b) { return b.kind === 'building' && b.built && !!(b.weapons && b.weapons.long && b.weapons.long.projectile); },
+  canAimTower(b) { return b.kind === 'building' && b.built && !b.disarmed && !!(b.weapons && b.weapons.long && b.weapons.long.projectile); },
+  // turrets that shoot by themselves (BuildUpBase.usl CBuildUpWeapon with SetAdditionalWeapon: an aggression region
+  // of the weapon's range, AutoAttackEnemy; TransportObj.Fight hands the unit's target to them too): the titan's
+  // ballistas, the Workshop's gunner turrets. The weapon is the best one whose users list the turret's weapon class
+  // at the unit's level (SetWeaponClass / UpdateWeapon), the shot leaves from the turret's Proj link.
+  turnPart(t, x, z, dt, speed = 3) { return turnPart(t, x, z, dt, speed); },
+  gunnerUpdate(u, dt) {
+    const c = u.comp;
+    if (!c || !c.gunners.length || !u.owner || u.disarmed || active(u, 'peace', this.time)) return;
+    const O = u.rulesOwner();
+    for (const g of c.gunners) {
+      if (!g.wset || g.lvl !== u.level) { g.wset = this.data.weaponSet(g.wclass, u.level || 1, O); g.lvl = u.level; }
+      const w = g.wset && g.wset.long;
+      if (!w || !w.projectile) continue;
+      const cs = this.data.weaponStats(w, u.name, O);
+      const R = cs.range + u.radius;
+      g.cool = (g.cool || 0) - dt;
+      const ok = (e) => e && e.alive && this.canTarget(u, e) && this.reach(u, e) <= R && !(cs.minRange && this.reach(u, e) < cs.minRange);
+      const own = u.task && u.task.type === 'attack' ? u.task.target : null;
+      let e = ok(own) ? own : ok(g.target) ? g.target : null;
+      if (!e) {
+        g.lookT = (g.lookT || 0) - dt;
+        if (g.lookT > 0) continue;
+        g.lookT = 0.5;
+        e = this.findTarget(u, R, { filter: (x) => !cs.minRange || this.reach(u, x) >= cs.minRange });
+      }
+      g.target = e || null;
+      if (!e) continue;
+      if (turnPart(g, e.pos.x, e.pos.z, dt, 2.5) > 0.25 || g.cool > 0) continue;
+      g.cool = this.attackDuration(u, cs);
+      g.shotT = this.time;
+      const from = new THREE.Vector3();
+      g.obj.updateMatrixWorld(true);
+      (g.links.Proj || g.links.unnamed || g.obj).getWorldPosition(from);
+      if (g.anim) { const a = g.anim.pick('attack_front', 'gun_shoot'); if (a) g.anim.play(a, { loop: false, restart: true, fade: 0 }); }
+      this.launch(u, from, e, w, cs);
+    }
+  },
   // can player p order an attack on t? Enemies, and wild (ownerless) animals
   hostileTo(p, t) { return !!(p && t && t.alive && t.kind !== 'res' && (t.owner ? p.isEnemy(t.owner) : t.kind === 'unit')); },
   aimTowers(list, target) {
@@ -706,7 +744,7 @@ export const Combat = {
   },
   towerUpdate(b, dt) {
     const w = b.weapons.long;
-    if (!w || !w.projectile || !b.owner || !b.built || b.dismantling || active(b, 'peace', this.time) || (b.behaviour && b.behaviour.noTower)) return;
+    if (!w || !w.projectile || !b.owner || !b.built || b.dismantling || b.disarmed || active(b, 'peace', this.time) || (b.behaviour && b.behaviour.noTower)) return;
     const cs = b.cs(w);
     const R = cs.range + b.radius * 0.5;
     b.cool -= dt;

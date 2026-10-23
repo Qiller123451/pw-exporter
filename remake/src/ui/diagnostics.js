@@ -10,6 +10,8 @@ let banner = null;
 const shown = new Set();
 let context = () => '';                                         // extra lines for copied reports (set by main.js)
 export function setReportContext(fn) { context = fn; }
+// the problems shown so far (debug tools' object report)
+export function shownProblems() { return [...shown]; }
 
 // copy text to the clipboard (the async API needs a secure context - localhost is one; fallback for others)
 export async function copyText(text) {

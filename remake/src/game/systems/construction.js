@@ -35,6 +35,9 @@ export const Construction = {
   // placement check (engine place check): inside the map, free cells, no enemy units or resources in the way
   canPlace(name, x, z, rot = 0, owner = null) {
     const def = this.data.def(name, owner);
+    // (a building whose model the assets lack - game data newer than the export - can't be placed; the computer
+    // player asked for one and stopped with an error)
+    if (!this.template((this.data.stats(name, 1, owner) || {}).gfx, true)) return false;
     if (def && def.coastal) return this.coastalFree(name, x, z, rot, owner);   // harbours: see placement()
     const wallish = def && !!def.wallKind;
     const f = this.footprint(name, x, z, rot, !wallish, owner);
@@ -53,7 +56,7 @@ export const Construction = {
   // (from: where the workers stand - a ladder goes to the side of the wall nearest them, systems/siege.js)
   placement(name, x, z, rot = 0, owner = null, from = null) {
     const def = this.data.def(name, owner);
-    if (def && def.script === 'CLadder') return this.ladderPlacement(name, x, z, owner, from);
+    if (def && def.ladder) return this.ladderPlacement(name, x, z, owner, from);
     const kind = def && def.wallKind;
     if (kind === 'gate' && !/^CGate|Gate$/.test(def.script || '')) return { x, z, rot, ok: false };
     if (kind === 'gate') {

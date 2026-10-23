@@ -125,6 +125,17 @@ export class Campaign {
     return M[g] ? g : M[lc] ? lc : cg && M[cg] ? cg : null;
   }
   // exact class name of the rules for a class written in any case
+  // the mount whose captain (rider) class is `cls`, for a rider class that cannot stand on its own (its tech tree
+  // object has a placeholder 1 hit point), else null
+  mountOf(cls) {
+    const D = this.D, s = D.stats(cls, 1, null);
+    if (!s || !(s.hp <= 1)) return null;
+    if (!this.mounts) {
+      this.mounts = new Map();
+      for (const k of D.index.keys()) { const st = D.stats(k, 1, null); if (st && st.captain && !this.mounts.has(st.captain.toLowerCase())) this.mounts.set(st.captain.toLowerCase(), k); }
+    }
+    return this.mounts.get(String(cls).toLowerCase()) || null;
+  }
   ruleClass(cls) {
     if (this.D.exists(cls)) return cls;
     if (!this.lcIndex) { this.lcIndex = new Map(); for (const k of this.D.index.keys()) this.lcIndex.set(k.toLowerCase(), k); }
@@ -264,6 +275,10 @@ export class Campaign {
       // (placed effects - CFX - show like scenery; a heal glow saved with a unit is not one: FightingObj.HealMe)
       if (HELPERS.has(type) || lc === 'virtual_produce_unit' || (type === 'CFXE' && lc === 'fx_heal_passive')) { pl.kind = 'helper'; this.skip.add(o.name); continue; }
       if (PARTS.has(type)) { pl.kind = 'part'; this.skip.add(o.name); continue; }
+      // the rider of a ridden animal saved as an object of its own (is_riding, transporter_guid: MIRAGE mission 7's
+      // aje_velociraptor_handler_char_4 on aje_velociraptor_handler_4) is part of its mount, which shows it already;
+      // alone it would stand with no hit points (its class is a 1-HP placeholder)
+      if (rule && (o.attr || {}).is_riding === '1' && (o.attr || {}).transporter_guid && this.mountOf(rule)) { pl.kind = 'part'; this.skip.add(o.name); continue; }
       if (ix && UNIT_TYPES.has(ix.type) && UNIT_TYPES.has(type)) {
         pl.kind = 'unit'; pl.cls = rule; this.skip.add(o.name);
         this.classModels(rule);
@@ -303,7 +318,7 @@ export class Campaign {
       const tribe = p === human ? this.humanTribe : p.tribe;
       if (p.include_buildings && MAIN_BUILDING[tribe]) this.classModels(MAIN_BUILDING[tribe]);
       if (p === human && this.army) for (const c of Object.values(this.army.cards)) this.classModels(new PointBuy(this.D).resolve(c, tribe).cls);
-      else for (const a of p.start_army || []) this.classModels(p === human ? this.ownClass(a.class) : a.class);
+      else for (const a of p.start_army || []) { const c = p === human ? this.ownClass(a.class) : a.class; this.classModels(c); const r = this.ruleClass(c), m = r && this.mountOf(r); if (m) this.classModels(m); }
     }
     return this;
   }
@@ -355,6 +370,17 @@ export class Campaign {
     for (const p of list) {
       const fs = p.data.tech_filters || [];
       for (const g of this.swap && p === this.human ? this.swap.filters(fs) : fs) if (g) W.setFilter(p, g, true);
+    }
+    // MIRAGE adds filters by level name (MirageSrvMgr.HardcodeTTFilters, for every player). As MIRAGE ships it, only its
+    // first branch takes effect: the tutorial and missions 1 and 2 ban Larry and Tarna for every tribe and the tutorial
+    // gets the Norse ladder; the checks for later missions (old_school_stats, tesla tower, roguemask ...) are nested
+    // inside that branch and never run - followed here as the game plays.
+    const key = this.entry && this.entry.key;
+    if (this.D.extra && this.D.extra.mod === 'MIRAGE' && (key === 'tutorial' || key === 'single_01' || key === 'single_02')) {
+      const extra = [];
+      for (const h of ['Larry_s0', 'Tarna_s0']) for (const t of ['Hu', 'Aje', 'Ninigi', 'SEAS']) extra.push(`/Filters/AntiActions/${t}/Build/CHTR/${h}`);
+      if (key === 'tutorial') extra.push('/Filters/Hu/Build/BLDG/hu_ladder');
+      for (const p of list) for (const g of extra) W.setFilter(p, g, true);
     }
     // stand-ins for classes without a model
     for (const pl of this.plans) if (pl.cls) { const si = this.standInModel(pl.cls); if (si) W.standIns.set(pl.cls.toLowerCase(), si); }
@@ -642,7 +668,10 @@ export class Campaign {
       const ang = a.caste === 'tec' ? 2.094 : a.caste === 'nat' || a.preset === 'Stina_s0' ? 4.189 : a.caste === 'res' ? 0 : (i * 2.399) % 6.283;
       const r = 0.99 * stand + 1.5 + (i % 3) * 1.2;
       const gx = x + Math.cos(ang + 0.785) * r, gz = z - Math.sin(ang + 0.785) * r;
-      const rule = this.ruleClass(p === this.human ? this.ownClass(a.class) : a.class);
+      let rule = this.ruleClass(p === this.human ? this.ownClass(a.class) : a.class);
+      // an army slot that names a rider (MIRAGE mission 7: aje_velociraptor_handler_char - the pyramid shows the
+      // rider) is the animal it rides; on its own the rider has no hit points (a 1-HP placeholder: NaN / 0)
+      if (rule) rule = this.mountOf(rule) || rule;
       const u = rule ? W.spawn(rule, p, gx, gz, { level: Math.max((a.level || 0) + 1, D.minLevel(rule, p)), heading }) : null;
       if (!u) this.miss(a.class, 'start army unit not created');
     });

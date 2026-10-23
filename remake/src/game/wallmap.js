@@ -364,10 +364,12 @@ export class WallMap {
       seen.add(k);
       wall.tiles.push({ i, j, existing: ex2, gateOK: false });
     }
-    // where a gate could go later (the client's hint, CalcWall (C)0x4f8950)
+    // where a gate could go later (the client's hint, CalcWall (C)0x4f8950): the client writes the line as race 0,
+    // class 1 and asks GateFits for race 0 - whatever the tribe (writing the tribe's own race made Blocked() refuse
+    // every tile of an Aje / Ninigi / SEAS line: no cyan tiles for them)
     if (type === WT.WALL && wall.tiles.length > 2) {
       this.begin();
-      for (const t of wall.tiles) this.write(t.i, t.j, me, race, 1, WT.WALL);
+      for (const t of wall.tiles) this.write(t.i, t.j, me, 0, 1, WT.WALL);
       for (let k = 1; k < wall.tiles.length - 1; k++) {
         const a = wall.tiles[k - 1], t = wall.tiles[k], d = this.dirIndex(t.i - a.i, t.j - a.j);
         if (d >= 0) t.gateOK = this.gateFits(t.i, t.j, d, -1, 0);

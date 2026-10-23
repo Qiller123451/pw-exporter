@@ -41,6 +41,26 @@ const DEPLOY = {
 // Every part: {kind, gfx, variants, by, link, pi (parent part, -1 = the unit), anim, attack_anim, cond, arg, flex}.
 // Weapons, worker tools and carried goods are handled by the unit itself (entities.js / economy.js).
 
+// a turret faces the +y axis of its link at rest (the game: BuildUpBase.usl RotateToEnemy, vSelfDirection {0, 1, 0})
+// and turns about the link's z axis
+const _m4 = new THREE.Matrix4(), _va = new THREE.Vector3(), _vb = new THREE.Vector3();
+export function turnPart(t, x, z, dt, speed) {
+  const par = t.obj.parent;
+  if (!par) return 0;
+  t.obj.updateMatrixWorld(true);
+  _m4.copy(par.matrixWorld).invert();
+  _va.setFromMatrixPosition(t.obj.matrixWorld);
+  _vb.set(x, _va.y, z).applyMatrix4(_m4);
+  _va.applyMatrix4(_m4);
+  const dx = _vb.x - _va.x, dy = _vb.y - _va.y;
+  if (dx * dx + dy * dy < 1e-6) return 0;
+  const want = Math.atan2(-dx, dy);          // the angle about +z that brings +y onto (dx, dy)
+  let diff = want - t.obj.rotation.z; diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+  const step = Math.min(Math.abs(diff), speed * dt);
+  t.obj.rotation.z += Math.sign(diff) * step;
+  return Math.abs(diff) - step;
+}
+
 // wild animals whose "misc" parts belong to the beast (MIRAGE FightingObj.ShowAnmlMiscFlag)
 const WILD_MISC = /^(stegosaurus|kentrosaurus|mammoth|macrolemy[sd]_(land|water))$/i;
 
@@ -117,6 +137,7 @@ export class Composite {
     this.parts = [];          // attached parts (rider, turrets, build-ups, flags ...): {spec, obj, anim, tpl, links}
     this.top = null;          // first turret: aims at the target, shots leave from its Proj link (combat.muzzle)
     this.turrets = [];
+    this.gunners = [];        // turrets that shoot by themselves (a weapon class: the titan's ballistas; combat.gunnerUpdate)
     this.rider = null;
     this.wagon = null;        // trailer following the drawbar's hitch (FlexLinkAction)
     this.bar = null;
@@ -131,7 +152,7 @@ export class Composite {
     this.seats = [];
     for (const p of this.parts) { p.obj.removeFromParent(); p.anim && p.anim.dispose(); }
     if (this.wagon) { this.wagon.obj.removeFromParent(); this.wagon.anim && this.wagon.anim.dispose(); }
-    this.parts = []; this.turrets = []; this.top = this.rider = this.wagon = this.bar = null;
+    this.parts = []; this.turrets = []; this.gunners = []; this.top = this.rider = this.wagon = this.bar = null;
     this.key = '';
   }
   specs() { return this.u.owner && !this.wild() ? this.u.world.data.composites(this.u.name) : []; }
@@ -160,7 +181,8 @@ export class Composite {
       p.spec = s;
       made.set(s.i, p);
       this.parts.push(p);
-      if (s.kind === 'turret') { this.turrets.push(p); if (!this.top) this.top = p; }
+      if (s.kind === 'turret' && s.weapon_class) { p.wclass = s.weapon_class; this.gunners.push(p); }
+      else if (s.kind === 'turret') { this.turrets.push(p); if (!this.top) this.top = p; }
       if (s.kind === 'drawbar' && !this.bar) this.bar = p;
       if (s.kind === 'rider') {
         if (!this.rider) this.rider = p;
@@ -349,18 +371,13 @@ export class Composite {
   // a shot: the gun's recoil clip once
   fired() { const g = this.part('gun'); if (g) { const a = g.anim.play('attack_front', { loop: false, restart: true, fade: 0 }); if (a) a.paused = false; } }
   // turn the turrets towards a world point (relative to the carrier's heading); returns the first turret's error
+  // (in each link's own frame: a link the Workshop turned turns the turret's rest direction with it - turnPart)
   aim(x, z, dt) {
     if (!this.turrets.length) return 0;
-    const u = this.u;
     let first = null;
     for (const t of this.turrets) {
-      t.obj.updateMatrixWorld(true);
-      const p = new THREE.Vector3(); t.obj.getWorldPosition(p);
-      const want = Math.atan2(-(x - p.x), -(z - p.z)) - u.heading;
-      const cur = -t.obj.rotation.z;           // the link's z turns the other way in the world (mirrored root, game/maps/frame.js)
-      let diff = want - cur; diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-      t.obj.rotation.z = -(cur + Math.sign(diff) * Math.min(Math.abs(diff), 3 * dt));
-      if (first === null) first = Math.abs(diff);
+      const d = turnPart(t, x, z, dt, 3);
+      if (first === null) first = d;
     }
     return first;
   }
@@ -368,10 +385,13 @@ export class Composite {
     // got up again: free to move and idle (compose.js DEPLOY)
     const d = this.dep && this.u.deploy;
     if (d && d.state === 'up' && this.u.world.time >= d.until) { d.state = 'walk'; this.u.busyAnim = false; this.u.anim.play(this.u.idleAnim); }
+    const now = this.u.world.time;
     for (const p of this.parts) {
       if (p.anim) p.anim.update(dt);
       if (p.spec.kind === 'rider' && p.anim && p.attack) {
-        const want = attacking ? p.attack : p.idle;
+        // a gunner shows its attack pose while its turret shoots, the main rider while the unit fights
+        const host = p.spec.pi >= 0 ? this.parts.find((q) => q.spec.i === p.spec.pi) : null;
+        const want = (host && host.wclass ? now < (host.shotT || -1) + 1 : attacking) ? p.attack : p.idle;
         if (p.anim.curName !== want && p.anim.has(want)) p.anim.play(want);
       }
     }

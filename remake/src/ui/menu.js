@@ -11,10 +11,12 @@ import { statsWindow } from './stats.js';
 import { PointBuy, RES } from '../game/pointbuy.js';
 import { TribeSwap } from '../game/campaign/tribes.js';
 import { MISSIONS as SEQUEL_MISSIONS, SEQUEL_ORDER, migrateSettings } from '../game/sequel/missions.js';
+import { SCENARIOS, SCENARIO_TRIBES, TRIBE_NAMES } from '../game/scenarios/missions.js';
 import { SEQUEL_MOD, SEQUEL_CLASSES } from '../game/sequel/rules.js';
 import { HelpBook } from './helpbook.js';
 import { debugPage, debugRow, withCheats } from './debugopts.js';
-import { raiseEpoch, spawnable, spawnObject } from '../game/cheats.js';
+import { raiseEpoch, spawnable, spawnObject, objectReport } from '../game/cheats.js';
+import { copyText, shownProblems } from './diagnostics.js';
 
 export const DEFAULT_SETTINGS = {
   showIncome: false, mentor: true, autosave: true, autosaveMin: 10, shadows: 'on', grass: 'on', particles: 'on', weather: true, fpsCap: 60, resScale: 1, uiScale: 0, perf: false, edgeScroll: true, autoMenu: true, tipNear: true, minimapRotate: false, minimapPlayerColors: true, antialias: true, speed: 1,
@@ -88,8 +90,8 @@ export class Menu {
   title() {
     this.inGame = false;
     this.open('ParaWorld', `<h3>ParaWorld</h3><p>Remake${CONFIG_MOD ? ' · ' + CONFIG_MOD.replace(/[<>&"]/g, '') : ''}</p><div class="btns">
-      ${this.btn('campaign', 'Campaign')}${this.btn('sequel', 'Containment (1964)')}${this.btn('skirmish', 'Skirmish')}${this.btn('load', 'Load game')}${this.btn('settings', 'Options')}${this.btn('book', 'Help')}${this.btn('help', 'Controls')}${this.btn('exit', 'Exit game')}</div>`, { title: true });
-    this.bind({ campaign: () => this.campaign(), sequel: () => this.sequel(), skirmish: () => this.skirmish(), load: () => this.loadWin(() => this.title()), settings: () => this.settings(() => this.title()), help: () => this.help(() => this.title()), book: () => this.helpBook(null, () => this.title()),
+      ${this.btn('campaign', 'Campaign')}${this.btn('sequel', 'Containment (1964)')}${this.btn('scenarios', 'Scenarios')}${this.btn('skirmish', 'Skirmish')}${this.btn('load', 'Load game')}${this.btn('settings', 'Options')}${this.btn('book', 'Help')}${this.btn('help', 'Controls')}${this.btn('exit', 'Exit game')}</div>`, { title: true });
+    this.bind({ campaign: () => this.campaign(), sequel: () => this.sequel(), scenarios: () => this.scenarios(), skirmish: () => this.skirmish(), load: () => this.loadWin(() => this.title()), settings: () => this.settings(() => this.title()), help: () => this.help(() => this.title()), book: () => this.helpBook(null, () => this.title()),
       exit: () => this.hooks.exit && this.hooks.exit() });
     this.versionLine();
   }
@@ -300,6 +302,7 @@ export class Menu {
         <select class="pwsel" id="d_lvl">${[1, 2, 3, 4, 5].map((l) => `<option value="${l}">level ${l}</option>`).join('')}</select>
         ${this.btn('spawn', 'Put down', 'small')}</div><small>At the middle of the screen. Your new Workshop objects are in the list too.</small></div>
       <div class="pwgrp"><b>World</b><div class="btns row">${this.btn('fog', G.fow && G.fow.revealAll ? 'Fog of war: off' : 'Fog of war: on', 'small')}${(G.campaign || G.sequel) ? this.btn('win', 'Win the mission', 'small') + this.btn('lose', 'Lose the mission', 'small') : ''}</div></div>
+      <div class="pwgrp"><b>Report</b><div class="btns row">${this.btn('report', 'Copy a report of the objects at the middle of the screen', 'small')}</div><small>For bug reports: centre the camera on the objects (select your units too), then paste the copied text.</small></div>
       <p id="d_did"></p><div class="btns row">${this.btn('back', 'Back', 'small')}${this.btn('resume', 'Resume game', 'small')}</div>`);
     this.bind({
       res: () => { for (const r of ['food', 'wood', 'stone']) me.res[r] = (me.res[r] || 0) + 1000; say('+1000 food, wood and stone (above the storage limit too).'); },
@@ -320,7 +323,53 @@ export class Menu {
       fog: () => { if (G.fow) G.fow.revealAll = !G.fow.revealAll; if (G.updateFow) G.updateFow(); this.debugTools(); say(G.fow && G.fow.revealAll ? 'The whole map is visible.' : 'The fog of war is back.'); },
       win: () => { this.close(); G.endMission(true, { text: 'Won with the debug tools.' }); },
       lose: () => { this.close(); G.endMission(false, { text: 'Lost with the debug tools.' }); },
+      report: async () => {
+        const c = G.rtscam || { x: 0, z: 0 };
+        let text;
+        try { text = objectReport(G, c.x, c.z, 25); } catch (e) { text = 'report failed: ' + e.message + '\n' + e.stack; }
+        const errs = shownProblems().filter((k) => k.startsWith('err:'));
+        text += '\n' + (errs.length ? 'errors shown: ' + errs.join(' | ') : 'no errors shown') + (G.build ? '\nbuild ' + G.build : '');
+        say((await copyText(text)) ? 'The report is copied - paste it into the chat.' : 'Copying failed.');
+      },
       back: () => this.main(), resume: () => this.close(),
+    });
+  }
+  // ---------------------------------------------------------------- the scenarios (docs/SCENARIOS.md)
+  // five standalone missions in ParaWorld's world, each played as any tribe, with the data in use (base or MIRAGE)
+  scenarios() {
+    const s = this.G.settings;
+    s.scenario = s.scenario || { mission: 1, tribe: 'Hu', difficulty: 1, won: {} };
+    const k = s.scenario;
+    k.won = k.won || {};
+    this.open('Scenarios', `<div class="pwgrp"><b>Standalone missions in ParaWorld - play them as any tribe.</b><div class="missions"><div class="mlist" id="s_list">${SCENARIOS.map((m) =>
+      `<div data-id="${m.id}">${m.id}. ${esc(m.title)}${(k.won[m.id] || []).length ? ' ✔' : ''}</div>`).join('')}</div><div class="mtext" id="s_text"></div></div></div>
+      <div class="pwgrp"><b>Your tribe</b><div class="set"><span>The tribe you lead (the enemies are always of the others)</span><select class="pwsel" id="s_tribe">
+        ${SCENARIO_TRIBES.map((t) => `<option value="${t}" ${k.tribe === t ? 'selected' : ''}>${TRIBE_NAMES[t]}</option>`).join('')}</select></div>
+        <div class="set"><span>Difficulty</span><select class="pwsel" id="s_diff">
+        ${['Easy', 'Medium', 'Hard'].map((t, i) => `<option value="${i}" ${+k.difficulty === i ? 'selected' : ''}>${t}</option>`).join('')}</select></div></div>
+      ${debugRow(this)}
+      <div class="btns row">${this.btn('back', 'Back', 'small')}${this.btn('start', 'Start mission', 'small')}</div>`, { title: true });
+    const list = this.win.querySelector('#s_list'), text = this.win.querySelector('#s_text');
+    const show = (id) => {
+      const m = SCENARIOS.find((x) => x.id === id) || SCENARIOS[0];
+      k.mission = m.id;
+      list.querySelectorAll('div').forEach((d) => d.classList.toggle('on', +d.dataset.id === m.id));
+      const won = (k.won[m.id] || []).map((t) => TRIBE_NAMES[t]).join(', ');
+      text.innerHTML = `<b>${esc(m.title)}</b><small>${esc(m.place)}</small>${m.briefing.map((p) => esc(p)).join('<br><br>')}` + (won ? `<small class="mnote">Won as: ${esc(won)}</small>` : '');
+    };
+    list.querySelectorAll('div').forEach((d) => { d.onclick = () => { show(+d.dataset.id); this.click(); }; d.ondblclick = () => this.win.querySelector('[data-a="start"]').click(); });
+    show(+k.mission || 1);
+    const read = () => { k.tribe = this.win.querySelector('#s_tribe').value; k.difficulty = +this.win.querySelector('#s_diff').value; saveSettings(s); };
+    this.bind({
+      back: () => this.title(),
+      cheats: () => { read(); debugPage(this, () => this.scenarios()); },
+      start: () => {
+        if (this.busy) return;
+        read();
+        const cfg = withCheats(s, { scenario: k.mission, tribe: k.tribe, difficulty: k.difficulty });
+        this.close();
+        if (this.hooks.start) this.hooks.start(cfg);
+      },
     });
   }
   // ---------------------------------------------------------------- the sequel campaign (docs/SEQUEL.md)
@@ -330,7 +379,8 @@ export class Menu {
     const k = s.sequel;
     if (migrateSettings(k)) saveSettings(s);        // (settings of the old numbering: a mission came in as 7)
     this.open('ParaWorld: Containment', `<div class="pwgrp"><b>1964. The dinosaurs have come to our world.</b><div class="missions"><div class="mlist" id="q_list">${SEQUEL_MISSIONS.map((m) =>
-      `<div data-id="${m.id}">${m.id}. ${esc(m.title)}${m.id < (k.unlocked || 1) ? ' ✔' : ''}</div>`).join('')}</div><div class="mtext" id="q_text"></div></div></div>
+      // (the second chapter, missions_1966.js: a heading over its first mission)
+      `${m.id === 12 ? '<p class="mch" style="margin:8px 0 2px;opacity:.7;font-size:12px;letter-spacing:.08em">1966</p>' : ''}<div data-id="${m.id}">${m.id}. ${esc(m.title)}${m.id < (k.unlocked || 1) ? ' ✔' : ''}</div>`).join('')}</div><div class="mtext" id="q_text"></div></div></div>
       <div class="pwgrp"><b>Difficulty</b><div class="set"><span>How strong the outbreak is</span><select class="pwsel" id="q_diff">
         ${['Easy', 'Medium', 'Hard'].map((t, i) => `<option value="${i}" ${+k.difficulty === i ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
         <small id="c_modnote">${Menu.dataMod(this.G) === SEQUEL_MOD ? '' : `Played with the ${SEQUEL_MOD} mod's game data (its SEAS).`}</small></div>
@@ -565,6 +615,7 @@ export class Menu {
       stats: () => statsWindow(this.G, () => this.end(won, stats)),
       next: () => {
         if (!canNext) return;
+        if (m.scenario) { if (this.hooks.startCampaign) this.hooks.startCampaign({ scenario: m.next.id, tribe: m.tribe, difficulty: m.difficulty }); return; }
         if (m.sequel) { if (this.hooks.startCampaign) this.hooks.startCampaign({ sequel: m.next.id, difficulty: m.difficulty }); return; }
         const s = this.G.settings; s.campaign.mission = m.next.id; saveSettings(s);
         const cfg = { campaign: m.next.id, difficulty: m.difficulty, tribe: (this.G.config || {}).tribe || '' };

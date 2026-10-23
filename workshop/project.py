@@ -21,7 +21,9 @@ object
      "cost": {"food", "wood", "stone"}, "duration": seconds, "producer": <building class>,
      "weapon": {"damage", "range", "frequency"},  (level 1; the other levels keep the template's ratios)
      "icon": <files/...png> | null,               null = the template's icon
-     "textures": {<texture name the model uses>: <files/...png>}}
+     "textures": {<texture name the model uses>: <files/...png>},
+     "addons": null | [add-on],                   null = the template's turrets, build-ups and gunners (addons.py)
+     "rider": null | {"cls", "parent", "link", "pos", "rot", "anim", "attack_anim", "hidden"}}   null = the template's
 """
 import json
 import os
@@ -40,7 +42,7 @@ class ProjectError(ValueError):
 def new_object(oid, kind, template):
     return {'id': oid, 'kind': kind, 'template': template, 'model': {'source': 'game', 'name': None, 'anims': {}},
             'texts': {'name': '', 'short': '', 'long': ''}, 'stats': {}, 'cost': {}, 'duration': None, 'producer': None,
-            'weapon': {}, 'icon': None, 'textures': {}}
+            'weapon': {}, 'icon': None, 'textures': {}, 'addons': None, 'rider': None}
 
 
 class Project:

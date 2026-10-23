@@ -1,4 +1,5 @@
-// The eleven missions of "ParaWorld: Containment" (docs/SEQUEL.md). Each is data plus named handlers that the runtime
+// The missions of "ParaWorld: Containment" (docs/SEQUEL.md): 1-11 here, the second chapter "1966" (12-16) in
+// missions_1966.js. Each is data plus named handlers that the runtime
 // (game/sequel/runtime.js, M) calls: setup, tick (every 0.5 s), died, evacuated, rescued, captured, asleep, loaded,
 // riftClosed, done_<objective>, and the mission's own timer names (M.after(sec, name, args)).
 // unlocks: the sequel's units and buildings the mission brings in (game/sequel/rules.js): buildable from then on, each
@@ -10,6 +11,8 @@
 // 2-6 minutes, growing; difficulty changes how many come, not when. So the defence missions (2, 5, 10) open their
 // rifts after a build-up of about four minutes, waves come every two minutes or so (faster towards the end), and a
 // garrison by the objective can hold the first wave by itself.
+
+import { MISSIONS_1966 } from './missions_1966.js';
 
 const T = 60;                        // a minute
 const near = (u, x, z, r) => Math.hypot(u.pos.x - x, u.pos.z - z) <= r;
@@ -759,6 +762,8 @@ export const MISSIONS = [
       end(M) { M.win('The rifts are closed. The world has a new neighbour - and a door it can knock on.'); },
     },
   },
+  // 12-16: the second chapter, 1966 (missions_1966.js)
+  ...MISSIONS_1966,
 ];
 
 // The numbering: "The Society" came in as mission 7 (the later ones moved up by one). Settings and saved games of the

@@ -19,6 +19,8 @@ Fields of a normalized part
              | weapon | tool | carry
     arg      upgrade / invention id (cond upgrade / invent), build-up part indices (buildup / unless)
     when     the original free-text condition (for people)
+    weapon_class   turrets on a build-up of their own that shoot by themselves (the titan's ballistas): the class
+             their weapons list as a user (BuildUpBase.usl CBuildUpWeapon.SetWeaponClass)
 """
 import json
 import os
@@ -88,6 +90,11 @@ def normalize(parts):
              'cond': cond, 'arg': arg, 'when': e.get('when', ''), 'flex': bool(e.get('flex_link'))}
         if e.get('weapon'):
             n['weapon'] = e['weapon']
+        # a turret on a build-up of its own that shoots by itself (CBuildUpWeapon SetWeaponClass + SetAdditionalWeapon:
+        # the titan's ballistas): the class its weapons list as a user
+        wc = e.get('weapon_class') or (re.search(r'weapon class (\w+)', e.get('note') or '') or [None, None])[1]
+        if wc and e['kind'] == 'turret':
+            n['weapon_class'] = wc
         out.append(n)
     # parent part: the entry whose model is the parent. Several parts of the same model (the titan's two ballistas)
     # are told apart by the link named in the child's condition ("gunner of the con3 ballista"), else in order.

@@ -552,6 +552,7 @@ export class World {
       case 'entrench': u.vel.set(0, 0, 0); break;
       case 'cast': this.castUpdate(u, dt); break;
     }
+    if (u.comp && u.comp.gunners.length) this.gunnerUpdate(u, dt);
     this.animTick(u, dt);
   }
   // off-screen units: advance their animation only a few times per second

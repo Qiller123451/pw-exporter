@@ -49,7 +49,8 @@ code { background: var(--panel2); padding: 1px 5px; border-radius: 4px; font-siz
 .steps button.ok .n { background: #3d6b46; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
 .card h3 { margin: 0 0 8px; font-size: 15px; }
-.grid { display: grid; grid-template-columns: 200px 1fr; gap: 8px 14px; align-items: center; }
+.grid { display: grid; grid-template-columns: minmax(110px, 200px) minmax(0, 1fr); gap: 8px 14px; align-items: center; }
+.grid > input, .grid > select, .grid > textarea { width: 100%; min-width: 0; }   /* fill their column, never wider (a long option) */
 .grid label { color: var(--dim); }
 .grid .wide { grid-column: 1 / -1; }
 .kinds { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
@@ -59,6 +60,7 @@ code { background: var(--panel2); padding: 1px 5px; border-radius: 4px; font-siz
 .kinds .k span { color: var(--dim); font-size: 12px; }
 .pick { display: flex; gap: 8px; margin: 8px 0; flex-wrap: wrap; align-items: center; }
 .pick input[type=search] { flex: 1; min-width: 160px; }
+.pick select { max-width: 100%; min-width: 0; flex: 1; }
 .table { max-height: 280px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; }
 .table table { width: 100%; border-collapse: collapse; }
 .table td, .table th { padding: 4px 8px; border-bottom: 1px solid var(--line); text-align: left; font-size: 13px; }
@@ -66,9 +68,16 @@ code { background: var(--panel2); padding: 1px 5px; border-radius: 4px; font-siz
 .table tr.sel td { background: var(--sel); }
 .table tr.click { cursor: pointer; } .table tr.click:hover td { background: var(--panel2); }
 .table select { padding: 2px 4px; font-size: 13px; max-width: 220px; }
+.table.addons { overflow-x: auto; } .table.addons select { max-width: 130px; } .table.addons code { font-size: 12px; word-break: break-all; }
 .nums { display: grid; grid-template-columns: 200px 120px 1fr; gap: 6px 12px; align-items: center; }
 .nums input { width: 110px; }
 .nums .was { color: var(--dim); font-size: 12px; }
+.vec { display: flex; gap: 6px; min-width: 0; }
+.vec input { width: 0; flex: 1; min-width: 0; }
+.seg { display: inline-flex; gap: 0; margin: 4px 0 10px; }
+.seg button { border-radius: 0; } .seg button:first-child { border-radius: 6px 0 0 6px; } .seg button:last-child { border-radius: 0 6px 6px 0; }
+button.on { background: var(--sel); border-color: var(--accent); }
+h4 { margin: 14px 0 4px; font-size: 13px; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
 .files { font: 12px/1.4 ui-monospace, Consolas, monospace; color: var(--dim); background: var(--bg); border-radius: 8px; padding: 8px 10px; max-height: 220px; overflow: auto; white-space: pre-wrap; }
 .icon-prev { width: 64px; height: 61px; border: 1px solid var(--line); border-radius: 6px; background: #000 center/contain no-repeat; display: inline-block; vertical-align: middle; }

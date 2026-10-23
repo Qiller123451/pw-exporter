@@ -338,7 +338,7 @@ export class MissionUI {
     for (const m of this.markers) {
       if (!this.markerOn(m)) continue;
       const [x, y] = mm.w2m(m.x, m.z), col = hex(m.color);
-      const k = ((this.time - m.born) * 0.85) % 1;                 // a ring running outwards (MM: frequency 0.7)
+      const k = (((this.time - m.born) * 0.85) % 1 + 1) % 1;       // a ring running outwards (MM: frequency 0.7); (a marker of a loaded game can be born after the clock)
       ctx.lineWidth = 2;
       ctx.strokeStyle = 'rgba(0,0,0,' + (0.55 * (1 - k)).toFixed(2) + ')';
       ctx.beginPath(); ctx.arc(x, y, 4 + k * 9 + 1, 0, Math.PI * 2); ctx.stroke();
@@ -364,7 +364,7 @@ export class MissionUI {
         this.rings[n] = r;
       }
       n++;
-      const k = ((this.time - m.born) * 0.7) % 1;
+      const k = (((this.time - m.born) * 0.7) % 1 + 1) % 1;
       r.visible = true;
       r.position.set(m.x, G.world.height(m.x, m.z) + 0.4, m.z);
       r.scale.setScalar(2.2 + k * 4);

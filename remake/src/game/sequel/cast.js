@@ -12,4 +12,21 @@ export const CAST = {
   radio: { name: 'SEAS Command', color: '#4a5a6a', card: 'seas_marksman' },       // an officer's cap
   sheriff: { name: 'Sheriff Doyle', color: '#8a7a4a', card: 'harry' },
   scientist: { name: 'Dr. Ruth Imai', color: '#5a7a8a', card: 'tarna' },
+  guard: { name: 'Capt. Ruiz', color: '#6a7a4a', card: 'seas_gunner' },            // the National Guard (mission 12)
+  deputy: { name: 'Deputy Alvarez', color: '#8a7a4a', card: 'seas_marksman' },
+  driver: { name: 'Cpl. Kowalski', color: '#7a6a5a', card: 'seas_worker' },
+  // the scenarios (game/scenarios/missions.js): the heroes of the tribe played, the other voices
+  bela: { name: 'Bela', color: '#8a5a3a', card: 'bela' },
+  tarna: { name: 'Tarna', color: '#b07830', card: 'tarna' },
+  cole: { name: 'Cole', color: '#8a6a3a', card: 'cole' },
+  miyagi: { name: 'Miyagi', color: '#a83a3a', card: 'miyagi' },
+  hermit: { name: 'The Hermit', color: '#a83a3a', card: 'hermit' },
+  ada: { name: 'Ada', color: '#3a6ea8', card: 'lovelace' },
+  elder: { name: 'The Elder', color: '#7a7a5a', card: 'mayor' },
+  scout: { name: 'Scout', color: '#5a7a5a', card: 'hu_scout' },
+  herald: { name: 'Herald of the Hunt', color: '#9a7a3a', card: 'darwin' },
+  envoyA: { name: 'Envoy', color: '#9a2a2a', card: 'cole' },
+  envoyB: { name: 'Envoy', color: '#6a3a9a', card: 'livingstone' },
+  warlord: { name: 'The Warlord', color: '#5a2a2a', card: 'babbage' },
+  seer: { name: 'The Seer', color: '#6a5a8a', card: 'tesla' },
 };

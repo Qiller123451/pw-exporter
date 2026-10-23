@@ -948,9 +948,15 @@ def campaign_maps(install):
             e = found[fn]
             out.append({'key': os.path.splitext(fn)[0], 'file': fn, 'path': e['path'], 'pack': e['pack'], 'rel': e['rel'],
                         'min_credits': 0, 'point_buy': False})
+    ids = set()
     for i, e in enumerate(out):
         mm = re.search(r'(\d+)\.ula$', e['file'])
         e['id'] = int(mm.group(1)) if mm else i
+        if e['id'] in ids:              # (MIRAGE: single_seas_02 would be a second mission 2) - its place in the list
+            e['id'] = i
+            while e['id'] in ids:
+                e['id'] += 100
+        ids.add(e['id'])
     return out
 
 

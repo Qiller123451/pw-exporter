@@ -51,6 +51,12 @@ Consequences:
 * Texture sizes: a larger `.dds` on disk that `Texture/detailtable.txt` does not list (Wintermod ships `_(1024)`
   copies) is not loaded ([GSF_FORMAT.md](../GSF_FORMAT.md) "Textures").
 
+**Scripts.** The game compiles the `.usl` files that `Scripts/Server/Server.ini` lists (one path per line,
+relative to `Scripts/Server`; Base lists 122). A mod with scripts of its own ships the whole list as its copy of the
+file: MIRAGE's adds `../Math2.usl`, `misc/MirageSrvMgr.usl`, `misc/ArtifactMgr.usl` and `classes/mirage/Mirage.usl`,
+`Miracle.usl`, `crashrpg/CrashRPG.usl` to Base's. A script file that only the mod has is found like any other file
+(the `tryfilereplace` lines). The Workshop's add-ons work this way ([WORKSHOP.md](../WORKSHOP.md) "Add-ons").
+
 ### BoosterPack1
 
 BoosterPack1 has no `.usl` scripts: all behaviour is Base's. It ships class and tech tree data: its `_TechTree.ttree`

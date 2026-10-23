@@ -317,6 +317,14 @@ export class Unit extends Entity {
       if (q && q.gate) { p = q; this.breach = q.gate; }
     }
     this.noWay = nav.found || this.breach ? null : { x, z, t: W.time };
+    // a big unit standing where its clearance doesn't fit (a black widow at the foot of a dune) gets a way that starts
+    // at the nearest cell that does - maybe behind a blocked one: the narrow way there first, or it stood forever
+    // walking on the spot
+    if (p && p.length && this.radius > 1 && !nav.los(this.pos.x, this.pos.z, p[0][0], p[0][1], 1)) {
+      const was = nav.found, lead = nav.find(this.pos.x, this.pos.z, p[0][0], p[0][1], 0.7, 4000, this.owner);
+      if (nav.found && lead && lead.length) p = [...lead.map(([a, b]) => [a, b, 1]), ...p.slice(1)];     // ([x, z, 1]: reached exactly, steer)
+      nav.found = was;
+    }
     this.path = p || [];
     this.goal = [x, z];
     this.stuckT = 0; this.stuckFrom = this.pos.clone();
@@ -343,7 +351,7 @@ export class Unit extends Entity {
     let [tx, tz] = this.path[0];
     let dx = tx - this.pos.x, dz = tz - this.pos.z, d = Math.hypot(dx, dz);
     const last = this.path.length === 1;
-    if (d < (last ? arrive : Math.max(1.5, this.radius * 1.5))) {
+    if (d < (last ? arrive : this.path[0][2] ? 1.2 : Math.max(1.5, this.radius * 1.5))) {
       this.path.shift();
       if (!this.path.length) { this.vel.set(0, 0, 0); return 0; }
       [tx, tz] = this.path[0]; dx = tx - this.pos.x; dz = tz - this.pos.z; d = Math.hypot(dx, dz);

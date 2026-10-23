@@ -685,6 +685,12 @@ class Run:
         if m:
             self.main = BuildUp(m.group(1)); self.types.add(m.group(1))
             return
+        if re.match(r'^DestroyBuildUp\s*\(\s*\)$', s) and not self.guard:
+            # TransportObj.DestroyBuildUp: the build-ups go with what is linked to them (the captain stays: it rides
+            # by RideAction, not as a linked object)
+            self.parts = [p for p in self.parts if p['bu'] is None]
+            self.main, self.extra, self.types = None, [], set()
+            return
         m = re.match(r'^AddAdditionalBuildUp\s*\(\s*CBuildUpBase\.TYPE_(\w+)\s*\)$', s)
         if m:
             self.extra.append(BuildUp(m.group(1)))
@@ -908,6 +914,12 @@ def entries(run, tt, classes_txt, tribe, typ, name, node):
             parts.append(p)
     seen_cap = False
     explicit_hosts = []
+    # a weapon build-up turns its primary part (the first one linked: BuildUpBase.usl GetPrimaryLinkedObj); what else
+    # hangs on it is carried along
+    primary = {}
+    for p in run.parts:
+        if p['bu'] is not None and not p['obj'].captain:
+            primary.setdefault(id(p['bu']), p['obj'])
     for p in parts:
         o = p['obj']
         e = {'link': p['link'], 'parent': gfx_of(p['parent']) if p['parent'] else '', 'source': p['proc'], 'derived': True}
@@ -940,11 +952,13 @@ def entries(run, tt, classes_txt, tribe, typ, name, node):
                 kind = 'drawbar'
             elif p['parent'] is not None and (p['delay'] or 0) > 0:
                 kind = 'wagon'
-            elif bu is not None and (bu.rotate or bu.kind.startswith('WEAPON')):
+            elif bu is not None and (bu.rotate or bu.kind.startswith('WEAPON')) and primary.get(id(bu)) is o:
                 kind = 'turret'
             else:
                 kind = 'buildup'
             e.update(kind=kind, gfx=gfx_of(o))
+            if kind == 'turret' and bu is not None and bu in run.extra and bu.weapon:
+                e['weapon_class'] = bu.weapon               # shoots by itself (SetAdditionalWeapon)
             if p['anim']:
                 e['anim'] = p['anim']
         out.append(e)
@@ -1052,7 +1066,7 @@ def derive_one(install, tt, classes_txt, tribe, typ, name, node):
     return entries(run, tt, classes_txt, tribe, typ, name, node)
 
 
-VERSION = '8'
+VERSION = '9'
 
 
 def table(install, tt, classes_txt, skip=(), cache_dir=None):
@@ -1112,6 +1126,8 @@ def normalize(raw):
             n['offset'] = e['offset']
         if e.get('needs_link'):
             n['needs_link'] = True
+        if e.get('weapon_class') and n['kind'] == 'turret':
+            n['weapon_class'] = e['weapon_class']
         if e.get('variant_rule') == 'level':
             n['by'] = 'level'
     return out

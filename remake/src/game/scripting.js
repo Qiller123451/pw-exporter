@@ -164,6 +164,16 @@ export const Scripting = {
     e.invulnUntil = on && seconds > 0 ? this.time + seconds : 0;
     if (e.invulnUntil) this.later(seconds, 'invulnEnd', { e });
   },
+  // MIRAGE's WeaponRemove (FightingObj.RemoveAllWeapons): on = no attacks (towers don't shoot, units don't fight),
+  // off = armed again; on for `seconds` when given (TIMER_WEAPON_REMOVE)
+  setDisarmed(e, on, seconds = 0) {
+    if (!e) return;
+    e.disarmed = !!on;
+    e.disarmUntil = on && seconds > 0 ? this.time + seconds : 0;
+    if (e.disarmUntil) this.later(seconds, 'disarmEnd', { e });
+    if (on && e.kind === 'unit' && e.task && e.task.type === 'attack') this.order([e], { type: 'stop' });
+    if (on && e.kind === 'building') { e.towerTarget = null; e.forcedTarget = null; }
+  },
   // set a unit's level (1..5) without paying skulls or playing the level-up (SetLevelClean); full hit points
   setLevel(u, level) {
     if (!u || !u.alive || u.kind !== 'unit') return false;
@@ -275,5 +285,6 @@ export const Scripting = {
 
 Object.assign(DELAYED, {
   // the end of a timed invulnerability (a later call for the same object may have extended it)
+  disarmEnd(W, { e }) { if (e.disarmUntil && W.time >= e.disarmUntil - 1e-6) { e.disarmed = false; e.disarmUntil = 0; } },
   invulnEnd(W, { e }) { if (e.invulnUntil && W.time >= e.invulnUntil - 1e-6) { e.invulnT = 0; e.invulnUntil = 0; } },
 });

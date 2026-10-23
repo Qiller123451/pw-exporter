@@ -130,6 +130,9 @@ export function applyCheats(G, c) {
     const base = me.pyramid || D.pyramid;
     me.pyramid = base.map((v, i) => (c.pyramid[i] != null ? c.pyramid[i] : v));
     me.cheat.pyramid = me.pyramid.slice();
+    // more places in the pyramid raise the unit limit with them (the game's 52 = 25 + 15 + 8 + 3 + 1): at least the
+    // pyramid's sum, unless the limit is set itself
+    if (c.popMax == null) { me.cheat.popFloor = me.pyramid.reduce((a, v) => a + (v || 0), 0); me.popMax = Math.max(me.popMax, me.cheat.popFloor); }
   }
   W.recomputeCaps(me);
   if (c.reveal && G.fow) G.fow.revealAll = true;
@@ -169,7 +172,11 @@ export function spawnModels(D, names) {
 // put an object down at (x, z) for `side` ('me' | 'foe' | 'wild'): a unit, an animal, a finished building.
 // -> the object, or a reason why not
 export function spawnObject(G, name, side, x, z, level = 1) {
-  const W = G.world, D = G.data, ix = D.info(name);
+  const W = G.world, D = G.data;
+  // MIRAGE's Stina is hired riding her sabre-tooth (Building.usl: Stina_s0 -> special_eusmilus); the missions ask for
+  // that object ("Stina in region"), so the debug tool puts her down the same way
+  if (/^stina_s0$/i.test(name) && D.extra && D.extra.mod === 'MIRAGE' && D.info('special_eusmilus')) name = 'special_eusmilus';
+  const ix = D.info(name);
   if (!ix) return `${name}: no such object in this game's data`;
   const owner = side === 'wild' ? null : side === 'foe' ? (W.players.find((p) => p !== G.me && (G.me.isEnemy(p) || p.isEnemy(G.me))) || null) : G.me;
   if (side !== 'wild' && !owner) return 'no enemy player in this game';
@@ -184,4 +191,29 @@ export function spawnObject(G, name, side, x, z, level = 1) {
   if (!owner && u.home) u.home.set(x, z);
   if (owner) W.recomputeCaps(owner);
   return u;
+}
+
+// the debug tools' object report: every object (alive or not) within r of (x, z) with what decides whether it can be
+// hit and attacked, for bug reports ("a building became immune")
+export function objectReport(G, x, z, r = 25) {
+  const W = G.world, me = G.me, t = W.time, sel = [...(G.sel || [])].filter((e) => e.alive && e.kind === 'unit');
+  const timers = (e) => Object.entries((e.st && e.st.t) || {}).filter(([, v]) => v > t).map(([k, v]) => `${k} ${(v - t).toFixed(0)}s`).join(' ');
+  const lines = [`time ${t.toFixed(1)} at ${x.toFixed(0)},${z.toFixed(0)}; ${G.campaign ? 'mission ' + (G.config && G.config.campaign) : 'skirmish'}; me ${me && me.id} ${me && me.tribe}`];
+  const hashed = new Set(); W.bHash.query(x, z, r + 30, (e) => hashed.add(e));
+  const list = [...new Set([...W.buildings, ...W.units, ...(W.dead || [])])].filter((e) => e.pos && Math.hypot(e.pos.x - x, e.pos.z - z) <= r);
+  for (const e of list) {
+    const f = [];
+    if (!e.alive) f.push('DEAD'); if (e.removed) f.push('removed'); if (e.obj && e.obj.parent) f.push('inScene'); if (e.obj && !e.obj.visible) f.push('hiddenObj');
+    if (e.ruin) f.push('ruin' + (e.ruin.parent ? 'InScene' : ''));
+    if (e.kind === 'building') { f.push(e.built ? 'built' : 'unbuilt ' + (e.progress || 0).toFixed(2)); if (!hashed.has(e)) f.push('NOT-IN-HASH'); if (!W.buildings.includes(e)) f.push('NOT-IN-LIST'); }
+    if (W.invulnerable(e)) f.push('INVULNERABLE' + (e.invulnT > 0 ? ' invulnT' : ''));
+    if (e.untargetable) f.push('untargetable'); if (e.unselectable) f.push('unselectable'); if (e.inside) f.push('inside'); if (e.parked) f.push('parked');
+    if (me && W.hiddenFrom(e, me)) f.push('hiddenFromMe');
+    if (e.parentGate) f.push('wingOf ' + e.parentGate.name);
+    const rel = e.owner && me ? (me.isEnemy(e.owner) ? 'enemy' : me.isFriend(e.owner) ? 'friend' : 'neutral') + '/' + (e.owner.isEnemy(me) ? 'enemy' : e.owner.isFriend(me) ? 'friend' : 'neutral') : e.owner ? '' : 'ownerless';
+    const tg = sel.length ? ' canTarget by selection ' + sel.slice(0, 3).map((u) => W.canTarget(u, e) ? 'yes' : 'no').join(',') : '';
+    const tm = timers(e);
+    lines.push(`${e.name} #${e.id ?? ''} ${e.kind} owner ${e.owner ? e.owner.id : '-'} ${rel} hp ${Math.round(e.hp)}/${e.maxHp} ${f.join(' ')}${tm ? ' timers ' + tm : ''}${tg}`);
+  }
+  return lines.join('\n');
 }

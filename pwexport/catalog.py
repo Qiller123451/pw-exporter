@@ -289,7 +289,7 @@ class Catalog:
                         'level': _level_of(s['when']), 'parent': out[remap[s['pi']]]['gfx'] if s['pi'] >= 0 else '',
                         # a part that only fits another look of the object (the ballista on hu_large_tower_upgrade)
                         'needs_model': (self._gfx(s['parent']) or s['parent']) if s['pi'] < 0 and s['parent'] else None})
-            for k in ('offset', 'derived', 'needs_link'):         # script-derived parts (modparts.py)
+            for k in ('offset', 'derived', 'needs_link', 'weapon_class'):    # script-derived parts (modparts.py)
                 if s.get(k):
                     out[-1][k] = s[k]
         # defaults: what an owned unit shows out of the box (no upgrades, level 1)

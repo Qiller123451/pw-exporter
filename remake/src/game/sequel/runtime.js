@@ -4,9 +4,15 @@
 //
 // A mission's state is data (saved games: game/save.js keeps the fields of SAVED); its code is in the mission
 // definition, called by name: def.on[name](M, args) for timers (M.after) and events.
+//
+// The same runtime plays the scenarios (game/scenarios/missions.js, docs/SCENARIOS.md: cfg.scenario, kind
+// 'scenario'): standalone missions in ParaWorld's own world, with the game's normal rules and data, played as any of
+// the four tribes (cfg.tribe; M.tribe). Their definitions are made for the chosen tribe (def.make(tribe, difficulty))
+// and may have other computer players: roles foe, foe2 and ally ({tribe, name, color, behaviour | ai: false}).
 import * as THREE from 'three';
 import { Player } from '../player.js';
 import { MISSIONS, migrateSettings } from './missions.js';
+import { SCENARIOS, SCENARIO_TRIBES, TRIBE_NAMES } from '../scenarios/missions.js';
 import { CAST } from './cast.js';
 import { sequelSource, roadMeshes } from './maps.js';
 import { tagsOf, SEQUEL_CLASSES, SEQUEL_HEROES } from './rules.js';
@@ -27,21 +33,36 @@ export const POWERS = {
   airdrop: { name: 'Airdrop', cost: 4, cool: 60, target: true, text: 'Four containment troopers parachute in.' },
   artillery: { name: 'Artillery', cost: 5, cool: 75, target: true, text: 'A barrage hits the area after 3 seconds.' },
 };
-const ROLE_IDS = { me: 0, outbreak: 1, civilians: 2, crane: 3, aje: 4 };
+const ROLE_IDS = { me: 0, outbreak: 1, civilians: 2, crane: 3, aje: 4, foe: 5, foe2: 6, ally: 7 };
 const ROLE_LOOK = {
   me: { name: 'SEAS', color: 0x3a6ea8, party: 0x5a8ed8, team: 0 },
   outbreak: { name: 'The Outbreak', color: 0x9a3a20, party: null, team: 1 },
   civilians: { name: 'Civilians', color: 0xc8c0a0, party: null, team: 0 },
   crane: { name: 'Crane Industrial', color: 0x6a6a6a, party: 0x303030, team: 2 },
   aje: { name: 'Dustriders', color: 0xb07830, party: 0xd09040, team: 3 },
+  // (the scenarios' other tribes; a def's role gives its tribe, name and colour)
+  foe: { name: 'The Enemy', color: 0x9a2a2a, party: 0xc84040, team: 4 },
+  foe2: { name: 'The Rivals', color: 0x6a3a9a, party: 0x8a5ac8, team: 5 },
+  ally: { name: 'Allies', color: 0x3a9a5a, party: 0x5ac87a, team: 0 },
 };
+const EXTRA_ROLES = ['crane', 'aje', 'foe', 'foe2', 'ally'];
 
 export class Sequel {
   constructor(G, cfg) {
     this.G = G;
-    this.id = +cfg.sequel;
     this.difficulty = cfg.difficulty == null ? 1 : +cfg.difficulty;
-    this.def = MISSIONS.find((m) => m.id === this.id) || MISSIONS[0];
+    this.kind = cfg.scenario != null ? 'scenario' : 'sequel';
+    if (this.kind === 'scenario') {
+      // a scenario: its definition made for the tribe played (the same again when a saved game is loaded)
+      this.id = +cfg.scenario;
+      this.tribe = SCENARIO_TRIBES.includes(cfg.tribe) ? cfg.tribe : SCENARIO_TRIBES[0];
+      const sc = SCENARIOS.find((m) => m.id === this.id) || SCENARIOS[0];
+      this.def = { ...sc, ...(sc.make ? sc.make(this.tribe, this.difficulty) : {}) };
+    } else {
+      this.id = +cfg.sequel;
+      this.tribe = 'SEAS';
+      this.def = MISSIONS.find((m) => m.id === this.id) || MISSIONS[0];
+    }
     this.time = 0;
     this.state = {};                 // the mission's own data (missions.js)
     this.objectives = [];            // {id, text, done, failed, count, of, secondary, hidden}
@@ -80,7 +101,8 @@ export class Sequel {
     S.decor = S.decor.filter((x) => x.model !== 'sq_power_station');
     return S;
   }
-  tribes() { return ['SEAS', ...(this.def.tribes || [])]; }
+  // the tribes whose models load (a scenario: all four - its script may put down anybody's units)
+  tribes() { return this.kind === 'scenario' ? [...SCENARIO_TRIBES] : ['SEAS', ...(this.def.tribes || [])]; }
   // models the mission needs besides its map's: its machines, civilians, creatures
   models() {
     const out = new Set(['sq_pen', 'sq_windmill_rotor', 'sq_waterwheel', 'sq_searchlamp', 'aje_warpgate']);     // (the warp gate: the rifts' vortex, ui/sequel_ui.js)
@@ -97,10 +119,12 @@ export class Sequel {
   }
   build(W, S) {
     const G = this.G, D = G.data, def = this.def;
-    const roles = ['me', 'outbreak', 'civilians', ...(def.crane ? ['crane'] : []), ...(def.aje ? ['aje'] : [])];
+    const roles = ['me', 'outbreak', 'civilians', ...EXTRA_ROLES.filter((r) => def[r])];
     W.players = roles.map((r) => {
-      const L = ROLE_LOOK[r];
-      const p = new Player(ROLE_IDS[r], r === 'aje' ? 'Aje' : 'SEAS', { ai: r !== 'me', name: L.name, color: L.color, partyColor: L.party, team: L.team, rules: D });
+      const o = { ...(typeof def[r] === 'object' ? def[r] : {}), ...((def.looks || {})[r] || {}) };      // (looks: other names for the standing roles)
+      const L = { ...ROLE_LOOK[r], ...(r === 'me' && this.kind === 'scenario' ? { name: TRIBE_NAMES[this.tribe] } : {}), ...(o.name ? { name: o.name } : {}), ...(o.color != null ? { color: o.color, party: o.party ?? o.color } : {}) };
+      const tribe = r === 'me' ? this.tribe : r === 'aje' ? 'Aje' : o.tribe || 'SEAS';
+      const p = new Player(ROLE_IDS[r], tribe, { ai: r !== 'me', name: L.name, color: L.color, partyColor: L.party, team: L.team, rules: D });
       this.roles[r] = p.id;
       return p;
     });
@@ -110,16 +134,20 @@ export class Sequel {
     me.popMax = def.popMax || 52;
     // the civilians and the outbreak need no economy; everybody fights the outbreak
     for (const p of W.players) if (p !== me) Object.assign(p.res, { food: 5000, wood: 5000, stone: 5000 });
+    // (a scenario's computer players may start with less: def.<role>.res)
+    for (const r of EXTRA_ROLES) { const o = def[r], p = this.player(r); if (p && o && o.res) Object.assign(p.res, o.res); }
     if (def.aje && def.ajeFriendly) { const a = this.player('aje'); a.setRelation(me, 2); me.setRelation(a, 2); }
+    // a scenario's other tribes may start at peace with the player (neutral: 1) - the script changes it
+    for (const r of EXTRA_ROLES) { const o = def[r], p = this.player(r); if (p && o && o.relation != null) { p.setRelation(me, o.relation); me.setRelation(p, o.relation); } }
     // the roads on the ground
     const roads = roadMeshes(S, G.hf, applyFow);
     G.scene.add(roads);
     // the start
     for (const z of def.zones || []) this.zones[z.name] = { ...z };
-    for (const [cls, x, z, rot] of def.start.buildings || []) { const b = W.placeAdapted(cls, me, x, z, rot || 0, true); if (b) W.recomputeCaps(me); }
+    for (const [cls, x, z, rot] of def.start.buildings || []) { const b = W.placeAdapted(this.cls(cls), me, x, z, rot || 0, true); if (b) W.recomputeCaps(me); }
     // the epoch it starts in (the user: from mission 4 on epoch 2, from mission 7 on epoch 3; def.epoch overrides)
-    const epoch = def.epoch ?? (def.id >= 7 ? 3 : def.id >= 4 ? 2 : 1);
-    const hq = W.buildings.find((b) => b.alive && b.owner === me && b.name === 'seas_headquarters');
+    const epoch = def.epoch ?? (this.kind === 'scenario' ? 1 : def.id >= 7 ? 3 : def.id >= 4 ? 2 : 1);
+    const hq = this.home(me);
     for (let k = 2; hq && k <= epoch; k++) { const a = W.data.actions(me).find((x) => x.kind === 'Upgrades' && x.id === 'age_' + k); if (a) W.completeUpgrade(hq, a); }
     for (const [cls, x, z, n, lv] of def.start.units || []) this.spawn(cls, 'me', x, z, n || 1, { level: lv });
     W.recomputeCaps(me);
@@ -138,8 +166,14 @@ export class Sequel {
   }
   // the starting workers go to work at once (the user's wish), spread evenly over food, wood and stone - the nearest
   // source of each to the headquarters; a kind the map has none of near the base goes to the next kind
+  // a player's main building (SEAS' headquarters, the Norsemen's and the Dragon Clan's fireplace) or the Dustriders'
+  // resource collector (a unit): D.start's base
+  home(p) {
+    const W = this.W, base = (W.data.start(p.tribe) || {}).base || 'seas_headquarters';
+    return W.buildings.find((b) => b.alive && b.owner === p && b.name === base) || W.units.find((u) => u.alive && u.owner === p && u.name === base) || null;
+  }
   startWork(me) {
-    const W = this.W, hq = W.buildings.find((b) => b.alive && b.owner === me && b.name === 'seas_headquarters');
+    const W = this.W, hq = this.home(me);
     const ws = W.units.filter((u) => u.alive && u.owner === me && u.isWorker);
     const at = hq ? hq.pos : ws[0] && ws[0].pos;
     if (!at) return;
@@ -152,7 +186,7 @@ export class Sequel {
   // the computer players' brains (Crane, the Dustriders): campaign brains woken by the mission (missions.js)
   brains(TribeAI) {
     const out = new Map();
-    for (const r of ['crane', 'aje']) {
+    for (const r of EXTRA_ROLES) {
       const p = this.player(r);
       if (!p || !this.def[r] || this.def[r].ai === false) continue;        // (ai false: only the mission's script moves them)
       const o = this.def[r] === true ? {} : this.def[r];
@@ -168,7 +202,7 @@ export class Sequel {
     if (name === '_intro') { for (const u of this.def.unlocks || []) if (!Array.isArray(u)) this.introduce(u); return undefined; }
     const fn = this.def.on && this.def.on[name];
     if (!fn) return undefined;
-    try { return fn(this, args || {}); } catch (e) { console.error(`sequel mission ${this.id}: ${name}`, e); return undefined; }
+    try { return fn(this, args || {}); } catch (e) { console.error(`${this.kind} mission ${this.id}: ${name}`, e); return undefined; }
   }
   after(sec, name, args = {}) { this.timers.push([this.time + sec, name, args]); }
   say(who, text) { this.lines.push({ who, text }); }
@@ -226,6 +260,14 @@ export class Sequel {
   unlockNext() {
     const s = this.G.settings;
     if (!s) return;
+    if (this.kind === 'scenario') {
+      // the scenarios are all open; the menu marks which tribes won each
+      s.scenario = s.scenario || { mission: this.id, tribe: this.tribe, difficulty: this.difficulty, won: {} };
+      const w = (s.scenario.won = s.scenario.won || {})[this.id] = s.scenario.won[this.id] || [];
+      if (!w.includes(this.tribe)) w.push(this.tribe);
+      if (this.G.saveSettings) this.G.saveSettings(s);
+      return;
+    }
     s.sequel = s.sequel || {};
     migrateSettings(s.sequel);
     s.sequel.unlocked = Math.max(s.sequel.unlocked || 1, this.id + 1);
@@ -237,6 +279,7 @@ export class Sequel {
   // their way there), heading
   spawn(cls, role, x, z, n = 1, opts = {}) {
     const W = this.W, p = role ? this.player(role) : null;
+    cls = this.cls(cls);
     const out = [];
     for (let i = 0; i < n; i++) {
       const a = i * 2.4, r = n > 1 ? 2 + Math.sqrt(i) * 2.2 : 0;
@@ -314,7 +357,15 @@ export class Sequel {
       }
     }
   }
+  // a class, or of a list the first the data has (the scenarios' units: the base game lacks some of MIRAGE's)
+  // (and whose model the assets have: MIRAGE's data names a few models older exports lack)
+  cls(c) {
+    if (!Array.isArray(c)) return c;
+    const D = this.W.data, ok = (n) => { if (!D.exists(n)) return false; const st = D.stats(n, D.minLevel(n, null) || 1, null); return !!(st && st.gfx && this.W.template(st.gfx, true)); };
+    return c.find(ok) || c.find((n) => D.exists(n)) || c[0];
+  }
   building(cls, role, x, z, rot = 0) {
+    cls = this.cls(cls);
     const b = this.W.placeAdapted(cls, this.player(role), x, z, rot, true);      // (the ground levels to it)
     if (b && role === 'me') this.W.recomputeCaps(this.me);
     return b;
@@ -388,7 +439,7 @@ export class Sequel {
       if (e.type === 'died' || e.type === 'destroyed') {
         const x = e.entity;
         if (!x) continue;
-        if (x.owner && x.owner === this.player('civilians') && x.kind === 'unit') { const n = this.count('civLost'); this.notify(`A townsperson was killed (${n} lost)`, 'bad'); }
+        if (x.owner && x.owner === this.player('civilians') && x.kind === 'unit') { const n = this.count('civLost'); this.notify(`${this.def.civName || 'A townsperson'} was killed (${n} lost)`, 'bad'); }
         if (x.owner === this.player('outbreak') && x.kind === 'unit') { this.count('dinosKilled'); if ((x.stats.size || 0) >= 6) this.grant(1); }
         this.call('died', { e: x });
       }

@@ -54,6 +54,22 @@ run cliffs_sequel env PWR_PORT=${SEQ_PORT:-8412} python3 tests/evaljs.py tests/c
 run terrain_walk python3 tests/evaljs.py tests/terrain_walk.js "&campaign=1"
 run ground python3 tests/evaljs.py tests/ground.js "&tribe=Hu&enemy=Aje"
 run pick python3 tests/evaljs.py tests/pick.js "&tribe=SEAS&enemy=Hu"
+run pick_damaged python3 tests/evaljs.py tests/pick_damaged.js "&tribe=SEAS&enemy=Hu"
+run pick_crowd python3 tests/evaljs.py tests/pick_crowd.js "&tribe=SEAS&enemy=Hu"
+run tower_hit python3 tests/evaljs.py tests/tower_hit.js "&tribe=SEAS&enemy=Hu"
+run box_select python3 tests/evaljs.py tests/box_select.js "&tribe=SEAS&enemy=Hu"
+run place_snap python3 tests/evaljs.py tests/place_snap.js "&tribe=SEAS&enemy=Hu"
+run disarm python3 tests/evaljs.py tests/disarm.js "&tribe=SEAS&enemy=Hu"
+run big_unit_start python3 tests/evaljs.py tests/big_unit_start.js "&campaign=4&tribe=SEAS&difficulty=1"
+run executioner_level_mirage env PWR_PORT=${SEQ_PORT:-8412} python3 tests/evaljs.py tests/executioner_level.js "&tribe=SEAS&enemy=Hu&cheats=%7B%22on%22%3Atrue%2C%22free%22%3Atrue%2C%22me%22%3A%7B%22startEpoch%22%3A5%7D%7D"
+run tribes_fixes_Hu python3 tests/evaljs.py tests/tribes_fixes.js "&tribe=Hu&enemy=Aje&cheats=%7B%22on%22%3Atrue%2C%22me%22%3A%7B%22startEpoch%22%3A4%7D%7D"
+run tribes_fixes_Hu_mirage env PWR_PORT=${SEQ_PORT:-8412} python3 tests/evaljs.py tests/tribes_fixes.js "&tribe=Hu&enemy=Aje&cheats=%7B%22on%22%3Atrue%2C%22me%22%3A%7B%22startEpoch%22%3A4%7D%7D"
+run tribes_fixes_Aje python3 tests/evaljs.py tests/tribes_fixes.js "&tribe=Aje&enemy=Hu&cheats=%7B%22on%22%3Atrue%2C%22me%22%3A%7B%22startEpoch%22%3A4%7D%7D"
+run tribes_fixes_Aje_mirage env PWR_PORT=${SEQ_PORT:-8412} python3 tests/evaljs.py tests/tribes_fixes.js "&tribe=Aje&enemy=Hu&cheats=%7B%22on%22%3Atrue%2C%22me%22%3A%7B%22startEpoch%22%3A4%7D%7D"
+run tribes_fixes_Ninigi python3 tests/evaljs.py tests/tribes_fixes.js "&tribe=Ninigi&enemy=Hu&cheats=%7B%22on%22%3Atrue%2C%22me%22%3A%7B%22startEpoch%22%3A4%7D%7D"
+run tribes_fixes_Ninigi_mirage env PWR_PORT=${SEQ_PORT:-8412} python3 tests/evaljs.py tests/tribes_fixes.js "&tribe=Ninigi&enemy=Hu&cheats=%7B%22on%22%3Atrue%2C%22me%22%3A%7B%22startEpoch%22%3A4%7D%7D"
+run tribes_fixes_SEAS python3 tests/evaljs.py tests/tribes_fixes.js "&tribe=SEAS&enemy=Hu&cheats=%7B%22on%22%3Atrue%2C%22me%22%3A%7B%22startEpoch%22%3A4%7D%7D"
+run tribes_fixes_SEAS_mirage env PWR_PORT=${SEQ_PORT:-8412} python3 tests/evaljs.py tests/tribes_fixes.js "&tribe=SEAS&enemy=Hu&cheats=%7B%22on%22%3Atrue%2C%22me%22%3A%7B%22startEpoch%22%3A4%7D%7D"
 run handedness python3 tests/evaljs.py tests/handedness.js "&tribe=Hu&enemy=Aje"
 run breach python3 tests/evaljs.py tests/breach.js "&campaign=13&notriggers"
 run rally python3 tests/evaljs.py tests/rally_task.js "&tribe=Hu&enemy=Aje&debug"
@@ -142,10 +158,15 @@ run skirmish_dom python3 tests/evaljs.py tests/skirmish_modes.js "&players=Hu,Aj
 run skirmish_def python3 tests/evaljs.py tests/skirmish_modes.js "&players=Hu,Aje,Ninigi&mode=defender&hq=0,1,2&map=maps/Base/Base/Multiplayer/die_zitadelle.ula"
 run pointbuy python3 tests/evaljs.py tests/pointbuy.js "&players=Hu,Aje,Ninigi&teams=1,2,2&points=1000&levels=5,5"
 run save_skirmish4 python3 tests/save_load.py "&players=Hu,Aje,Ninigi&teams=1,2,2&points=1000&aivai" 150 20
-# the sequel campaign (docs/SEQUEL.md): every mission loads and runs; 1, 3, 5 and 6 play their mechanic by script
+# the sequel campaign (docs/SEQUEL.md, docs/SEQUEL_1966.md): every mission loads and runs; 1, 3, 5 and 6 play their mechanic by script
 SQ="env PWR_PORT=${SEQ_PORT:-8412}"            # (the sequel is played with MIRAGE's data: game/sequel/rules.js SEQUEL_MOD)
 for n in 1 2 3 4 5 6 7 8 9 10 11; do run sequel_$n $SQ python3 tests/evaljs.py tests/sequel.js "&sequel=$n"; done
+# ... and every one played through to its win by script (tests/sequel_flow.js; missions_1966.js: 12-16)
+for n in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do run sequel_flow_$n $SQ python3 tests/evaljs.py tests/sequel_flow.js "&sequel=$n"; done
 run save_sequel_3 $SQ python3 tests/save_load.py "&sequel=3" 120 30
+# the scenarios (docs/SCENARIOS.md): each played through as each tribe, with the base game's data and with MIRAGE's
+for n in 1 2 3 4 5; do for t in Hu Aje Ninigi SEAS; do run scenario_${n}_$t python3 tests/evaljs.py tests/scenario_flow.js "&scenario=$n&tribe=$t"; run scenario_${n}_${t}_mirage $SQ python3 tests/evaljs.py tests/scenario_flow.js "&scenario=$n&tribe=$t"; done; done
+run scenario_4_silence python3 tests/evaljs.py tests/scenario_flow.js "&scenario=4&tribe=Aje&path=silence"
 run sequel_power $SQ python3 tests/evaljs.py tests/sequel_power.js "&sequel=2"
 run sequel_capture $SQ python3 tests/evaljs.py tests/sequel_capture.js "&sequel=3"
 # what heroes give by level (aura, special move, chief bonus, tooltip lines), the originals and the sequel's copies
@@ -176,6 +197,7 @@ run ai_campaign python3 tests/evaljs.py tests/ai_campaign.js "&tribe=Hu&enemy=Aj
 # the SEAS details: no demotion, the placement preview and its dots, picking, wall stages, towers on fences, the turret's
 # muzzle flashes, the headquarters' epoch name
 run seas_details python3 tests/evaljs.py tests/seas_details.js "&tribe=SEAS&enemy=Hu"
+run gunners python3 tests/evaljs.py tests/gunners.js "&tribe=Hu&enemy=SEAS"
 # the computer player's walls, outposts, trade, items, chat (ai/walls.js, outposts.js, trade.js, items.js, chat.js)
 run ai_walls python3 tests/evaljs.py tests/ai_walls.js "&tribe=Aje&enemy=Hu&aid=6"
 run ai_outpost python3 tests/evaljs.py tests/ai_outpost.js "&tribe=Hu&enemy=Aje&aid=6"

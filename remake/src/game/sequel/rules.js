@@ -69,6 +69,12 @@ export const SEQUEL_CLASSES = {
   sq_civilian_3: { from: 'seas_worker', desc: 'Civilian', set: { gfx: 'hc_citizen_03', can_build: '0', can_harvest: '0' }, hp: 0.6, weapons: 'none', tags: ['civilian'], build: false },
   sq_civilian_4: { from: 'seas_worker', desc: 'Civilian', set: { gfx: 'hc_citizen_04', can_build: '0', can_harvest: '0' }, hp: 0.6, weapons: 'none', tags: ['civilian'], build: false },
   sq_big_tooth: { from: 'Gigantosaurus', tribe: 'World', desc: 'Big Tooth', hp: 9.0, weapons: { damage: 2.2 }, tags: ['boss'] },
+  // (1966, missions 12-16)
+  sq_old_scar: { from: 'Atroxosaurus', tribe: 'World', desc: 'Old Scar', hp: 4.2, weapons: { damage: 1.7 }, tags: ['boss'] },
+  sq_cargo_truck: { from: 'seas_mechanical_walker', desc: 'Convoy Truck', set: { gfx: 'sq_army_truck', defaultspeed: '2', maxspeed: '2', FOW: '35.000000', can_harvest: '0', can_build: '0' }, hp: 2.2, weapons: 'none', tags: ['convoy'], build: false },
+  sq_rift_engine: { from: 'seas_turret_tower', desc: 'Rift Engine', set: { gfx: 'sq_gate_machine', FOW: '40.000000' }, hp: 1.4, weapons: 'none', tags: ['engine'], build: false },
+  sq_relay_mast: { from: 'seas_turret_tower', desc: 'Relay Mast', set: { gfx: 'sq_radar', FOW: '40.000000' }, hp: 0.8, weapons: 'none', tags: ['relay'], build: false },
+  sq_behemoth: { from: 'seas_wehrspinne', desc: 'The Behemoth', hp: 7.0, weapons: { damage: 1.6 }, tags: ['boss'], build: false },
 };
 // the heroes of the sequel: hero classes of the first game with the sequel's names and portraits (game/sequel/cast.js)
 export const SEQUEL_HEROES = {

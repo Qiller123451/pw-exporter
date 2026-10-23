@@ -84,6 +84,33 @@ const DO = {
     const [k, v] = String(prm[0] || '').split(':').map((s) => s.trim());
     if (/^timer/i.test(k)) E.W.setInvulnerable(u, true, num(v, 0)); else E.W.setInvulnerable(u, /^enable/i.test(k));
   },
+  // MIRAGE (ActionFactory DoWeaponRemove, FightingObj RemoveAllWeapons): "Enable" disarms the object - a tower stops
+  // shooting, a unit stops fighting -, "Disable" gives the weapons back, "Timer: s" disarms for s seconds. MIRAGE's
+  // mission 4 disarms the Norse towers it makes invulnerable and unselectable below 800 hit points.
+  WeaponRemove(E, u, rec, prm) {
+    if (!u) return;
+    const [k, v] = String(prm[0] || '').split(':').map((s) => s.trim());
+    if (/^timer/i.test(k)) E.W.setDisarmed(u, true, num(v, 0)); else E.W.setDisarmed(u, /^enable/i.test(k));
+  },
+  // MIRAGE's maps use more of the ACDO commands (ActionFactory.usl):
+  // LevelUp: the object levels up (the "LevelUp" command; init_difficulty triggers raise bosses and mammoths) - free
+  LevelUp(E, u) { if (u && u.alive && u.kind === 'unit' && u.level < 5) E.W.setLevel(u, u.level + 1); },
+  // BuildDown: an Aje building is taken down (its own BuildDown action, queued as the player's click does)
+  BuildDown(E, u) {
+    if (!u || u.kind !== 'building' || !E.W.startBuildDown) return;
+    const a = E.G.data.actionsOf(u.rulesOwner(), u).find((x) => x.id === 'BuildDown');
+    if (a) E.W.startBuildDown(u, a);
+  },
+  // entrench: dig in where it stands (Entrench.usl)
+  entrench(E, u) { if (u && u.alive && u.kind === 'unit' && E.W.digIn) E.W.digIn(u); },
+  // PrepareUnboard "[x y z]": a transporter sails to the point and lets its passengers off there
+  PrepareUnboard(E, u, rec, prm) {
+    const v = E.C.vec(prm[0]);
+    if (!u || !u.alive || u.kind !== 'unit' || !v) return;
+    E.stopPatrol(u);
+    E.W.order([u], { type: 'move', x: v.x, z: v.z });
+    E.W.queueOrder(u, { type: 'unload' });
+  },
   AbortTask(E, u) { if (u && u.kind === 'unit') { E.stopPatrol(u); E.W.order([u], { type: 'stop' }); } },
   Stop(E, u) { if (u && u.kind === 'unit') { E.stopPatrol(u); E.W.order([u], { type: 'stop' }); } },
   // a normal death (AF:1474-1480); scenery is just removed
@@ -388,6 +415,14 @@ export const ACTIONS = {
     if (on(p.selector_enabled, true)) for (const rec of objs(E, p, t)) if (!rec.groupObj) R.addToGroup(g, rec);
     for (const id of guids(p.add_to_group_units)) { const rec = R.byGuid(id); if (rec) R.addToGroup(g, rec); }
   },
+  // MIRAGE (ActionFactory.usl CActionRemoveFromGroup): the objects of the query (when its selector is on) and the
+  // listed ones leave the group
+  RMGR(E, p, t) {
+    const R = E.C.objects, g = R.group(p.group);
+    if (!g) return;
+    const list = [...(on(p.selector_enabled, true) ? objs(E, p, t) : []), ...guids(p.remove_from_group_units).map((id) => R.byGuid(id)).filter(Boolean)];
+    for (const rec of list) if (rec.group === g) R.removeFromGroup(rec);
+  },
   // AF:5117-5301: mount = 1: transporters (sub_ query) take the nearest passengers (query); 0: transporters of the
   // first query unload
   TRSP(E, p, t) {
@@ -453,7 +488,7 @@ export const ACTIONS = {
     E.push('diplomacy', 'onDiplomacy', null);
   },
   // (a debug option's unit limit or pyramid, game/cheats.js, stays)
-  POPL(E, p) { const P = E.C.player(slotOf(p.player_id, 0)); if (P && !(P.cheat && P.cheat.popMax != null)) P.popMax = toInt(p.limit); },
+  POPL(E, p) { const P = E.C.player(slotOf(p.player_id, 0)); if (P && !(P.cheat && P.cheat.popMax != null)) P.popMax = Math.max(toInt(p.limit), (P.cheat && P.cheat.popFloor) || 0); },
   // AF:3143-3241: unit slots per level; a missing open_i = 0
   BLSL(E, p) { const P = E.C.player(slotOf(p.player_id, 0)); if (P && !(P.cheat && P.cheat.pyramid)) P.pyramid = [1, 2, 3, 4, 5].map((i) => toInt(p['open_' + i] || '0')); },
   PLCP(E, p) { const P = E.C.player(slotOf(p.player, 0)); if (P) E.W.setCaps(P, { food: p.food, wood: p.wood, stone: p.stone }); },
@@ -554,11 +589,11 @@ export const ACTION_STATUS = {
   INBA: ['implemented', 'refreshed when a variable changes'], TIMR: ['implemented', 'create / pause / unpause / kill'], PSND: ['implemented', 'G.audio.play if the sound event exists'],
   MUSI: ['implemented', 'G.audio.mus.trigger (engine/music.js); no mission of the campaign uses it'],
   WTHR: ['approximated', 'the next track of the level\'s weather program (systems/landmarks.js); a program file (chgtype 0) is not loaded - the game has none, no mission uses it'],
-  ACDO: ['implemented', 'WalkAction, Aggressive Walk, Attack, SetPos, RotateTo, SetAnim, Invulnerability, AbortTask, Stop, Kill, FullHeal, Open / Close / Auto Gate, SetRallyPoint, BuildUp, GiveItem, JumpOffWall (the Scorpion wakes)'],
+  ACDO: ['implemented', 'WalkAction, Aggressive Walk, Attack, SetPos, RotateTo, SetAnim, Invulnerability, AbortTask, Stop, Kill, FullHeal, Open / Close / Auto Gate, SetRallyPoint, BuildUp, GiveItem, JumpOffWall (the Scorpion wakes), WeaponRemove, LevelUp, BuildDown, entrench, PrepareUnboard (MIRAGE)'],
   WYPT: ['approximated', 'patrol driver in the engine (once / circle / back and forth); fighters walk as an attack-move, a straightwalk one as a plain move (it only switches the aggression walk off)'],
   COBJ: ['implemented', ''], OCPY: ['implemented', ''], UNIT: ['implemented', 'hitpoints only (all that occurs)'],
   SPGR: ['implemented', 'out of a building: at Spwn after its open clip, through Ex_1 to pos (from a scenery prop they stay at Spwn); a unit without pos stops at Ex_1 (the original sends it to the map corner)'],
-  CPLX: ['implemented', ''], REPL: ['implemented', ''], DELO: ['implemented', ''], ADGR: ['implemented', ''],
+  CPLX: ['implemented', ''], REPL: ['implemented', ''], DELO: ['implemented', ''], ADGR: ['implemented', ''], RMGR: ['implemented', 'MIRAGE'],
   TRSP: ['approximated', 'mount: board orders to the nearest passengers; dismount: every transporter of the query unloads'],
   EFCT: ['implemented', 'the model of the particle database (sequencer/particles.txt) for loop_value × its length; not kept in saved games'], OBAP: ['implemented', 'visible / hitable / selectable; the other bits are kept on the record'],
   VARS: ['implemented', ''], RSRC: ['implemented', ''], TECH: ['implemented', ''], DIPL: ['implemented', ''], POPL: ['implemented', ''], BLSL: ['implemented', ''],

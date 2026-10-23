@@ -202,6 +202,12 @@ interface scripts and the cutscene player. Much of the game is native code the s
   buildings always `tec`), applied as `value × rel + abs`.
 * Objects are created by class name; the class lists map a class to its script class and model; level and upgrade
   filters swap models (`hu_large_tower` → `hu_large_tower_upgrade`).
+* The game compiles the script files `Scripts/Server/Server.ini` lists; a mod with scripts ships its own copy of the
+  list (MIRAGE adds six files).
+* Turrets, build-ups, gunners and riders are put on by the unit's script class (`OnInit`: `SetBuildUp`, `AddObj` to a
+  link, `AddAdditionalBuildUp` + `AddObjCaptain` + `SetWeaponClass` + `SetAdditionalWeapon` for a turret that shoots by
+  itself; the rider's seat is `GetCaptainLink`). A weapon build-up turns its first linked object only;
+  `DestroyBuildUp` takes them all down. → [COMPOSITES.md](COMPOSITES.md), [WORKSHOP.md](WORKSHOP.md) "Add-ons".
 * → [GAMEPLAY_RULES.md](../remake/docs/GAMEPLAY_RULES.md), [combat.md](../remake/docs/spec/combat.md) §0,
   [ARCHITECTURE.md](../remake/docs/ARCHITECTURE.md) "Rules from the tech tree", [COMPOSITES.md](COMPOSITES.md),
   [original/DATA_FILES.md](original/DATA_FILES.md) §2.

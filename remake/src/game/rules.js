@@ -49,6 +49,9 @@ function scriptedGates(tt, extra) {
   }
 }
 
+// build actions whose start level the remake sets itself (Rules.startLevel)
+const LEVEL_OVERRIDE_MIRAGE = { seas_lumberjack: 4, seas_lumberjack_minigun: 4 };
+
 export class Rules {
   constructor(ttJson, extra) {
     scriptedGates(ttJson, extra || {});
@@ -156,7 +159,17 @@ export class Rules {
         levels: {},
       };
       // objects of the wall placer (TT wall=1) and gates: which kind of wall-map object (docs/spec/walls.md §1)
-      if (d.gate && d.script !== 'CLadder') d.wallKind = 'gate';
+      // MIRAGE splits the flag: its towers carry `tower = 1` and its traps `trap = 1` instead of `wall = 1` (MIRAGE
+      // PlaceController.usl: m_bWall / m_bGate / m_bTower / m_bTrap from the tech tree) - without this its towers
+      // were plain buildings that could not stand on a wall piece
+      const towerFlag = bool(scalar(o.tower)), trapFlag = bool(scalar(o.trap));
+      // siege ladders go against a wall piece (systems/siege.js); MIRAGE flags them wall = 1 (the Norse ladder and its
+      // SEAS siege staircase, CSeasStaircase), the base game gate = 1 - neither makes them wall-map objects
+      d.ladder = /^(CLadder|CSeasStaircase)$/.test(d.script || '');
+      if (d.ladder) d.wallKind = null;
+      else if (d.gate) d.wallKind = 'gate';
+      else if (trapFlag) d.wallKind = 'trap';
+      else if (towerFlag) d.wallKind = 'tower';
       else if (d.wall) d.wallKind = /^(CWall|CNinigi_Defense_Skewer)$/.test(d.script) ? 'wall'
         : /Pitfall|SnareTrap|ResinField|Minefield|PoisonDung|Trap/.test(d.script) ? 'trap' : 'tower';
       d.transportClass = !d.maxPassengers ? 0 : (ix.type === 'SHIP' || TRANSPORT2.has(name)) ? 2 : 1;
@@ -453,7 +466,15 @@ export class Rules {
     const t = a.tribe === 'Special' ? T.tribe : a.tribe;
     return [...a.req.filter((r) => !this.invented(owner, r, t, unit)), ...(owner.debug ? [] : a.breq.filter((r) => !T.built(r, t)))];
   }
-  startLevel(action) { let lv = 1; for (const r of action.results) if (r.level) lv = Math.max(lv, r.level); return lv; }
+  startLevel(action) {
+    let lv = 1;
+    for (const r of action.results) if (r.level) lv = Math.max(lv, r.level);
+    // the user's choice (2026-10-23): with MIRAGE both Executioners start at level 4 (MIRAGE's tech tree builds them at
+    // 3; its own xenage/old_school_stats filter, which would make it 4, is never switched on). The boss variant
+    // (seas_lumberjack_minigun_boss, level 5) keeps its level.
+    if (action.kind === 'Build' && this.extra && this.extra.mod === 'MIRAGE' && LEVEL_OVERRIDE_MIRAGE[action.id]) lv = LEVEL_OVERRIDE_MIRAGE[action.id];
+    return lv;
+  }
 
   // lowest level a class exists at (e.g. marksmen start at level 2)
   // the lowest level of a class; a level the tech tree lists without hit points (1: the vehicles below their crew's

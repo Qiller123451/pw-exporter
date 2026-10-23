@@ -220,7 +220,12 @@ export class Cutscene {
     for (const A of this.actors.list) {
       const obj = A.e ? A.e.obj : A.prop ? A.prop.obj : A.tobj;
       if (!obj) continue;
-      const p = this.actors.pose(A, t), y = p.ground ? W.height(p.x, p.z) : p.mz;
+      const p = this.actors.pose(A, t);
+      let y = p.ground ? W.height(p.x, p.z) : p.mz;
+      // a ship drawn for the scene only or standing as scenery (no unit: mission 9's opening boats) floats - on the terrain it sat on
+      // the sea bed with only its sails above the water (World.groundY does this for the ships of the world)
+      if (!A.e && p.ground && W.waterLevel != null && A.naval == null) { const ix = G.data.info(A.a.cls); A.naval = !!(ix && ix.type === 'SHIP') || /boat|ship|canoe|galley|junk|raft|dhow/i.test(A.a.cls || ''); }
+      if (!A.e && A.naval && p.ground && W.waterLevel != null) y = Math.max(y, W.waterLevel - 0.1);
       const hid = this.actors.hidden(A, t);
       if (A.e) {
         const e = A.e;

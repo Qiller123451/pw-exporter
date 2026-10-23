@@ -45,8 +45,9 @@ class Pick:
     {name the scripts use: name in the model} - an animation the model has under another name is stored under the
     script's name too (the model keeps its own names)"""
 
-    def __init__(self, path, model, name, anims=None):
+    def __init__(self, path, model, name, anims=None, edit=None):
         self.path, self.model, self.name, self.anims = path, model, name, dict(anims or {})
+        self.edit = edit            # fn(model): changes a deep copy of the model (new links, a scale: gsfxform.py)
 
 
 def _copy_model(m):
@@ -85,7 +86,14 @@ def assemble(file_name, picks):
             m0 = next((m for m in src.models if m.name.lower() == p.model.lower()), None)
             if m0 is None:
                 raise KeyError('%s has no model %s' % (os.path.basename(p.path), p.model))
+        src_m = m0
+        if p.edit:
+            from . import gsfxform
+            m0 = gsfxform.copy_model(src_m, keep=list(src.materials) + list(src.sounds))
+            p.edit(m0)
         m, old = _copy_model(m0)
+        if m0 is not src_m:                       # (the dust trails name the source's animations)
+            old.update({id(a): old[id(b)] for a, b in zip(src_m.anim_names, m0.anim_names) if id(b) in old})
         m.name = m.object_name = p.name
         # animation groups and walk transitions by name (each archive numbers its own)
         gmap = {}
@@ -137,7 +145,7 @@ def assemble(file_name, picks):
                     out.sounds.append(s)
         out.add_model(m)
         for d in src.dusttrails:
-            if d.model is m0:
+            if d.model is src_m:
                 nd = A.DustTrail(d.name, m, d.anim_index)
                 nd.anim = old.get(id(d.anim)) if d.anim is not None else None
                 nd.start_frame, nd.entries = d.start_frame, list(d.entries)

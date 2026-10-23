@@ -31,7 +31,7 @@ const LADDER_OUT = 5.3;    // the ladder's foot from the piece's centre: its top
 const _v = new THREE.Vector3();
 
 export const Siege = {
-  isLadder(b) { return !!(b && b.kind === 'building' && b.def && b.def.script === 'CLadder'); },
+  isLadder(b) { return !!(b && b.kind === 'building' && b.def && b.def.ladder); },
   isSiegeTower(u) { return !!(u && u.kind === 'unit' && u.def && (u.def.script === 'CSiegeTower' || u.name === 'ninigi_siegetower')); },
   isSiegeBrachio(u) { return !!(u && u.kind === 'unit' && u.name === 'aje_brachiosaurus' && u.comp && u.comp.parts.some((p) => p.spec.gfx === 'aje_brachiosaurus_siege')); },
   canDock(u) { return this.isSiegeTower(u) || this.isSiegeBrachio(u); },

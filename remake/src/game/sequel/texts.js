@@ -116,6 +116,11 @@ export const SEQUEL_TEXTS = {
   sq_civilian_3: { medium: '• Civilian', long: 'A townsperson caught in the outbreak. Lead them to safety.' },
   sq_civilian_4: { medium: '• Civilian', long: 'A townsperson caught in the outbreak. Lead them to safety.' },
   sq_big_tooth: { medium: '• Animal\n\n• Huge', long: 'The giant of the rift. Bullets barely bother it: hold it in a net and dart it.' },
+  sq_old_scar: { medium: '• Animal\n\n• Huge', long: 'The one-eyed king of Crane\'s old menagerie: the oldest and meanest animal he ever caught. It leads the pack.' },
+  sq_cargo_truck: { medium: '• Vehicle\n\n• Unarmed\n\n• Drives with the convoy', long: 'A heavy Army truck of the convoy. It keeps to the road and stops when it is in danger.' },
+  sq_rift_engine: { medium: '• Crane\'s machine\n\n• Holds a rift open', long: 'Crane\'s copy of the Gate machine, crude and loud. While it runs, the rift beside it stays open.' },
+  sq_relay_mast: { medium: '• Crane\'s machine\n\n• Shields the Behemoth', long: 'A radio mast feeding power to the Behemoth\'s field generator. While any mast stands, the Behemoth cannot be hurt.' },
+  sq_behemoth: { medium: '• Vehicle\n\n• Huge', long: 'Crane\'s last machine: a walking fortress on six legs, built from the spider walkers of the old SEAS.' },
   // the heroes keep their originals' level lines (what each level gives, MIRAGE's: they cover SEAS)
   sq_halloran: { long: 'Colonel Margaret "Peg" Halloran, SEAS field commander and former Army engineer.' },
   sq_taslov: { long: 'Dr. Lev Taslov, rift physicist and grandson of the inventor Taslov. He builds the Rift Stabilizers.' },

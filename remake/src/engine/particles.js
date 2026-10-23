@@ -305,9 +305,12 @@ export class Particles {
           if (x.F & F.ALONG_VEL) {
             // pointing the way it flies on the screen (0x707e30: the screen angle of pos -> pos + v, plus "rotate"); a
             // ground quad: the heading on the ground. A source that turns its particles (src_rot_speed): that motion.
+            // The client measures the angle clockwise (atan2(dx, dy) in clip space, y up) and adds "rotate" to it; the
+            // quads here turn counter-clockwise, so both change sign. (Adding "rotate" as it is turned the muzzle
+            // flashes' rays - rotate -1.61, pivot at the ray's foot - round: they pointed back into the gun.)
             _d.copy(x.P.src_rot_speed ? p.dv : p.v); if (!p.world) _d.applyMatrix3(_n3);
             if (x.F & F.GROUND) rot = (_d.x || _d.z ? Math.atan2(_d.x, _d.z) : 0) + (x.P.rotate || 0);
-            else { _d.applyMatrix3(_view); rot = (_d.x || _d.y ? Math.atan2(-_d.x, _d.y) : 0) + (x.P.rotate || 0); }
+            else { _d.applyMatrix3(_view); rot = (_d.x || _d.y ? Math.atan2(-_d.x, _d.y) : 0) - (x.P.rotate || 0); }
           }
           _draw.size = size; _draw.a = p.a * fade; _draw.c = p.c; _draw.tx = p.tx; _draw.ty = p.ty; _draw.rot = rot;
           b.b.push(_draw, x);

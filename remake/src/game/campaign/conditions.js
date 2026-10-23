@@ -319,6 +319,27 @@ class CKGR extends Cond {
   check() { const g = this.group(); if (!g) return; this.set(compare(g.size, this.val, this.vars)); }
   info() { const g = this.group(); return { size: g ? g.size : null }; }
 }
+// MIRAGE (ConditionFactory.usl CConditionGroupRegion): the members of the group that the query also finds, counted
+// against obj_count; re-checked when the group or the objects change and twice a second (the query's region)
+class GREG extends Cond {
+  init() { this.val = String(this.p.obj_count == null ? '' : this.p.obj_count); }
+  group() { return this.E.C.objects.group(this.p.group); }
+  onEnabled() { const E = this.E; E.sub('group', this); E.sub('objects', this); if (this.val.includes('$(')) E.sub('vars', this); this.startPoll(0.5, 0.5); this.check(); }
+  onDisabled() { const E = this.E; E.unsub('group', this); E.unsub('objects', this); E.unsub('vars', this); this.stopPoll(); }
+  onGroup() { this.check(); }
+  onObjects() { this.check(); }
+  onVars() { this.check(); }
+  poll() { this.check(); }
+  check() {
+    const g = this.group();
+    if (!g) return;
+    const found = new Set(this.sel());
+    let n = 0;
+    for (const r of g.members) if (r.alive && found.has(r)) n++;
+    this.change(compare(n, this.val, this.vars));
+  }
+  info() { const g = this.group(); return { size: g ? g.size : null }; }
+}
 // UniversalTutorialCondition.usl: the player did something in the interface. CAME camera moved (scroll / zoom /
 // pan), TRMO a unit of B boarded a transporter of A, USEL a unit of the query is selected. Pulses.
 class UNTT extends Cond {
@@ -458,7 +479,7 @@ class DSEN extends Cond {
   onDialog(file) { if (file === this.file) this.set(1); }
 }
 
-export const CONDITIONS = { NONE, TIME, RTME, TRUE, TIMR, REGN, DEAD, DYIN, OBJP, ITEM, BLDG, SGHT, ISFG, WAYR, CKGR, UNTT, CVAR, QUES, PLYR, TECH, PLDE, DIPL, SQEN, DSEN };
+export const CONDITIONS = { NONE, TIME, RTME, TRUE, TIMR, REGN, DEAD, DYIN, OBJP, ITEM, BLDG, SGHT, ISFG, WAYR, CKGR, UNTT, CVAR, QUES, PLYR, TECH, PLDE, DIPL, SQEN, DSEN, GREG };
 
 // status of every condition type of triggers.md §4 in the remake (docs/CAMPAIGN_RUNTIME.md §11 prints this table)
 export const CONDITION_STATUS = {

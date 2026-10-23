@@ -362,7 +362,11 @@ by `engine/assets.js`; `compose.js` adds the attached parts the original scripts
 composites table (`pwexport/data/composites.json`, normalized into `gamedata.json` → `composites`):
 each part has a model (or level / epoch variants), the link it hangs on, its parent part, its animation and a
 condition (`always`, `ready`, `upgrade` (per-unit or player filter), `invent`, `buildup` / `unless` (which build-up is
-mounted)). Units rebuild their parts when the wanted set changes (level up, upgrade, epoch); buildings
+mounted)). A turret aims in its link's own frame (`compose.turnPart`: its rest direction is the link's +y, it turns
+about the link's z - a link the Workshop turned turns the turret with it); a turret with a `weapon_class` (the titan's
+ballistas, the Workshop's gunner turrets) is a gunner: `combat.gunnerUpdate` aims and fires it by itself with the
+weapons of that class (BuildUpBase.usl `SetWeaponClass` / `SetAdditionalWeapon`), at the unit's target or the nearest
+enemy in range. Units rebuild their parts when the wanted set changes (level up, upgrade, epoch); buildings
 (`Building.updateTurret`) the same for tower turrets, the Hu harbour crane and the floating harbour's turtles.
 Walk animations come from the model's walk set (`manifest.walk`, "defn" before "def").
 

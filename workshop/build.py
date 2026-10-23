@@ -10,6 +10,9 @@
     <out>/Data/<ModId>/UI/All_def.txt (+ UI/hud/cards/cards_<modid>.tga)   the icons
     <out>/Data/<ModId>/Locale/<lang>/Texts/Help/<file>.seml               the encyclopedia: names and tooltips
     <out>/Data/<ModId>/Texture/...                        textures the models use that the game does not have
+    <out>/Data/<ModId>/Scripts/Server/classes/<modid>/<modid>.usl + Scripts/Server/Server.ini
+                                                          the script classes of objects whose add-ons or rider the
+                                                          modder changed (addons.py), and the script list with them
 
 The game replaces files, it does not merge them: the tech tree, the class list, the archive list, the icon list and
 a help file the mod changes are whole copies of the configuration's with the mod's entries added (as MIRAGE ships
@@ -20,7 +23,7 @@ its own). docs/WORKSHOP.md.
 import os
 import re
 
-from . import ttree, gsfedit, dds
+from . import ttree, gsfedit, dds, addons
 from .gamedata import GameData, TRIBES, COMPANIONS
 from .project import Project
 
@@ -67,14 +70,21 @@ class Builder:
         tt = ttree.load(self.data.techtree_path())            # a fresh copy: it is changed
         self.tt = tt
         picks, classes, help_items, icons = [], [], [], []
+        self.plans, scripts = {}, []
         for o in self.p.objects:
             t = self.data.template(o['template'])
             if t['kind'] != o['kind']:
                 raise BuildError('%s: the template %s is a %s, not a %s' % (o['id'], t['id'], t['kind'], o['kind']))
+            plan = self.plan(o)
             if o['kind'] != 'decoration':
                 self.tech_tree(o, t)
             classes.extend(self.class_entries(o, t))
-            picks.append(self.pick(o, t))
+            picks.append(self.pick(o, t, plan.body_edit() if plan else None))
+            if plan:
+                for a, gfx in plan.copies:
+                    picks.append(self.addon_pick(a, gfx, plan.copy_edit(a)))
+                if plan.script:
+                    scripts.append(plan.script)
             if o['kind'] != 'decoration':
                 help_items.append((o, t))
                 icons.append((o, t))
@@ -83,11 +93,84 @@ class Builder:
         if any(o['kind'] != 'decoration' for o in self.p.objects):
             ttree.save(tt, self.path('Scripts/Server/settings/Techtree/_TechTree.ttree'))
         self.write_classes(classes)
+        if scripts:
+            self.write_scripts(scripts)
         self.write_help(help_items)
         self.write_icons(icons)
         self.write_info()
         return {'files': [os.path.relpath(f, self.out).replace(os.sep, '/') for f in self.files], 'warnings': self.warnings,
                 'objects': self.done, 'mod': self.mod, 'folder': self.root}
+
+    # ------------------------------------------------------------------ add-ons (addons.py)
+    def plan(self, o):
+        """the add-ons of an object (None when the modder left the template's and its rider alone)"""
+        if o.get('addons') is None and not o.get('rider'):
+            return None
+        setup = addons.template_setup(self.data, o['template'])
+        problems = addons.check(o, setup)
+        if problems:
+            raise BuildError('\n'.join(problems))
+        try:
+            plan = addons.Plan(self.data, self.p, o, setup, lambda m, o=o: self.model_links(o, m))
+        except (addons.AddonError, KeyError) as e:
+            raise BuildError(str(e).strip("'"))
+        self.plans[o['id']] = plan
+        self.warnings.extend(plan.warnings)
+        return plan
+
+    def model_source(self, m, o=None):
+        """(archive path, model name) of a model of the project (an object's or an add-on's)"""
+        m = m or {}
+        if m.get('source') == 'upload':
+            return self.p.file(m.get('file')), m.get('name')
+        name = m.get('name') or (self.data.template(o['template'])['gfx'] if o else None)
+        path, name = self.data.find_model(name or '')
+        if not path:
+            raise BuildError('the game has no model %s' % m.get('name'))
+        return path, name
+
+    def model_links(self, o, m):
+        """the link names of a model (None: the object's own)"""
+        path, name = self.model_source(o.get('model') if m is None else m, o if m is None else None)
+        cache = self.__dict__.setdefault('_links', {})
+        if path not in cache:
+            cache[path] = {x['name'].lower(): x['links'] for x in gsfedit.describe(path)}
+        return list(cache[path].get((name or '').lower(), []))
+
+    def addon_pick(self, a, gfx, edit):
+        path, name = self.model_source(a.get('model'))
+        if not path or not os.path.isfile(path):
+            raise BuildError('add-on %s: the model file is missing' % a.get('id'))
+        return gsfedit.Pick(path, name, gfx, {}, edit=edit)
+
+    def addon_tech_tree(self, o, node, own_filter):
+        plan = self.plans.get(o['id'])
+        if not plan:
+            return
+        T, tribe = self.tt, plan.tribe
+        if plan.captainclass:
+            node.set('captainclass', plan.captainclass)
+            for n, _ in (own_filter.find_all(lambda n, p: n.key == 'captainclass' and n.value is not None) if own_filter else []):
+                n.value = plan.captainclass
+        weapons = T.get('Root/StartTT/Objects/%s/Weapons' % tribe)
+        for w in plan.weapons:
+            segs = w['from'].strip('/').split('/')          # Objects/<tribe>/Weapons/<key>
+            src = T.get('Root/StartTT/' + '/'.join(segs))
+            if src is None:
+                raise BuildError('%s: the weapon %s is not in the tech tree' % (o['id'], w['from']))
+            nw = src.clone()
+            nw.key = w['key']
+            if weapons.get(nw.key):
+                weapons.remove(weapons.get(nw.key))
+            if nw.get('Users') is not None:
+                nw.get('Users').children = [ttree.Node('0', w['user'])]
+            else:
+                nw.add(ttree.Node('Users', None, [ttree.Node('0', w['user'])]))
+            if nw.get('level') is not None:
+                nw.set('level', '1')                         # (a gunner shoots from the unit's first level)
+            for k, v in w['values'].items():
+                nw.set(k, _num(v))
+            weapons.add(nw)
 
     # ------------------------------------------------------------------ the tech tree
     def tech_tree(self, o, t):
@@ -160,6 +243,7 @@ class Builder:
                         (n.key == 'hitpoints' and 'LevelBonusData' in p) or (n.key == 'value' and p.endswith('_hitpoints/value')))):
                     n.value = _num(float(n.value) * k)
             ups.add(nu, after=ups.get(tid))
+        self.addon_tech_tree(o, node, ups.get(nid) if ups else None)
         # what the filters change on the template and its weapons (level bonuses and defensive mode in its own filter,
         # the smithy's weapon and armour upgrades ...) changes the new object and its weapon copies too
         ren = dict(wren, **{tid: nid})
@@ -270,6 +354,13 @@ class Builder:
         n = src['node'].clone()
         n.key = o['id']
         n.set('classattribs/gfx', o['id'])
+        plan = self.plans.get(o['id'])
+        if plan and plan.script:
+            n.set('classattribs/classname', plan.script_class)
+        for name, script, gfx in (plan.classes if plan else []):
+            out.append(ttree.Node(name, None, [
+                ttree.Node('classattribs', None, [ttree.Node('classname', script), ttree.Node('gfx', gfx)]),
+                ttree.Node('objectattribs', None, [ttree.Node('tribe', plan.tribe)])]))
         hp = (o.get('stats') or {}).get('hitpoints')
         if hp not in (None, '') and n.get('objectattribs'):
             for k in ('hitpoints', 'maxhitpoints'):
@@ -298,8 +389,26 @@ class Builder:
             r.add(ttree.Node(self.mod, self.low + '.txt'))
         ttree.save(idx, self.path('Scripts/Server/classes/classes.txt'))
 
+    def write_scripts(self, scripts):
+        """the mod's script classes and the configuration's script list with them (the game compiles what
+        Scripts/Server/Server.ini lists, a mod's file replaces the list: MIRAGE ships its own)"""
+        rel = 'classes/%s/%s.usl' % (self.low, self.low)
+        with open(self.path('Scripts/Server/' + rel), 'w', encoding='latin-1', newline='') as f:
+            f.write('// ParaWorld Workshop: script classes of the mod %s\r\n\r\n' % self.mod + '\r\n'.join(scripts))
+        src = self.data.file('Scripts/Server/Server.ini')
+        if not src:
+            raise BuildError('the game configuration has no Scripts/Server/Server.ini')
+        with open(src, encoding='latin-1') as f:
+            lines = f.read().replace('\r\n', '\n').split('\n')
+        while lines and not lines[-1].strip():
+            lines.pop()
+        if rel.lower() not in [l.strip().lower() for l in lines]:
+            lines += ['', rel]
+        with open(self.path('Scripts/Server/Server.ini'), 'w', encoding='latin-1', newline='') as f:
+            f.write('\r\n'.join(lines) + '\r\n')
+
     # ------------------------------------------------------------------ models and textures
-    def pick(self, o, t):
+    def pick(self, o, t, edit=None):
         m = o.get('model') or {}
         if m.get('source') == 'upload':
             path = self.p.file(m['file'])
@@ -311,7 +420,7 @@ class Builder:
                 raise BuildError('%s: the game has no model %s' % (o['id'], gfx))
         if not path or not os.path.isfile(path):
             raise BuildError('%s: the model file is missing (%s)' % (o['id'], m.get('file')))
-        return gsfedit.Pick(path, name, o['id'], m.get('anims') or {})
+        return gsfedit.Pick(path, name, o['id'], m.get('anims') or {}, edit=edit)
 
     def write_archive(self, picks):
         arch = gsfedit.assemble(self.low, picks)

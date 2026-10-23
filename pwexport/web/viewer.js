@@ -64,13 +64,17 @@ export class Viewer {
     this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
   }
   clear() {
+    if (this.tc) { this.tc.detach(); this.tcPart = null; }
     if (this.mapGroup) { this.mapGroup.removeFromParent(); this.mapGroup = null; }
     for (const p of this.parts) { p.mixer && p.mixer.stopAllAction(); p.obj.removeFromParent(); }
     this.parts = [];
     if (this.skel) { this.skel.removeFromParent(); this.skel = null; }
     this.clearOverlays();
   }
-  // parts: [{url, parent (index), link, offset, anim, name}] -> loaded and attached; part 0 is the main model
+  // parts: [{url, parent (index), link, offset, rot, scale, anim, name}] -> loaded and attached; part 0 is the main
+  // model. A part sits in its link's frame (GSF axes): offset in metres (MIRAGE's AddObjCustomized), rot in degrees
+  // (XYZ), scale; no link (or one the parent lacks): the parent's origin. A part's offset and scale are its own - a
+  // scaled parent does not scale what hangs on it (the Workshop's add-ons: workshop/addons.py)
   async show(parts, keepCamera = false) {
     const loaded = await Promise.all(parts.map((p) => loadGltf(p.url)));
     this.clear();
@@ -83,18 +87,16 @@ export class Viewer {
       else {
         const host = this.parts[spec.parent || 0];
         let link = null;
-        if (host) host.obj.traverse((o) => { if (!link && o.userData.nodeName === 'link_' + spec.link) link = o; });
+        if (host && spec.link) host.obj.traverse((o) => { if (!link && o.userData.nodeName === 'link_' + spec.link) link = o; });
         if (rootNode) { rootNode.rotation.set(0, 0, 0); rootNode.scale.set(1, 1, 1); }   // link frames are the GSF Z-up frame already (mirror included)
         if (rootNode && rootNode.userData.restSrc) rootNode.userData.restSrc.q.identity();
-        if (rootNode && spec.offset) {                         // metres in the link's frame (GSF axes): MIRAGE's AddObjCustomized
-          rootNode.position.set(spec.offset[0], spec.offset[1], spec.offset[2]);
-          if (rootNode.userData.restSrc) rootNode.userData.restSrc.p.copy(rootNode.position);
-        }   // ... also for 'rest pose'
-        (link || (host ? host.obj : this.root)).add(obj);
+        // (no link: the parent's own frame - its root node holds the GSF axes)
+        (link || (host ? (host.obj.children[0] || host.obj) : this.root)).add(obj);
       }
       obj.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false; } });
       const info = P.describe(obj, fourcc);
       const part = { spec, gltf: g, obj, fourcc, info, state: spec.state || P.defaultState(info), mixer: new THREE.AnimationMixer(obj), action: null, clips: g.animations };
+      if (i > 0) { this.parts.push(part); this.placePart(i, spec.offset, spec.rot, spec.scale); this.parts.pop(); }
       part.sprites = makeSprites(obj, rootNode);
       this.parts.push(part);
       this.applyState(i);
@@ -106,6 +108,68 @@ export class Viewer {
     this.buildOverlays();
     if (this.skelOn) this.bones(true);
     return this.parts;
+  }
+  // the total scale of the parts part i hangs on
+  parentScale(i) {
+    let k = 1, p = this.parts[i];
+    while (p && p.spec && p.spec.parent !== undefined && this.parts[p.spec.parent] && this.parts[p.spec.parent] !== p) {
+      p = this.parts[p.spec.parent];
+      if (p === this.parts[0]) break;
+      k *= p.scale || 1;
+    }
+    return k;
+  }
+  // put part i (> 0) at offset / rot (degrees) / scale in its link's frame
+  placePart(i, offset, rot, scale) {
+    const p = this.parts[i], n = p && p.obj.children[0];
+    if (!n || i === 0) return;
+    const k = this.parentScale(i), s = +scale || 1;
+    p.scale = s;
+    const o = offset || [0, 0, 0], r = rot || [0, 0, 0], d = Math.PI / 180;
+    n.position.set(o[0] / k, o[1] / k, o[2] / k);
+    n.rotation.set(r[0] * d, r[1] * d, r[2] * d, 'XYZ');
+    n.scale.setScalar(s / k);
+    if (n.userData.restSrc) { n.userData.restSrc.p.copy(n.position); n.userData.restSrc.q.copy(n.quaternion); n.userData.restSrc.s.copy(n.scale); }
+    // what hangs on it keeps its own size
+    this.parts.forEach((c, j) => { if (j > i && c.spec && c.spec.parent === i) this.placePart(j, c.spec.offset, c.spec.rot, c.spec.scale); });
+  }
+  // offset / rot / scale of part i as placePart takes them (after the gizmo moved it)
+  partPlacement(i) {
+    const p = this.parts[i], n = p && p.obj.children[0];
+    if (!n) return null;
+    const k = this.parentScale(i), d = 180 / Math.PI;
+    const e = new THREE.Euler().setFromQuaternion(n.quaternion, 'XYZ');
+    const r3 = (v) => Math.round(v * 1000) / 1000;
+    return { offset: [r3(n.position.x * k), r3(n.position.y * k), r3(n.position.z * k)], rot: [r3(e.x * d), r3(e.y * d), r3(e.z * d)],
+      scale: r3(((n.scale.x + n.scale.y + n.scale.z) / 3) * k) };
+  }
+  // the move / turn / size gizmo on part i (null: off); onChange({offset, rot, scale}) while it is dragged
+  async gizmo(i, mode = 'translate', onChange = null) {
+    if (!this.tc) {
+      const { TransformControls } = await import('three/addons/controls/TransformControls.js');
+      this.tc = new TransformControls(this.camera, this.renderer.domElement);
+      this.tc.setSpace('local');
+      this.tc.setSize(0.8);
+      this.tc.addEventListener('dragging-changed', (e) => { this.controls.enabled = !e.value; });
+      this.tc.addEventListener('objectChange', () => {
+        if (this.tcPart == null) return;
+        const n = this.parts[this.tcPart] && this.parts[this.tcPart].obj.children[0];
+        if (n && this.tc.getMode() === 'scale') { const m = (n.scale.x + n.scale.y + n.scale.z) / 3; n.scale.setScalar(m); }   // (uniform)
+        const v = this.partPlacement(this.tcPart);
+        const sp = this.parts[this.tcPart].spec;
+        if (v) { sp.offset = v.offset; sp.rot = v.rot; sp.scale = v.scale; this.parts[this.tcPart].scale = v.scale; }
+        this.parts.forEach((c, j) => { if (j > this.tcPart && c.spec && c.spec.parent === this.tcPart) this.placePart(j, c.spec.offset, c.spec.rot, c.spec.scale); });
+        if (this.tcChange && v) this.tcChange(v);
+      });
+      this.scene.add(this.tc.getHelper ? this.tc.getHelper() : this.tc);
+    }
+    this.tcChange = onChange;
+    const p = i == null ? null : this.parts[i];
+    const n = p && p.obj.children[0];
+    if (!n || i === 0) { this.tc.detach(); this.tcPart = null; return; }
+    this.tcPart = i;
+    this.tc.setMode(mode);
+    this.tc.attach(n);
   }
   // map viewer: no grid / shadow ground, sun without shadows (a whole map), sky colour
   mapMode(on) {
