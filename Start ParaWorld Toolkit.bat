@@ -26,5 +26,8 @@ if errorlevel 1 (
     exit /b 1
   )
 )
+rem the toolkit exits with code 3 after an update: it is started again (toolkit/updater.py)
+:run
 %PY% -m toolkit %*
+if errorlevel 3 if not errorlevel 4 goto run
 if errorlevel 1 pause

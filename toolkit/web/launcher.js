@@ -31,7 +31,7 @@ const T = {
     loadingExp: (s, p) => `Reading the game files… ${p}% ${s || ''}`,
     remake: 'ParaWorld Remake',
     remakeText: 'The game rebuilt for the browser, with the models, sounds, maps and rules of your installation.',
-    remakeList: ['The campaign\'s 17 missions, playable with any tribe and with a mod', 'Skirmish against the computer on the original maps or random maps', 'Containment (1964): a new SEAS campaign of eleven missions (needs MIRAGE)'],
+    remakeList: ['The campaign\'s 17 missions, playable with any tribe and with a mod', 'Skirmish against the computer on the original maps or random maps', 'Containment (1964): a new SEAS campaign of sixteen missions (needs MIRAGE)', 'Scenarios: five standalone missions, played as any tribe'],
     play: 'Play', prepare: 'Prepare the game data', rebuild: 'Rebuild game data',
     ready: 'Ready', notReady: 'Game data not prepared yet', building: 'Preparing…', failed: 'Preparing failed',
     reasons: { 'not built': 'The first start converts the models, textures and rules of your installation (about 5–15 minutes, once).',
@@ -51,6 +51,21 @@ const T = {
     workshop: 'Workshop',
     workshopText: 'Make new units, buildings, wild animals and decorations - for the game and for the remake.',
     workshopList: ['A model from the Blender add-on, or one of the game\'s to tweak', 'A step-by-step creator: behaviour, animations, numbers, texts, icon', 'Installs as a mod for ParaWorld; the remake plays it too'],
+    // updates (toolkit/updater.py)
+    upTitle: (n) => `A new version of the toolkit is available (${n} change${n === 1 ? '' : 's'}).`,
+    upMore: (n) => `…and ${n} more`,
+    upNow: 'Update now', upLater: 'Later', upSkip: 'Skip this version',
+    upLocal: (n, f) => `This copy has local changes to ${n} file${n === 1 ? '' : 's'} the update changes (${f}). Commit or undo them with git, then update.`,
+    upDiverged: 'This copy has commits of its own that are not on GitHub. Update it with git (pull / merge).',
+    upNoGit: 'This copy is a git clone, but git is not installed - install git (git-scm.com) or update it by hand.',
+    upBusy: 'The game data is being prepared or moved - update when that is finished.',
+    upWorking: 'Updating… keep the toolkit\'s window open.',
+    upRestarting: 'Updated. The toolkit restarts - the page reloads by itself.',
+    upSlow: 'If it doesn\'t come back, close the toolkit\'s window and start it again.',
+    upManual: 'Updated. Close the toolkit\'s window and start it again (its start file changed).',
+    upFailed: 'The update failed:',
+    upFooter: 'Updates:', upCheck: 'Check now', upAuto: 'on start',
+    upStates: { checking: 'checking…', current: 'up to date', available: 'new version available', error: 'could not check', idle: '', updating: 'updating…', updated: 'updated' },
   },
   de: {
     title: 'ParaWorld Toolkit',
@@ -68,7 +83,7 @@ const T = {
     loadingExp: (s, p) => `Spieldateien werden gelesen… ${p}% ${s || ''}`,
     remake: 'ParaWorld Remake',
     remakeText: 'Das Spiel für den Browser nachgebaut – mit den Modellen, Klängen, Karten und Regeln deiner Installation.',
-    remakeList: ['Die 17 Missionen der Kampagne, mit jedem Volk und mit einer Mod spielbar', 'Gefechte gegen den Computer auf den Originalkarten oder Zufallskarten', 'Containment (1964): eine neue SEAS-Kampagne mit elf Missionen (braucht MIRAGE)'],
+    remakeList: ['Die 17 Missionen der Kampagne, mit jedem Volk und mit einer Mod spielbar', 'Gefechte gegen den Computer auf den Originalkarten oder Zufallskarten', 'Containment (1964): eine neue SEAS-Kampagne mit sechzehn Missionen (braucht MIRAGE)', 'Szenarien: fünf eigenständige Missionen, mit jedem Volk spielbar'],
     play: 'Spielen', prepare: 'Spieldaten vorbereiten', rebuild: 'Spieldaten neu erstellen',
     ready: 'Bereit', notReady: 'Spieldaten noch nicht vorbereitet', building: 'Wird vorbereitet…', failed: 'Vorbereitung fehlgeschlagen',
     reasons: { 'not built': 'Beim ersten Start werden Modelle, Texturen und Regeln deiner Installation umgewandelt (etwa 5–15 Minuten, einmalig).',
@@ -88,6 +103,20 @@ const T = {
     workshop: 'Werkstatt',
     workshopText: 'Neue Einheiten, Gebäude, Wildtiere und Dekorationen bauen – für das Spiel und das Remake.',
     workshopList: ['Ein Modell aus dem Blender-Add-on oder eines aus dem Spiel zum Anpassen', 'Ein Assistent Schritt für Schritt: Verhalten, Animationen, Werte, Texte, Symbol', 'Wird als Mod in ParaWorld installiert; das Remake spielt sie auch'],
+    upTitle: (n) => `Eine neue Version des Toolkits ist verfügbar (${n} Änderung${n === 1 ? '' : 'en'}).`,
+    upMore: (n) => `…und ${n} weitere`,
+    upNow: 'Jetzt aktualisieren', upLater: 'Später', upSkip: 'Diese Version überspringen',
+    upLocal: (n, f) => `Diese Kopie hat lokale Änderungen an ${n} Datei${n === 1 ? '' : 'en'}, die das Update ändert (${f}). Mit git committen oder verwerfen, dann aktualisieren.`,
+    upDiverged: 'Diese Kopie hat eigene Commits, die es auf GitHub nicht gibt. Bitte mit git aktualisieren (pull / merge).',
+    upNoGit: 'Diese Kopie ist ein git-Klon, aber git ist nicht installiert – git installieren (git-scm.com) oder von Hand aktualisieren.',
+    upBusy: 'Die Spieldaten werden gerade vorbereitet oder verschoben – danach aktualisieren.',
+    upWorking: 'Wird aktualisiert… das Fenster des Toolkits offen lassen.',
+    upRestarting: 'Aktualisiert. Das Toolkit startet neu – die Seite lädt von selbst neu.',
+    upSlow: 'Wenn es nicht wiederkommt: das Fenster des Toolkits schließen und es neu starten.',
+    upManual: 'Aktualisiert. Das Fenster des Toolkits schließen und es neu starten (seine Startdatei hat sich geändert).',
+    upFailed: 'Das Update ist fehlgeschlagen:',
+    upFooter: 'Updates:', upCheck: 'Jetzt prüfen', upAuto: 'beim Start',
+    upStates: { checking: 'wird geprüft…', current: 'aktuell', available: 'neue Version verfügbar', error: 'Prüfung nicht möglich', idle: '', updating: 'wird aktualisiert…', updated: 'aktualisiert' },
   },
 };
 let L = T.en;
@@ -105,6 +134,7 @@ async function refresh() {
   document.title = L.title; $('#t-title').textContent = L.title;
   if (!ST.configured || editing) setup(); else home();
   footer();
+  if (!UP) watchUpdate(); else renderUpdate();
 }
 
 function setup(err) {
@@ -200,7 +230,74 @@ function footer() {
   const err = dataErr || D.error;
   if (err) data.append(' ', el('span', { class: 'status bad', text: L.dataFailed + ' ' + err }));
   f.append(data);
-  f.append(el('span', { text: `v${ST.toolkit || ''}` }));
+  f.append(el('span', { text: `v${ST.toolkit || ''}` + (UP && UP.current ? ` (${UP.current})` : '') }));
+  // updates: the last check, "check now", look on every start
+  if (UP) {
+    const st = UP.state === 'error' ? el('span', { class: 'status bad', title: UP.error || '', text: L.upStates.error }) : el('span', { text: L.upStates[UP.state] || '' });
+    f.append(el('span', { id: 'upfoot' }, L.upFooter + ' ', st, ' ',
+      el('button', { disabled: UP.state === 'checking' || UP.state === 'updating', onclick: async () => { UP = await api.post('/api/toolkit/update', { action: 'check' }); laterHidden = false; watchUpdate(); } }, L.upCheck), ' ',
+      el('label', {}, el('input', { type: 'checkbox', checked: UP.auto, onchange: (e) => api.post('/api/toolkit/update', { action: 'auto', on: e.target.checked }) }), ' ' + L.upAuto)));
+  }
+}
+
+// ------------------------------------------------------------------ updates (toolkit/updater.py)
+// The toolkit looks for a newer version on GitHub when it starts; the banner over the cards asks whether to install
+// it. "Later" hides it until the next start, "Skip this version" until a newer one comes out.
+let UP = null;
+let laterHidden = false;
+try { laterHidden = sessionStorage.getItem('pwtk.later') === 'y'; } catch (e) { /* no storage */ }
+let upTimer = null;
+async function watchUpdate() {
+  clearTimeout(upTimer);
+  try { UP = await api.get('/api/toolkit/update'); } catch (e) {
+    // (gone while updating: it is restarting - the poll can miss the short "updated" state)
+    if (UP && (UP.state === 'updating' || UP.state === 'updated')) { UP = { ...UP, state: 'updated', restart: UP.restart || 'auto' }; renderUpdate(); waitRestart(); }
+    return;
+  }
+  renderUpdate();
+  footer();
+  if (UP.state === 'checking' || UP.state === 'updating') upTimer = setTimeout(watchUpdate, 1500);
+  if (UP.state === 'updated' && UP.restart === 'auto') waitRestart();
+}
+function renderUpdate() {
+  const box = $('#update');
+  box.innerHTML = '';
+  if (!UP || !ST) return;
+  const msg = (cls, ...kids) => box.append(el('div', { class: 'update ' + cls }, ...kids));
+  if (UP.state === 'updating') return msg('busy', el('b', { text: L.upWorking }));
+  if (UP.state === 'updated') return msg('ok', el('b', { text: UP.restart === 'auto' ? L.upRestarting : L.upManual }), UP.restart === 'auto' ? el('div', { class: 'note slow', text: '' }) : null);
+  if (UP.state === 'error' && (UP.applyError || UP.phase === 'apply')) return msg('bad', el('b', { text: L.upFailed + ' ' + (UP.applyError || UP.error) }));
+  if (UP.state !== 'available' || UP.skipped || laterHidden) return;
+  const cs = UP.commits || [];
+  const list = el('ul', {}, cs.slice(0, 8).map((c) => el('li', { text: c.title })), cs.length > 8 || UP.behind > cs.length ? el('li', { class: 'more', text: L.upMore(Math.max(cs.length, UP.behind) - Math.min(8, cs.length)) }) : null);
+  const why = UP.blocked === 'local' ? L.upLocal(UP.nfiles || 0, (UP.files || []).slice(0, 4).join(', ') + ((UP.nfiles || 0) > 4 ? ', …' : ''))
+    : UP.blocked === 'diverged' ? L.upDiverged : UP.blocked === 'nogit' ? L.upNoGit : '';
+  const act = el('div', { class: 'actions' });
+  if (!UP.blocked) {
+    act.append(el('button', { class: 'primary', id: 'update-now', onclick: async () => {
+      const r = await api.post('/api/toolkit/update', { action: 'apply' });
+      if (!r.ok) { UP = { ...r, state: 'error', applyError: r.error === 'busy' ? L.upBusy : r.error }; renderUpdate(); return; }
+      watchUpdate();
+    } }, L.upNow));
+  }
+  act.append(el('button', { onclick: () => { laterHidden = true; try { sessionStorage.setItem('pwtk.later', 'y'); } catch (e) { /* no storage */ } renderUpdate(); } }, L.upLater),
+    el('button', { onclick: async () => { UP = await api.post('/api/toolkit/update', { action: 'skip' }); renderUpdate(); } }, L.upSkip));
+  msg('available', el('b', { text: L.upTitle(UP.behind || cs.length) }), list, why ? el('p', { class: 'err', text: why }) : null, act);
+}
+// after an update the toolkit restarts (its start file runs it again): the page reloads when the new one answers
+let restarting = false;
+async function waitRestart() {
+  if (restarting) return;
+  restarting = true;
+  const was = ST && ST.started, t0 = Date.now();
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 1500));
+    if (Date.now() - t0 > 25000) { const s = $('#update .slow'); if (s) s.textContent = L.upSlow; }
+    try {
+      const st = await (await fetch('/api/toolkit/state', { cache: 'no-store' })).json();
+      if (st.started && st.started !== was) { try { sessionStorage.removeItem('pwtk.later'); } catch (e) { /* no storage */ } location.reload(); return; }
+    } catch (e) { /* the toolkit is restarting */ }
+  }
 }
 
 // "Toolkit data: Change": a folder from the native dialog, then the data moves there (toolkit/datadir.py)

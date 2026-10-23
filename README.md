@@ -51,6 +51,16 @@ ParaWorld is on; the settings stay where they are. The environment variable `PWT
 `PWTOOLKIT_HOME` moves everything (settings included).
 `python -m toolkit --port 8420 --no-browser` starts the server without opening a browser.
 
+### Updates
+
+On every start the toolkit looks on GitHub for a newer version; when there is one, the launcher shows what changed
+and asks: **Update now** (the toolkit updates itself and restarts - the page reloads by itself), **Later** (asked
+again next start) or **Skip this version** (asked again when a newer one comes out). The footer has **Check now** and
+the switch **on start** to turn the check off. A copy made with `git clone` is updated with `git pull` (git must be
+installed; when you have changed files the update changes, or made commits of your own, it says so and leaves
+updating to you); a *Download ZIP* copy downloads the new ZIP and unpacks it over the folder (your settings and game
+data live elsewhere and are not touched). Details: `toolkit/updater.py`; test: `python tools/test_updater.py`.
+
 ## Model & Map Exporter
 
 ![Map viewer](docs/screenshots/12_map_viewer.png)
@@ -220,7 +230,11 @@ tools/          development helpers: headless UI test, Kaitai description checke
 * **Remake game data by hand**: `python -m remake.pipeline <ParaWorld folder> <output folder> [steps]`.
 * **Tests**: `python remake/devserver.py --game <ParaWorld folder>` serves the remake alone on port 8411;
   `remake/tests/regress.sh` runs the game tests (headless Chromium via Playwright), `tools/ui_test.py` the toolkit's
-  UI, `tools/ksy_check.py` checks the Kaitai descriptions against map files.
+  UI, `tools/ksy_check.py` checks the Kaitai descriptions against map files, `tools/test_updater.py` the updater.
+* **Updates** come from the repository's `main` branch (`toolkit/updater.py`: a clone's own `origin`, else `REPO`;
+  `PWTOOLKIT_REPO=owner/name` and `PWTOOLKIT_BRANCH` override it). The ZIP way uses GitHub's public API, so it needs
+  a public repository; git uses its own credentials. Bumping `VERSION` in `toolkit/__init__.py` is optional (the
+  check compares commits) but shows users which version they run.
 * The remake is object-oriented: entity classes (`Unit`, `Building`, `ResNode`, `Projectile`) with their own state,
   and the rules as *systems* (`remake/src/game/systems/*.js`) mixed into the `World`. Most numbers come from the
   original tech tree; behaviour lives in small tables (moves, composites, rules) that are easy to edit.

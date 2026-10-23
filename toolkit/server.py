@@ -12,6 +12,9 @@ API under /api/) and the remake (under /remake/, see toolkit/remake.py). Listens
     GET  /exporter/                 the Model & Map Exporter (pwexport/web; its API: pwexport/app.py)
     GET  /remake/...                the remake (official game)
     GET  /remake/mod/<id>/...       the remake with a mod configuration's data (toolkit/remake.py)
+    GET  /api/toolkit/update        is there a newer version on GitHub? (toolkit/updater.py)
+    POST /api/toolkit/update        {"action": "check" | "apply" | "skip" | "auto", "on": bool}: look again, install it
+                                    (the toolkit restarts), skip that version, look on every start or not
     GET  /workshop/                 the Workshop: new units, buildings, animals and decorations for the game and the
                                     remake (workshop/, its API under /api/workshop/: workshop/api.py)
 """
@@ -34,6 +37,8 @@ from pwexport import app as exporter        # noqa: E402
 from . import VERSION                        # noqa: E402
 from .datadir import DataFolder              # noqa: E402
 from .remake import Remake                   # noqa: E402
+from .updater import RESTART_CODE, Updater, restart_note, take_restart_note   # noqa: E402
+from pwexport.config import home as toolkit_home                               # noqa: E402
 try:                                         # the Workshop (workshop/): the toolkit runs without it if it cannot load
     from workshop.api import Workshop        # noqa: E402
 except Exception as _e:                      # noqa: BLE001
@@ -43,7 +48,7 @@ except Exception as _e:                      # noqa: BLE001
 WEB = os.path.join(HERE, 'web')
 
 
-def make_handler(app, remake, data, workshop=None):
+def make_handler(app, remake, data, workshop=None, updater=None):
     Base = exporter.make_handler(app)
 
     class H(Base):
@@ -66,6 +71,8 @@ def make_handler(app, remake, data, workshop=None):
                     return self.send_json(self.toolkit_state())
                 if p == '/api/toolkit/data':
                     return self.send_json(data.state(size=bool(parse_qs(u.query).get('size'))))
+                if p == '/api/toolkit/update' and updater:
+                    return self.send_json(updater.state())
                 if p == '/api/toolkit/remake/configs':
                     return self.send_json(remake.configs())
                 if p == '/api/toolkit/remake/state':
@@ -107,6 +114,22 @@ def make_handler(app, remake, data, workshop=None):
                     return self.send_json({'ok': remake.build(force=bool(b.get('force')), mod=b.get('mod') or '')})
                 except Exception as e:                   # noqa: BLE001
                     return self.send_json({'ok': False, 'error': str(e)}, 500)
+            if p == '/api/toolkit/update' and updater:
+                try:
+                    b = self.body()
+                    a = b.get('action')
+                    if a == 'check':
+                        updater.check()
+                    elif a == 'apply':
+                        ok, why = updater.apply()
+                        return self.send_json({'ok': ok, 'error': why, **updater.state()})
+                    elif a == 'skip':
+                        updater.skip()
+                    elif a == 'auto':
+                        updater.set_auto(b.get('on'))
+                    return self.send_json({'ok': True, **updater.state()})
+                except Exception as e:                   # noqa: BLE001
+                    return self.send_json({'ok': False, 'error': str(e)}, 500)
             if p == '/api/toolkit/data':
                 try:
                     ok, why = data.move(self.body().get('path'))
@@ -123,11 +146,15 @@ def make_handler(app, remake, data, workshop=None):
         def toolkit_state(self):
             st = app.state()
             st['toolkit'] = VERSION
+            st['started'] = STARTED                      # (the launcher sees a restart by it)
             st['remake'] = remake.state() if app.install else {'ready': False, 'reason': 'no installation'}
             st['install_path'] = app.install.root if app.install else app.settings.get('install')
             st['data'] = data.state()
             return st
     return H
+
+
+STARTED = time.time()
 
 
 def serve(port=0, open_browser=True):
@@ -136,10 +163,18 @@ def serve(port=0, open_browser=True):
     remake = Remake(app)
     data = DataFolder(app, remake)
     remake.paused = data.busy
+    # a restart after an update: the port the launcher is open on, and no second browser tab
+    note = take_restart_note(toolkit_home())
+    if note and not port:
+        port, open_browser = note.get('port') or 0, False
+    updater = Updater(ROOT, app.settings, toolkit_home())
+    updater.busy = lambda: remake.building() or data.busy()
+    restart = threading.Event()
+    updater.on_restart = restart.set
     srv = None
-    for p in ([port] if port else list(range(8420, 8440)) + [0]):
+    for p in ([port] if port else []) + list(range(8420, 8440)) + [0]:
         try:
-            srv = ThreadingHTTPServer(('127.0.0.1', p), make_handler(app, remake, data, Workshop(app, remake) if Workshop else None))
+            srv = ThreadingHTTPServer(('127.0.0.1', p), make_handler(app, remake, data, Workshop(app, remake) if Workshop else None, updater))
             break
         except OSError:
             continue
@@ -147,10 +182,17 @@ def serve(port=0, open_browser=True):
     print('ParaWorld Toolkit %s' % VERSION)
     print('Running at %s  (close this window to quit)' % url)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
+    updater.check_on_start()
     if open_browser:
         webbrowser.open(url)
     try:
-        while True:
-            time.sleep(3600)
+        while not restart.wait(1.0):
+            pass
     except KeyboardInterrupt:
-        pass
+        return 0
+    # updated: the start file runs the toolkit again (RESTART_CODE), on this port
+    restart_note(toolkit_home(), srv.server_address[1])
+    srv.shutdown()
+    srv.server_close()
+    print('Restarting the toolkit...')
+    return RESTART_CODE
