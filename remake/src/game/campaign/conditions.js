@@ -470,7 +470,12 @@ class DIPL extends Cond {
 // enabling the trigger resets it
 class SQEN extends Cond {
   init() { this.file = filePart(this.p.sequence_name); this.E.forever('sequence', this); }
-  onEnabled() { this.set(0); }
+  // CF CConditionSequenceEnd: enabling resets the state - but the original pushes the end of a sequence through its
+  // subscriber list while the triggers it fires run, and enabling re-subscribes a condition at the end of that list:
+  // a condition enabled by a trigger that this very end fired still gets the push. Mission 16 depends on it: the
+  // end of sc_7052 fires "01_L16MQ03_vis", which enables "01_activate_skorpion" (SQEN sc_7052 -> JumpOffWall); the
+  // Scorpion never woke (the user's report). So: true when enabled while that end is being handled.
+  onEnabled() { const s = this.E.seqEnd; this.set(!!s && s.file === this.file && s.round === (this.E.flushRound || 0)); }
   onSequence(file) { this.set(file === this.file); }
 }
 // CF:2382-2449: 1 when the dialogue scene has ended, for the rest of the level

@@ -247,8 +247,10 @@ export function loadModel(name, opts = {}) {
           let h = helperPart(o.userData.attr, fourcc, [].concat(o.material).some((m) => m.userData && m.userData.glow));
           // flag-less low-poly hulls (whole-object pick/collision volumes)
           if (!h && !(o.userData.attr >>> 5) && !o.isSkinnedMesh && o.geometry.attributes.position.count <= 24) {
-            const bb = new THREE.Box3().setFromObject(o);
-            if (Math.max(bb.max.x - bb.min.x, bb.max.y - bb.min.y, bb.max.z - bb.min.z) > 8) h = 'pick';
+            const bb = new THREE.Box3().setFromObject(o), dx = bb.max.x - bb.min.x, dy = bb.max.y - bb.min.y, dz = bb.max.z - bb.min.z;
+            // (a volume: a flat one is a surface - the water of the water sanctuary's pools is a quad of a few
+            // vertices with only the LOD bits; dropped as a "hull", its basins stood dry under the lily pads)
+            if (Math.max(dx, dy, dz) > 8 && Math.min(dx, dy, dz) > 0.5) h = 'pick';
           }
           if (h === 'pick') pick.expandByObject(o);
           if (h) fol.push(o);

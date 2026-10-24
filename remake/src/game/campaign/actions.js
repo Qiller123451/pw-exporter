@@ -332,6 +332,10 @@ export const ACTIONS = {
     for (const rec of objs(E, p, t)) {
       E.C.setOwner(rec, slot);
       const e = rec.entity, W = E.W;
+      // what the player is given can be selected: mission 7 gives the player Taslow's two unselectable Tesla towers
+      // early (Gd03) and makes them selectable only after sequence 2567 (Id03), so they stood there unusable for most
+      // of the mission (the user's report). Hit-ability stays as the mission set it.
+      if (e && e.alive && E.C.human && e.owner === E.C.human && rec.selectable === false && rec.visible !== false) E.C.setAppearance(rec, (rec.flags != null ? rec.flags : 7) | 4);
       if (hl > 0 && e && e.alive && E.C.human && e.owner === E.C.human) (W.highlights || (W.highlights = new Map())).set(e, W.time + hl);
     }
     E.touch();

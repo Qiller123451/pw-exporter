@@ -19,6 +19,7 @@ import { mapHeading } from '../maps/frame.js';
 
 const lc = (s) => String(s == null ? '' : s).toLowerCase();
 
+const OFF = 1.5, LIFT_MIN = 0.5, LIFTS = new WeakMap();   // m: a stored height this far off the terrain is meant (pose)
 export class SeqActors {
   constructor(C, play) {
     this.C = C; this.play = play;
@@ -55,8 +56,15 @@ export class SeqActors {
   // the pose of an actor at time t: {x, z, mz (map height), ground (on the terrain, else at mz), h, walk (the walk
   // item it is in, or null)}
   pose(A, t) {
-    const a = A.a;
+    const a = A.a, W = this.C.world;
     let [x, z] = this.game(a.pos[0], a.pos[1]), mz = a.pos[2], h = mapHeading(a.rot), walk = null, ground = true;
+    // the heights the file records are the original's (§9.3: an actor is set to its stored start pose; a VisPath is
+    // a recorded motion; a walk's waypoints are where the engine's walk went - over walkable objects too). Snapping
+    // them all to the terrain put mission 7's heroes waist-deep into the water sanctuary's spire in sc_2567 (and the
+    // spire, stored 16 m below the terrain to rise out of it, on top of them). So: a stored height clearly off the
+    // terrain (OFF m) is kept; a walk keeps its waypoints' height above the terrain, interpolated between them.
+    const off = (hx, hz, y) => (W && W.height ? y - W.height(hx, hz) : 0);
+    if (Math.abs(off(x, z, mz)) > OFF) ground = false;
     for (const it of a.items) {
       if (it.t > t) continue;
       if ((it.k === 'walk' || it.k === 'path') && it.keys && it.keys.length) {
@@ -70,6 +78,13 @@ export class SeqActors {
         mz = k0[3] + (k1[3] - k0[3]) * f;
         ground = it.k !== 'walk' || it.ground !== false;
         [x, z] = this.game(mx, my);
+        if (ground && W && W.height) {
+          if (it.k === 'path') ground = Math.abs(off(x, z, mz)) <= OFF;      // a recorded motion: its own heights
+          else {                                                             // a walk: lifted where its waypoints are
+            const lift = this.lift(it), l = lift[i] + (lift[Math.min(i + 1, K.length - 1)] - lift[i]) * f;
+            if (l > 0.05) { ground = false; mz = W.height(x, z) + l; }
+          }
+        }
         if (it.rots && it.rots.length) {
           let r = it.rots[0][1];
           for (const [rt, rv] of it.rots) if (rt <= lt) r = rv;
@@ -77,12 +92,20 @@ export class SeqActors {
         } else if (k1 !== k0 && Math.hypot(k1[1] - k0[1], k1[2] - k0[2]) > 0.05) h = headingTo(k1[1] - k0[1], k1[2] - k0[2]);
         if (it.k === 'walk' && t - it.t < it.len && f < 1) walk = it;
       } else if (it.k === 'beam') {
-        [x, z] = this.game(it.pos[0], it.pos[1]); mz = it.pos[2]; h = mapHeading(it.rot); ground = true;
+        [x, z] = this.game(it.pos[0], it.pos[1]); mz = it.pos[2]; h = mapHeading(it.rot); ground = Math.abs(off(x, z, mz)) <= OFF;
       } else if (it.k === 'turn') {
         h += (it.angle || 0) * (it.len > 0 ? Math.min(1, (t - it.t) / it.len) : 1);
       }
     }
     return { x, z, mz, ground, h, walk };
+  }
+  // per waypoint of a walk: how far above the terrain it is (0 within LIFT_MIN m: on the ground)
+  lift(it) {
+    let l = LIFTS.get(it);
+    if (l) return l;
+    const W = this.C.world;
+    LIFTS.set(it, l = it.keys.map((k) => { const [x, z] = this.game(k[1], k[2]), d = k[3] - W.height(x, z); return d > LIFT_MIN ? d : 0; }));
+    return l;
   }
   // hidden at time t (the scene's attribute items)
   hidden(A, t) {
@@ -102,15 +125,16 @@ export class SeqActors {
       const moves = A.a.items.some((it) => it.k === 'walk' || it.k === 'path' || it.k === 'beam' || it.k === 'turn');
       if (!moves) continue;
       const p = this.pose(A, t);
-      this.place(A, p.x, p.z, p.h);
+      this.place(A, p.x, p.z, p.h, p.ground ? null : p.mz);
     }
   }
-  place(A, x, z, h) {
+  // (a unit goes onto the ground: the game has no walkable objects; a prop keeps a height the scene gives it, y)
+  place(A, x, z, h, y = null) {
     const W = this.C.world;
     if (A.e && A.e.kind === 'unit') { W.teleport(A.e, x, z, h); return; }
     if (A.prop) {
       const P = A.prop;
-      P.pos.set(x, W.height(x, z), z);
+      P.pos.set(x, y != null ? y : A.start && Math.hypot(A.start.x - x, A.start.z - z) < 0.01 && A.start.y != null ? A.start.y : W.height(x, z), z);
       if (P.obj) { P.obj.position.copy(P.pos); P.obj.rotation.y = h; }
     }
   }

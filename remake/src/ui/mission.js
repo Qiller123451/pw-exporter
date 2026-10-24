@@ -507,18 +507,46 @@ export class MissionUI {
   }
   // play a speech file on the voice channel; the frame / line it belongs to is lengthened to the sound when it has
   // loaded. Missing file, no audio yet (no click so far) or sound off: silence, the text length stands.
-  async speak(file, kind, holder, index) {
+  async speak(file, kind, holder, index, offset = 0) {
     const A = this.G.audio;
-    if (!file || !A || !A.ctx || A.muted || !A.buffer || (this.G.settings && this.G.settings.sound === false)) return;
+    holder.voiceFile = file; holder.voiceIdx = index;          // (to start it late when the sound is still held back: lateVoice)
+    if (!file || !A || !A.ready || !A.ready() || !A.buffer || (this.G.settings && this.G.settings.sound === false)) return;
+    holder.voiceTried = index;
     let buf = null;
     try { buf = await A.buffer(file); } catch (e) { buf = null; }
     if (!buf || holder.i !== index || (kind === 'ds' ? this.scene !== holder : this.cine !== holder)) return;
-    const src = await A.playFile(file, 100, null, 0, 'voice');
+    const src = await A.playFile(file, 100, null, 0, 'voice', 1, 0, offset);
     if (!src) return;
     if (holder.i !== index || (kind === 'ds' ? this.scene !== holder : this.cine !== holder)) { try { src.stop(); } catch (e) { /* not started */ } return; }
     holder.sound = src; holder.playing = true;
     src.addEventListener('ended', () => { if (holder.sound === src) holder.playing = false; });
-    holder.len = kind === 'ds' ? Math.max(holder.t + buf.duration, 0.25 * vowelGroups(holder.frames[index].text)) : holder.t + buf.duration + 0.4;
+    const rest = buf.duration - offset;
+    holder.len = kind === 'ds' ? Math.max(holder.t + rest, 0.25 * vowelGroups(holder.frames[index].text)) : holder.t + rest + 0.4;
+  }
+  // a line that began while the browser held the sound back (no click since the page loaded): its speech starts
+  // from where the line is once a click lets it play; meanwhile a hint asks for that click
+  lateVoice(h, kind) {
+    const A = this.G.audio;
+    if (!h || !A || !A.ready) return;
+    const locked = !A.ready() && !A.muted && !(this.G.settings && this.G.settings.sound === false);
+    this.soundHint(locked && !!(h.voiceFile || (kind === 'cine' && h.player)));
+    if (locked || !h.voiceFile || h.voiceTried === h.voiceIdx || h.voiceIdx !== h.i || h.playing) return;
+    if (h.t > h.len - 0.5) return;
+    this.speak(h.voiceFile, kind === 'ds' ? 'ds' : 'seq', h, h.i, h.t);
+  }
+  // "click for sound": a chip over the scene, clicking it starts the sound (engine/audio.js unlock)
+  soundHint(on) {
+    if (!this.dom || typeof document === 'undefined') return;
+    if (!this.sndHint) {
+      if (!on) return;
+      const b = this.sndHint = document.createElement('button');
+      b.className = 'sndhint';
+      b.textContent = '\u{1F507} ' + this.text('_remake_click_for_sound', 'Click to turn the sound on');
+      b.style.cssText = 'position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:60;padding:6px 14px;border-radius:16px;border:1px solid #c9a35a;background:rgba(20,16,10,.85);color:#f0dca8;font:13px sans-serif;cursor:pointer';
+      b.addEventListener('pointerdown', (e) => { e.stopPropagation(); this.G.audio.unlock(); b.style.display = 'none'; });
+      document.body.appendChild(b);
+    }
+    this.sndHint.style.display = on ? '' : 'none';
   }
   stopVoice(h) { if (h && h.sound) { try { h.sound.stop(); } catch (e) { /* already over */ } h.sound = null; h.playing = false; } }
   // sound and music are turned down while somebody speaks (DS:164-166, 50 %)
@@ -779,7 +807,13 @@ export class MissionUI {
     this.time += dt;
     if (!this.dom) return;
     this.pump();                                   // also while the game is paused
+    // the music's Sequence switch while a cutscene or film shows (engine/music.js sequence)
+    const seq = !!this.cine, A = this.G.audio;
+    if (seq !== !!this.musSeq && A && A.mus && A.mus.sequence) { this.musSeq = seq; A.mus.sequence(seq); }
     this.updateCine(dt);
+    // speech that waits for the sound to be allowed, and the "click for sound" hint (lateVoice)
+    const h = this.cine && !this.cine.film ? this.cine : this.scene && !this.scene.hidden ? this.scene : null;
+    if (h) this.lateVoice(h, h === this.cine ? 'cine' : 'ds'); else if (this.sndHint) this.soundHint(false);
     for (let i = this.news_.length - 1; i >= 0; i--) {
       const n = this.news_[i];
       n.t -= dt;

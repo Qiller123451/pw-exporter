@@ -16,6 +16,7 @@ import { Regions } from './regions.js';
 import { mapHeading } from '../maps/frame.js';
 import { Registry, Rec, Group } from './registry.js';
 import { Prop } from '../prop.js';
+import { AMPHIBIOUS } from '../entities.js';
 import { TriggerEngine, prescan } from './engine.js';
 import { TribeSwap, TRIBES, tribeOfClass } from './tribes.js';
 import { PointBuy } from '../pointbuy.js';
@@ -728,7 +729,9 @@ export class Campaign {
     let rec = null;
     if (rule) {
       const ix = D.info(rule);
-      if (ix.type !== 'BLDG' && !opts.exact) [x, z] = W.freeSpot(x, z, { water: ix.type === 'SHIP' });
+      // (an amphibious transport - the hovercraft - may stand on the water: mission 7's hard Wehrspinne convoy was put
+      // on the shore 58 m from its place, outside the region its waypoint order looks in, and never set off)
+      if (ix.type !== 'BLDG' && !opts.exact) [x, z] = W.freeSpot(x, z, AMPHIBIOUS.test(rule) ? { unit: { amphib: true } } : { water: ix.type === 'SHIP' });
       const level = opts.level != null ? opts.level : opts.level0 != null ? Math.max(0, opts.level0) + 1 : undefined;
       if (ix.type === 'BLDG' && !owner) rec = this.spawnProp(rule, slot, x, z, opts);
       else {

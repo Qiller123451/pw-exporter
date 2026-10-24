@@ -195,14 +195,26 @@ function scorpOpenPanel(b, W) {
   S.openT = null;
   if (!list.length) return;
   const p = list[Math.floor(Math.random() * list.length)];
-  p.untargetable = false; p.panelOpen = true;
+  // OpenRandomPanel: hitable + selectable, SetAnim("open", 1) - it rises out of the ground
+  p.untargetable = false; p.unselectable = false; p.panelOpen = true; p.panelPose = 'opening';
   scorpPlay(p, 'open');
   S.closeT = 25;
 }
 function scorpClosePanels(b, W) {
   const S = b.scorp;
-  for (const p of scorpPanels(b, W)) if (p.panelOpen) { p.panelOpen = false; p.untargetable = true; if (p.anim && p.anim.has('close')) scorpPlay(p, 'close'); }
+  // ClosePanel: not hitable, not selectable, SetAnim("open", 2) = the opening played backwards (there is no "close")
+  for (const p of scorpPanels(b, W)) if (p.panelOpen) {
+    p.panelOpen = false; p.untargetable = true; p.unselectable = true; p.panelPose = 'closing';
+    panelReverse(p);
+  }
   S.closeT = null; S.openT = 10;
+}
+// the panel's "open" clip from its end back to its start (SetAnim mode 2), held at the start when done
+function panelReverse(p) {
+  const A = p.anim;
+  if (!A || !A.has('open')) return;
+  const a = A.play('open', { loop: false, restart: true, fade: 0 });
+  if (a) { a.time = A.duration('open'); a.timeScale = -1; a.paused = false; }
 }
 function scorpDamage(b, W, at) {
   const R = W.regions && W.regions.find(at.region);
@@ -276,7 +288,14 @@ const scorpion = {
 };
 const scorpionPanel = {
   noTower: true,
-  init(b) { b.untargetable = true; b.panelOpen = false; },
+  // OnInit: not hitable, not selectable, SetAnim("open", 0, 0) = held at the clip's first frame: shut, flat in the
+  // ground until the Scorpion opens it
+  init(b) { b.untargetable = true; b.unselectable = true; b.panelOpen = false; b.panelPose = 'shut'; },
+  update(b) {
+    const A = b.anim;
+    if (b.panelPose !== 'shut' || !A || !A.has('open')) return;
+    if (A.curName !== 'open' || !A.cur || A.cur.timeScale !== 0 || A.cur.time !== 0) { const a = A.play('open', { loop: false, restart: true, fade: 0 }); if (a) { a.time = 0; a.timeScale = 0; } }
+  },
   destroyed(b, W) {
     const boss = W.buildings.find((x) => x.alive && x.def.script === 'CScorpionBoss' && x.owner === b.owner);
     if (boss && boss.behaviour && boss.behaviour.panelLost) boss.behaviour.panelLost(boss, W);

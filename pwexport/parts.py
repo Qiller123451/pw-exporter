@@ -77,7 +77,9 @@ def _is_hull(j, n):
         cnt += a['count']
         if 'min' in a:
             mn = [min(x, y) for x, y in zip(mn, a['min'])]; mx = [max(x, y) for x, y in zip(mx, a['max'])]
-    return 0 < cnt <= 24 and max(b - a for a, b in zip(mn, mx)) > 8
+    # a volume: a flat one is a surface (plateau tops, paving, lily pads, the water of the water sanctuary's pools)
+    d = [b - a for a, b in zip(mn, mx)]
+    return 0 < cnt <= 24 and max(d) > 8 and min(d) > 0.5
 
 
 def _is_additive(j, n):

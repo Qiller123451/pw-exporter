@@ -284,7 +284,9 @@ export class Rules {
         penetration: bool(scalar(w.penetration)), penAngle: num(scalar(w.penetration_angle), 30), fx: scalar(w.fx_class),
         projectile: strs(w.Projectile)[0] || null, bonus: bonus(w.AttackBonus), defBonus: bonus(w.DefenseBonus),
         anims: list(w.Animations).filter((a) => a && typeof a === 'object').map((a) => ({ name: scalar(a), delay: num(scalar(a.delay)), shootdelay: num(scalar(a.shootdelay)), combo: num(scalar(a.combo)), follow: scalar(a.followanim) || null })),
-        parts: list(w.Parts).filter((p) => p && typeof p === 'object').map((p) => ({ gfx: strs(p.Gfx), link: scalar(p.Links), kind: scalar(p) })),
+        // a part without Links goes to the right hand (character.usl: "Default Value in TTEditor is HndR" - the SEAS
+        // flamethrower's flamer has none and was never drawn)
+        parts: list(w.Parts).filter((p) => p && typeof p === 'object').map((p) => ({ gfx: strs(p.Gfx), link: scalar(p.Links) || 'HndR', kind: scalar(p) })),
       };
     });
   }

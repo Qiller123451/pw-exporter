@@ -6,6 +6,8 @@
 // A unit with blood infection (MIRAGE contamination: st.t.noHeal) can't be healed (FO:11553 HealMe etc.).
 import { active } from './effects.js';
 
+const SUPPORT_NEAR = 12, SUPPORT_FAR = 18;      // m: where a hand-to-hand healer told to attack waits (supportUpdate)
+
 export const Healing = {
   healPerSecond(src, h, target) {
     const m = src.stats.healMod || { rel: 1, abs: 0 };
@@ -31,7 +33,7 @@ export const Healing = {
     if (!h) { u.task = { type: 'idle' }; return; }
     if (!tgt || !tgt.alive || tgt.hp >= tgt.maxHp || active(tgt, 'noHeal', this.time)) {
       tgt = t.target = this.healScan(u);
-      if (!tgt) { this.stopHealing(u); u.task = { type: t.hold ? 'hold' : 'idle' }; return; }
+      if (!tgt) { this.stopHealing(u); u.task = t.back && (!t.back.target || t.back.target.alive) ? t.back : { type: t.hold ? 'hold' : 'idle' }; return; }
     }
     const d = u.distTo(tgt) - tgt.radius;
     if (d > h.radius) {
@@ -55,6 +57,35 @@ export const Healing = {
     tgt.healedT = this.time;
     t.fxT = (t.fxT || 0) - dt;
     if (t.fxT <= 0) { t.fxT = 0.5; this.emit('healfx', { from: u, to: tgt }); }
+  },
+  // a healer that fights hand to hand (the SEAS medic, the druid) told to attack: it goes with the attack but stays
+  // back (SUPPORT_NEAR .. SUPPORT_FAR m from the target) and heals the friends who fight there; then back to its post
+  // behind the target. The user: "they shouldn't try to go into melee range but stay at a distance and heal".
+  meleeHealer(u) { const w = u.weapons && u.weapons.long; return !!(u.stats.heal && u.owner && !(w && w.projectile)); },
+  supportUpdate(u, dt) {
+    const t = u.task, e = t.target;
+    if (!e || !e.alive || e.parked || (e.owner && u.owner && !u.owner.isEnemy(e.owner) && !t.force)) { this.stopHealing(u); u.task = { type: 'idle' }; return; }
+    u.scanT = (u.scanT || 0) - dt;
+    if (u.scanT <= 0) {
+      u.scanT = 0.4;
+      const o = this.healScan(u);
+      if (o) { u.task = { type: 'heal', target: o, user: false, back: t }; u.repathT = 0; return; }
+    }
+    const h = u.stats.heal, far = Math.min(SUPPORT_FAR, h.radius * 0.6), d = u.distTo(e) - (e.radius || 0);
+    if (d > far) {
+      u.repathT = (u.repathT || 0) - dt;
+      if (u.repathT <= 0 || !u.path.length) {
+        // a point on the way, SUPPORT_NEAR m short of the target
+        const dx = u.pos.x - e.pos.x, dz = u.pos.z - e.pos.z, l = Math.hypot(dx, dz) || 1, k = (SUPPORT_NEAR + (e.radius || 0)) / l;
+        u.setPath(e.pos.x + dx * k, e.pos.z + dz * k); u.repathT = 0.8;
+      }
+      const sp = u.steer(dt, t.user ? u.runSpeed || u.speed : u.speed, 0.8);
+      u.moveAnim(sp, !!t.user);
+      return;
+    }
+    u.path = []; u.vel.set(0, 0, 0);
+    u.face(e.pos.x, e.pos.z, dt);
+    u.idleTick && u.idleTick(dt);
   },
   stopHealing(u) {
     if (!u.healing) return;

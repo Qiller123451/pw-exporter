@@ -375,7 +375,7 @@ export class HUD {
       const att = (w.projectile ? '_iw_rangeattack' : '_iw_attack') + (w.ap ? '_pierce' : '') + (w.poison ? '_poison' : '') + (w.splash ? '_area' : '');
       st.push([icn, `${Math.round(cs.dmg)}${w.splash ? ` (splash ${w.splash} m)` : ''}${w.poison ? ` +poison ${w.poison}×${w.poisonTicks}` : ''}`, att]);
       if (w.projectile) st.push(['info_range', `${w.minrange ? w.minrange + '–' : ''}${Math.round(cs.range)} m`, '_iw_range']);
-      st.push(['info_armor', `${Math.round(cs.prot || 0)}`, '_iw_defense_melee', 'info_shield', `${Math.round(cs.rprot || 0)}`, '_iw_defense_arrow']);
+      st.push(['info_armor', `${Math.round(cs.prot || 0)}`, '_iw_defense_melee'], ['info_shield', `${Math.round(cs.rprot || 0)}`, '_iw_defense_arrow']);
     }
     if (e.passengers && e.passengers.length) st.push(['resicon_unit', `${e.passengers.length} inside`]);
     if (e.def && e.def.gate && e.built) st.push(['info_armor', ['open', 'closed', 'automatic'][e.gateState] + (e.gateOpen ? ' (open)' : '')]);
@@ -383,12 +383,14 @@ export class HUD {
     if (e.stats && e.stats.scalps && e.owner !== G.me) st.push(['info_skulls', `${e.stats.scalps}`, '_iw_skulls']);
     // [icon, value, help key, icon, value, help key]
     const stat = (ic, v, tt) => `<span${tt ? ` data-tt="${tt}"` : ''}><span style="${spriteCss(ic, undefined, 16, 16)}"></span>${v}</span>`;
-    h += '<div class="st">' + st.map((s) => `<div>${stat(s[0], s[1], s[2])}${s[3] ? '&nbsp;&nbsp;' + stat(s[3], s[4], s[5]) : ''}</div>`).join('') + '</div>';
-    // its buffs (Info.usl CBuffIcon: five 16 x 16 icons at 31 + 17 i, 121, with the buff's help as tooltip)
+    // what it carries: a row too
+    if (e.carry && e.carry.amount > 0) st.push([RES_ICON[e.carry.res === 'food' ? 'food' : e.carry.res], `${e.carry.amount}`]);
+    // Info.usl CInfo: one value per row of the window's frame, ATTR_BASE 117, 34, ATTR_OFFSET 17 (six rows)
+    h += '<div class="st">' + st.slice(0, 6).map((s) => `<div title="${String(s[1]).replace(/"/g, '')}">${stat(s[0], s[1], s[2])}</div>`).join('') + '</div>';
+    // its buffs (Info.usl CBuffIcon: five 16 x 16 icons at 31 + 17 i, 121 - the frame's circles - with the buff's help as tooltip)
     if (buffs.length) h += '<div class="buffs">' + buffs.slice(0, 5).map((x) => `<span data-tt="${x.tip}" style="${spriteCss(x.icon, -1, 16, 16) || ''}"></span>`).join('') + '</div>';
     // the item it carries (Info.usl: the item slot, with the item's help as its tooltip)
     if (e.item) h += `<div class="islot" data-tt="${e.item.name}" style="${spriteCss(e.item.name, 2, 20, 20) || ''}"></div>`;
-    if (e.carry && e.carry.amount > 0) h += `<div class="carry"><span style="${spriteCss(RES_ICON[e.carry.res === 'food' ? 'food' : e.carry.res], undefined, 16, 16)}"></span>${e.carry.amount}</div>`;
     if (e.kind === 'building' && !e.built) h += `<div class="prog"><i style="width:${Math.round(e.progress * 100)}%"></i><span>Under construction ${Math.round(e.progress * 100)}%</span></div>`;
     if (e.kind === 'res') h += `<div class="carry">${e.amount} ${e.res}</div>`;
     if (e.queue && e.queue.length && e.owner === G.me) {
@@ -543,6 +545,13 @@ export class HUD {
         const ageCard = age ? (entry(`${tr}_age_${age[1]}`) ? `${tr}_age_${age[1]}` : `${tr}_headquarters_${age[1]}`) : null;
         const css = spriteCss(icon, 3, 44, 43) || spriteCss(iconFor(a.results[0] && a.results[0].obj), 3, 44, 43) || (ageCard && spriteCss(ageCard, 3, 44, 43)) || (FALLBACK[a.id] ? spriteCss(FALLBACK[a.id], undefined, 44, 49) : '');
         card.innerHTML = `<div class="ci" style="${css || ''}"></div>`;
+        // a unit's card: the level (tier) it comes out at, the original's card level badge (menucmd_lvl<n>_ovl: the
+        // pyramid's level marks - the user asked for it)
+        const made = a.kind === 'Build' && a.results[0] && a.results[0].obj, ix = made && G.data.info(made);
+        if (ix && ix.type !== 'BLDG' && G.world.unitStartLevel) {
+          const lv = Math.max(1, Math.min(5, G.world.unitStartLevel(a, G.me) || 1)), ov = spriteCss('menucmd_lvl' + lv + '_ovl', 2, 44, 43);
+          if (ov) { const b = el('div', 'lvo', card); b.style.cssText = ov; }
+        }
         const w = why(a);
         if (w === 'req' || w === 'done' || w === 'level' && a.kind === 'Moves') card.classList.add('locked');
         else if (w) card.classList.add('dim');

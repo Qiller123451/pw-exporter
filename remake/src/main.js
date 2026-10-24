@@ -1419,6 +1419,8 @@ async function startGame(cfg) {
 G.endMission = (won, info = {}) => {
   if (G.over) return;
   G.over = true;
+  // the fights are over: no combat music behind the end screen (its attack times stand still with the game)
+  if (G.audio && G.audio.mus && G.audio.mus.S) { G.audio.mus.attacks = []; G.audio.mus.S('Combat').on = false; G.audio.mus.refresh(); }
   const W = G.world, t = Math.floor(W.time), C = G.campaign;
   const show = () => G.menu.end(!!won, {
     time: `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`, kills: G.me.kills, lost: G.me.lost, epoch: EPOCH[G.me.epoch()],
@@ -1500,8 +1502,10 @@ async function boot() {
     });
     applySettings(G.settings);
     // the browser only allows audio after a user gesture
-    const unlock = () => { G.audio.init(); G.audio.applyVolumes(); G.audio.mus.update(0); G.audio.mus.resume(); window.removeEventListener('pointerdown', unlock); };
+    // (kept until the context runs: a click that came too early - a suspended context - tries again on the next one)
+    const unlock = () => { G.audio.unlock(); if (G.audio.ready() || G.audio.muted) { window.removeEventListener('pointerdown', unlock); window.removeEventListener('keydown', unlock); } };
     window.addEventListener('pointerdown', unlock);
+    window.addEventListener('keydown', unlock);
     let auto = null;
     try { auto = JSON.parse(sessionStorage.getItem('pwr.autostart') || 'null'); sessionStorage.removeItem('pwr.autostart'); } catch (e) { auto = null; }
     if (MANUAL || params.has('quick')) auto = quickConfig();

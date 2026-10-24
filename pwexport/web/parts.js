@@ -72,12 +72,14 @@ export function isHull(o) {
   let n = 0, skinned = false;
   const box = new THREE_Box();
   o.traverse((m) => { if (m.isMesh) { n += m.geometry.attributes.position.count; skinned = skinned || m.isSkinnedMesh; m.geometry.computeBoundingBox(); box.add(m.geometry.boundingBox); } });
-  return !skinned && n > 0 && n <= 24 && box.size() > 8;
+  // a volume: a flat one is a surface (plateau tops, paving, lily pads, the water of the water sanctuary's pools)
+  return !skinned && n > 0 && n <= 24 && box.size() > 8 && box.thin() > 0.5;
 }
 class THREE_Box {
   constructor() { this.min = [1e9, 1e9, 1e9]; this.max = [-1e9, -1e9, -1e9]; }
   add(b) { const a = [b.min.x, b.min.y, b.min.z], c = [b.max.x, b.max.y, b.max.z]; for (let i = 0; i < 3; i++) { this.min[i] = Math.min(this.min[i], a[i]); this.max[i] = Math.max(this.max[i], c[i]); } }
   size() { return Math.max(this.max[0] - this.min[0], this.max[1] - this.min[1], this.max[2] - this.min[2]); }
+  thin() { return Math.min(this.max[0] - this.min[0], this.max[1] - this.min[1], this.max[2] - this.min[2]); }
 }
 // sprite clouds of effects (smoke, dust, sparks: billboards with a particle_* texture), not part of the model
 function isFx(o) {

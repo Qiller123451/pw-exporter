@@ -76,7 +76,9 @@ export class PropField {
     const k = this.kinds.get(name);
     const quat = q ? new THREE.Quaternion(...mapQuat(q)) : new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rotY);
     const m = new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), quat, new THREE.Vector3(scale, scale, scale));
-    const inst = { m, sphere: new THREE.Sphere(new THREE.Vector3(x, y + k.sphere.center.y * scale, z), k.sphere.radius * scale + 4), alive: true };
+    // (the model's bounding sphere moved with the instance: a model whose parts lie far from its origin - the water
+    // sanctuary's ring pieces, 30-60 m off - was culled while its parts were on the screen)
+    const inst = { m, sphere: new THREE.Sphere(k.sphere.center.clone().applyMatrix4(m), k.sphere.radius * scale + 4), alive: true };
     if (k.tplRoot && this.particles) inst.emit = this.particles.addStatic(k.tplRoot, m);
     k.inst.push(inst);
     this.dirty = true;

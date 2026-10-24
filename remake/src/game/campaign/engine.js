@@ -263,6 +263,7 @@ export class TriggerEngine {
       t.queued--;
       this.fire(t);
     }
+    this.flushRound = (this.flushRound || 0) + 1;
   }
   // which actions of a firing run (§1.4)
   pick(t) {
@@ -431,6 +432,33 @@ export class TriggerEngine {
     this.push('quest', 'onQuest', q);
   }
 
+  // the debug tools' "mark as done": the triggers that would accomplish the quest (a QUES action setting it to 1 for
+  // this difficulty) run now, whatever their conditions say - so what the mission does when the objective is met
+  // (the next quests, sequences, the boss waking up) happens too; without such a trigger the quest is only set.
+  // Returns the names of the triggers run.
+  skipQuest(q) {
+    if (!q) return [];
+    const ran = [], done = new Set();
+    const accomplishes = (a) => a.type === 'QUES' && toInt(a.p.dest_state) === 1 && this.quest(a.p) === q;
+    // the moment the quest is met often starts more than its quest trigger: triggers waiting for exactly the same
+    // conditions (mission 7: "Lb02 L07MQ02 - set acc" and "Ie07 fire NS2567" - the heroes at the temple - start the
+    // sequence and with it the SEAS attack) run too, if they are on and have not run
+    const sig = (t) => (t.data.expression || '') + JSON.stringify(t.conds.map((c) => [c.type, c.p]));
+    const run = (t) => { if (done.has(t)) return; done.add(t); if (t.once) this.disable(t); this.fire(t, true); ran.push(t.name); };
+    const quest = this.triggers.filter((t) => t.actions.some((a) => accomplishes(a) && (!t.byDifficulty || a.difficulty === this.C.difficulty)));
+    // (switched on like the quest trigger: both waiting, or both still off when the quest is marked early)
+    for (const t of quest) {
+      const on = t.enabled;
+      run(t);
+      if (!t.conds.length) continue;
+      const k = sig(t);
+      for (const o of this.triggers) if (o !== t && o.enabled === on && !(o.once && o.fired) && sig(o) === k) run(o);
+    }
+    if (!q.accomplished) this.setQuest(q, 1);
+    this.flush();
+    return ran;
+  }
+
   // ------------------------------------------------------------------------------------------- level timers (§6.3)
   timer(id, event, o = {}) {
     const T = this.C.timers;
@@ -475,6 +503,8 @@ export class TriggerEngine {
       if (cam && o.camera && !o.camera.zero && !o.snapBack) { cam.x = o.camera.x; cam.z = o.camera.z; }
       this.lastSequence = filePart(o.path);
       this.sequencesEnded = (this.sequencesEnded || 0) + 1;
+      // (SQEN conditions enabled by the triggers this end fires still hear it: conditions.js SQEN)
+      this.seqEnd = { file: this.lastSequence, round: this.flushRound || 0 };
       this.push('sequence', 'onSequence', this.lastSequence);
       if (o.quit) this.win();
     };

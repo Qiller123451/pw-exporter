@@ -8,7 +8,9 @@
 //   * Actors: the bound world objects and, for an actor nothing in the world matches, a model drawn for the scene
 //     only. Walks and recorded paths move them, the animation items play on their models (a walk plays the walk of
 //     its speed), attribute items hide and show them.
-//   * Speech: each lip-sync item plays its .mp3 (assets/SeqSounds) and shows its subtitle for its length;
+//   * Speech: each lip-sync item plays its .mp3 (assets/SeqSounds) and shows its subtitle for its length; while the
+//     browser still holds the sound back (no click since the page loaded) the speech waits, and starts from the
+//     point the scene has reached once it may play;
 //     sounds, particle effects, fades to and from black, the wide-screen bars and the time skips of cut items.
 // Objects inside the scene's region are hidden while it plays when the file asks for it.
 import * as THREE from 'three';
@@ -108,6 +110,7 @@ function viewDir(K, t) {
 const PHONEME_FRAME = { 0: 0, 1: 1, 2: 1, 39: 1, 17: 1, 3: 2, 4: 2, 10: 2, 11: 2, 5: 3, 8: 3, 9: 3, 7: 4, 6: 4, 13: 5, 12: 6, 14: 6, 38: 6,
   18: 7, 20: 8, 26: 9, 29: 9, 34: 10, 35: 10, 16: 11, 19: 11, 21: 11, 22: 11, 28: 11, 31: 11, 15: 11, 23: 12, 32: 12, 33: 12, 36: 12, 37: 12, 24: 12,
   25: 13, 30: 13, 27: 13 };
+const _lipQ = new THREE.Quaternion();
 async function readLsd(url) {
   const r = await fetch(url);
   if (!r.ok || typeof DecompressionStream === 'undefined') return null;
@@ -132,6 +135,7 @@ export class Cutscene {
     this.t = this.P.start || 0;
     this.done = false;
     this.started = new Set();       // items begun (speech, sounds, effects, animations)
+    this.spoken = new Set();        // speech items whose sound was started (later than the item when the sound was held back)
     this.hiddenObjs = [];
     this.sounds = [];
   }
@@ -251,7 +255,8 @@ export class Cutscene {
       // speech
       for (const it of A.a.items) {
         if (it.k !== 'say' || it.t > t) continue;
-        if (!this.started.has(it)) { this.started.add(it); if (it.mp3 && t < it.t + it.len) { this.say(it); if (!it.music) this.lip(A, it); } }
+        if (!this.started.has(it)) { this.started.add(it); if (it.mp3 && t < it.t + it.len && !it.music) this.lip(A, it); }
+        if (it.mp3 && !this.spoken.has(it) && t < it.t + it.len - 0.25 && this.soundOn()) { this.spoken.add(it); this.say(it, t - it.t); }
         if (!it.music && t < it.t + it.len + 0.3) line = it;
       }
     }
@@ -268,7 +273,10 @@ export class Cutscene {
     if (!bone) return;
     const frames = Math.max(1, tr.times.length);
     const q0 = new THREE.Quaternion().fromArray(tr.values, 0), q1 = new THREE.Quaternion().fromArray(tr.values, 4);
-    const delta = q0.clone().invert().multiply(q1);
+    const delta = q0.clone().invert().multiply(q1).normalize();
+    // (a broken clip - zero or NaN keys, a turn no jaw makes - is not used: it would throw the jaw off the face)
+    const turn = 2 * Math.acos(Math.min(1, Math.abs(delta.w)));
+    if (!Number.isFinite(turn) || turn > 0.6 || ![...tr.values.slice(0, 8)].every(Number.isFinite)) return;
     readLsd('assets/SeqSounds/' + it.mp3.replace(/\.mp3$/i, '.lsd')).then((recs) => {
       if (!recs || this.done) return;
       const layers = new Map();
@@ -293,12 +301,21 @@ export class Cutscene {
       if (v > 0.01) w += v;
     }
     L.w = w;
-    if (w > 0) L.bone.quaternion.multiply(new THREE.Quaternion().slerp(L.delta, Math.min(1, w)));
+    // the turn goes on top of what the body animation set this frame - and most body clips have no key for the jaw:
+    // then the bone still holds last frame's turned pose, and turning it again every frame spun the jaw round into
+    // the head (the user: "their whole jaw goes missing"). So the pose before the turn is put back first.
+    const q = L.bone.quaternion;
+    if (L.out && q.equals(L.out)) q.copy(L.base);
+    (L.base || (L.base = new THREE.Quaternion())).copy(q);
+    if (w > 0) q.multiply(_lipQ.identity().slerp(L.delta, Math.min(1, w)));
+    (L.out || (L.out = new THREE.Quaternion())).copy(q);
   }
-  say(it) {
+  soundOn() { const G = this.G, A = G.audio; return !!A && A.ready() && !(G.settings && G.settings.sound === false); }
+  // off: seconds the scene is past the item's start (it began while the sound was held back)
+  say(it, off = 0) {
     const G = this.G, A = G.audio;
-    if (!A || !A.ctx || A.muted || (G.settings && G.settings.sound === false)) return;
-    A.playFile('../SeqSounds/' + it.mp3, 100, null, 0, it.music ? 'sfx' : 'voice').then((src) => { if (!src) return; if (this.done) { try { src.stop(); } catch (e) { /* over */ } } else this.sounds.push([src, 1e9]); }).catch(() => {});
+    if (!this.soundOn()) return;
+    A.playFile('../SeqSounds/' + it.mp3, 100, null, 0, it.music ? 'sfx' : 'voice', 1, 0, off > 0.15 ? off : 0).then((src) => { if (!src) return; if (this.done) { try { src.stop(); } catch (e) { /* over */ } } else this.sounds.push([src, 1e9]); }).catch(() => {});
   }
   subtitle(it) {
     const M = this.M, el = M.cineEl;

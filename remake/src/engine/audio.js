@@ -90,7 +90,7 @@ export class Audio {
   }
   // the AudioContext may only start after a user gesture
   init() {
-    if (this.ctx) return;
+    if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {}); return; }
     try {
       this.ctx = new (window.AudioContext || window.webkitAudioContext)();
       this.out = this.ctx.createGain(); this.out.connect(this.ctx.destination);
@@ -98,6 +98,16 @@ export class Audio {
       for (const k of ['sfx', 'ui', 'voice', 'atmo']) { const g = this.ctx.createGain(); g.connect(this.out); this.bus[k] = g; }
       this.applyVolumes();
     } catch (e) { this.ctx = null; }
+  }
+  // can sounds be heard now: the context exists and runs. After the page reloads into a mission (autostart: the next
+  // mission, a mod's data) the browser keeps it locked until the first click - the cutscenes and dialogues then start
+  // their speech late, from where they are (ui/cutscene.js, ui/mission.js), and show "click for sound"
+  ready() { return !!this.ctx && this.ctx.state === 'running' && !this.muted; }
+  // a user gesture: start (or resume) the context and the music
+  unlock() {
+    this.init();
+    this.applyVolumes();
+    try { this.mus.update(0); this.mus.resume(); } catch (e) { /* no music yet */ }
   }
   applyVolumes() {
     if (this.out) this.out.gain.value = this.muted ? 0 : this.vol.master;
@@ -113,7 +123,8 @@ export class Audio {
   }
   has(name) { return !!(name && this.db.events[name.toLowerCase()]); }
   // play a sound file; pos = world position (null for 2D), maxHear = original hearing distance; pan (-1 .. 1) for a 2D one
-  async playFile(file, vol = 70, pos = null, maxHear = 0, channel = 'sfx', rate = 1, pan = 0) {
+  // offset: seconds into the file (speech that starts late)
+  async playFile(file, vol = 70, pos = null, maxHear = 0, channel = 'sfx', rate = 1, pan = 0, offset = 0) {
     if (!this.ctx || this.muted || !file) return null;
     let gain = vol / 100;
     if (pos) {
@@ -143,7 +154,8 @@ export class Audio {
       g.connect(p); p.connect(this.bus[channel]);
     } else g.connect(this.bus[channel]);
     if (pos) { this.active++; src.onended = () => { this.active--; }; }
-    src.start();
+    if (offset > 0 && offset >= buf.duration) return null;
+    src.start(0, Math.max(0, offset));
     return src;
   }
   // play an event by name (random or sequential choice among its sounds)

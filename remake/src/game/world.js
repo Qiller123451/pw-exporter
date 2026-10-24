@@ -392,6 +392,8 @@ export class World {
             if (!this.attackAllowed(u, o.target)) break;
             this.declareWar(u.owner, o.target.owner);
           }
+          // a hand-to-hand healer goes along and heals instead (healing.js supportUpdate)
+          if (this.meleeHealer(u) && o.target && o.target.kind !== 'res') { u.task = { type: 'support', target: o.target, user, force: !!o.force }; u.repathT = 0; break; }
           u.task = { type: 'attack', target: o.target, user, forceAttack: !!o.force }; u.repathT = 0;
           break;
         case 'stop': u.task = { type: 'idle' }; u.path = []; u.anchor.set(u.pos.x, u.pos.z); break;
@@ -515,6 +517,7 @@ export class World {
     const t = u.task;
     switch (t.type) {
       case 'heal': this.healUpdate(u, dt); break;
+      case 'support': this.supportUpdate(u, dt); break;
       case 'idle': case 'hold': this.idleUpdate(u, dt); break;
       case 'move': case 'attackmove': {
         // a gate of the enemy shuts the way (Unit.setPath): break it, then go on
@@ -527,6 +530,8 @@ export class World {
         }
         if (t.type === 'attackmove') {
           u.scanT = (u.scanT || 0) - dt;
+          // (a hand-to-hand healer on an attack move heals the friends on the way and stays out of the fights)
+          if (u.scanT <= 0 && this.meleeHealer(u)) { u.scanT = 0.4; const o = this.healScan(u); if (o) { u.task = { type: 'heal', target: o, user: false, back: t }; break; } }
           if (u.scanT <= 0) { u.scanT = 0.4; const e = this.findTarget(u, Math.max(30, this.alarmRange(u))); if (e) { u.task = { type: 'attack', target: e, amove: [t.x, t.z], then: t.then, user: false, auto: true }; break; } }
         }
         if (u.zeppelin) { this.zeppelinStep(u, t, dt); break; }
@@ -552,7 +557,6 @@ export class World {
       case 'entrench': u.vel.set(0, 0, 0); break;
       case 'cast': this.castUpdate(u, dt); break;
     }
-    if (u.comp && u.comp.gunners.length) this.gunnerUpdate(u, dt);
     this.animTick(u, dt);
   }
   // off-screen units: advance their animation only a few times per second

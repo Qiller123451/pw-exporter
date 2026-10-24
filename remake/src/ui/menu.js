@@ -19,7 +19,7 @@ import { raiseEpoch, spawnable, spawnObject, objectReport } from '../game/cheats
 import { copyText, shownProblems } from './diagnostics.js';
 
 export const DEFAULT_SETTINGS = {
-  showIncome: false, mentor: true, autosave: true, autosaveMin: 10, shadows: 'on', grass: 'on', particles: 'on', weather: true, fpsCap: 60, resScale: 1, uiScale: 0, perf: false, edgeScroll: true, autoMenu: true, tipNear: true, minimapRotate: false, minimapPlayerColors: true, antialias: true, speed: 1,
+  showIncome: false, mentor: true, autosave: true, autosaveMin: 10, shadows: 'on', grass: 'on', particles: 'on', weather: true, fpsCap: 60, resScale: 1, uiScale: 0, perf: false, edgeScroll: true, autoMenu: true, tipNear: true, minimapRotate: true, minimapPlayerColors: true, antialias: true, speed: 1,
   sound: true, volMaster: 0.8, volSfx: 0.9, volVoice: 1, volMusic: 0.45, volAtmo: 0.8,
   // the two-player skirmish of the URL parameters (main.js quickConfig: tests) and the start of skirmishSetup
   skirmish: { me: 'SEAS', ai: 'Aje', aiLevel: 'normal', seed: 1234, warpgate: true, debug: false, meColor: 'blue', aiColor: 'red' },
@@ -36,6 +36,8 @@ export const CONFIG_MOD = decodeURIComponent((location.pathname.match(/\/mod\/([
 export function loadSettings() {
   let s = {};
   try { s = JSON.parse(localStorage.getItem('pwr.settings') || '{}'); } catch (e) { s = {}; }
+  // the minimap turns with the camera by default now (the user asked for it): an older saved "off" is dropped once
+  if (!s.mmRotateV2) { delete s.minimapRotate; s.mmRotateV2 = true; }
   return { ...DEFAULT_SETTINGS, ...s, skirmish: { ...DEFAULT_SETTINGS.skirmish, ...(s.skirmish || {}) }, campaign: { ...DEFAULT_SETTINGS.campaign, ...(s.campaign || {}) } };
 }
 export function saveSettings(s) { try { localStorage.setItem('pwr.settings', JSON.stringify(s)); } catch (e) { /* private mode */ } }
@@ -287,6 +289,20 @@ export class Menu {
     });
     this.versionLine();
   }
+  // the debug tools' objectives: the open ones of a campaign mission (shown quests) or a sequel / scenario mission, to
+  // mark as done for testing (the user: "skip the destroying of the base and go straight for the boss")
+  objectivesGroup() {
+    const G = this.G, S = G.sequel, E = G.campaign && G.campaign.engine;
+    let opts = [];
+    if (S && S.objectives) opts = S.objectives.filter((o) => !o.done && !o.failed && !o.hidden).map((o) => [o.id, o.text]);
+    else if (E) opts = (E.C.data.quests || []).filter((q) => q.visible && !q.accomplished && !q.unaccomplishable).map((q) => [q.name, (q.main ? '' : '(optional) ') + (q.headline || q.name)]);
+    else return '';
+    const pname = (p) => { const n = p.name || ''; const t = G.campaign && G.campaign.text ? G.campaign.text(n) : n; return `${t && t !== n ? t : n.replace(/^_PN_\w+?_/, '') || 'Player'} #${p.id}`; };
+    return `<div class="pwgrp"><b>Objectives</b><div class="dbgspawn"><select class="pwsel" id="d_obj">${opts.length ? opts.map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join('') : '<option value="">(none open)</option>'}</select>
+        ${this.btn('objdone', 'Mark as done', 'small')}</div><small>What the mission does when the objective is met happens too.</small>
+      <div class="dbgspawn"><select class="pwsel" id="d_plr">${G.world.players.filter((p) => p !== G.me && !p.dead).map((p) => `<option value="${p.id}">${esc(pname(p) + ' (' + (G.me.isEnemy(p) ? 'enemy' : G.me.isFriend(p) ? 'ally' : 'neutral') + ')')}</option>`).join('')}</select>
+        ${this.btn('wipe', 'Destroy all its units and buildings', 'small')}</div><small>For objectives like "destroy the base": the mission sees them destroyed (walls, gates and the Scorpion stay).</small></div>`;
+  }
   // ---------------------------------------------------------------- debug tools (a game with debug options: game/cheats.js)
   // things to do at once in the running game; the window stays open, a line says what was done
   debugTools() {
@@ -302,6 +318,7 @@ export class Menu {
         <select class="pwsel" id="d_lvl">${[1, 2, 3, 4, 5].map((l) => `<option value="${l}">level ${l}</option>`).join('')}</select>
         ${this.btn('spawn', 'Put down', 'small')}</div><small>At the middle of the screen. Your new Workshop objects are in the list too.</small></div>
       <div class="pwgrp"><b>World</b><div class="btns row">${this.btn('fog', G.fow && G.fow.revealAll ? 'Fog of war: off' : 'Fog of war: on', 'small')}${(G.campaign || G.sequel) ? this.btn('win', 'Win the mission', 'small') + this.btn('lose', 'Lose the mission', 'small') : ''}</div></div>
+      ${this.objectivesGroup()}
       <div class="pwgrp"><b>Report</b><div class="btns row">${this.btn('report', 'Copy a report of the objects at the middle of the screen', 'small')}</div><small>For bug reports: centre the camera on the objects (select your units too), then paste the copied text.</small></div>
       <p id="d_did"></p><div class="btns row">${this.btn('back', 'Back', 'small')}${this.btn('resume', 'Resume game', 'small')}</div>`);
     this.bind({
@@ -321,6 +338,23 @@ export class Menu {
         say(typeof got === 'string' ? got : `${(D.text(n, got.owner) || {}).name || n} put down.`);
       },
       fog: () => { if (G.fow) G.fow.revealAll = !G.fow.revealAll; if (G.updateFow) G.updateFow(); this.debugTools(); say(G.fow && G.fow.revealAll ? 'The whole map is visible.' : 'The fog of war is back.'); },
+      objdone: () => {
+        const v = this.win.querySelector('#d_obj').value;
+        if (!v) return say('No objective chosen.');
+        const S = G.sequel, E = G.campaign && G.campaign.engine;
+        if (S && S.complete) { S.complete(v); this.debugTools(); say('Objective marked as done.'); return; }
+        if (E) { const q = E.quests.get(v), ran = E.skipQuest(q); this.debugTools(); say(ran.length ? `Done; the mission went on as if it had been met (${ran.join(', ')}).` : 'Marked as done (no trigger of the mission accomplishes it: only the mark changed).'); }
+      },
+      wipe: () => {
+        const id = +this.win.querySelector('#d_plr').value, p = W.players.find((x) => x.id === id);
+        if (!p) return say('No player chosen.');
+        let n = 0;
+        for (const e of [...W.units, ...W.buildings]) {
+          if (!e.alive || e.owner !== p || (e.def && (e.def.wallKind || e.def.gate || /^CScorpion/.test(e.def.script || '')))) continue;
+          W.damage(e, e.hp + 1e7, null); n++;
+        }
+        say(`${n} objects of player #${id} destroyed.`);
+      },
       win: () => { this.close(); G.endMission(true, { text: 'Won with the debug tools.' }); },
       lose: () => { this.close(); G.endMission(false, { text: 'Lost with the debug tools.' }); },
       report: async () => {

@@ -59,15 +59,17 @@
 
   .info { position: relative; width: 209px; height: 197px; flex: none; }
   .info .ibody { position: absolute; inset: 0; font-size: 11px; }
-  .info .por { position: absolute; left: 16px; top: 14px; border: 1px solid #8a6a38; background-color: #1b130c; }
-  .info .nm { position: absolute; left: 88px; top: 15px; width: 108px; font-size: 13px; font-weight: bold; color: #f3d58c; line-height: 1.1; }
-  .info .nm.wide { left: 18px; width: 180px; }
-  .info .lv { position: absolute; left: 88px; top: 48px; font-size: 10.5px; color: #d8c49a; }
-  .info .hp { position: absolute; left: 16px; top: 82px; width: 178px; height: 11px; background: #1b130c; border: 1px solid #6d5430; }
+  /* the original's layout (Info.usl CInfo): name 33/51, 7; owner 33, 19; portrait 33, 38 (64 x 61); values in the
+     frame's six rows 117, 34 + 17 i; buffs in its five circles 31 + 17 i, 121; the hit points under all, on the line */
+  .info .por { position: absolute; left: 32px; top: 37px; border: 1px solid #8a6a38; background-color: #1b130c; }
+  .info .nm { position: absolute; left: 33px; top: 5px; width: 165px; font-size: 13px; font-weight: bold; color: #f3d58c; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .info .nm.wide { left: 33px; width: 165px; }
+  .info .lv { position: absolute; left: 33px; top: 20px; width: 165px; font-size: 10.5px; color: #d8c49a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .info .hp { position: absolute; left: 32px; top: 136px; width: 165px; height: 8px; background: #1b130c; border: 1px solid #6d5430; }
   .info .hp i { display: block; height: 100%; background: linear-gradient(#9ce05a, #4d9a1f); }
-  .info .hp span { position: absolute; inset: 0; text-align: center; font-size: 9px; line-height: 10px; color: #fff; text-shadow: 0 1px 1px #000; }
-  .info .st { position: absolute; left: 20px; top: 98px; width: 180px; line-height: 17px; }
-  .info .st div { display: flex; align-items: center; gap: 5px; }
+  .info .hp span { position: absolute; inset: -1px 0; text-align: center; font-size: 8px; line-height: 10px; color: #fff; text-shadow: 0 1px 1px #000, 0 0 2px #000; }
+  .info .st { position: absolute; left: 119px; top: 34px; width: 79px; }
+  .info .st div { display: flex; align-items: center; gap: 5px; height: 17px; white-space: nowrap; overflow: hidden; }
   .info .st span { display: inline-block; flex: none; }
   .info .st > div > span { display: inline-flex; align-items: center; gap: 5px; }
   .info .carry { position: absolute; left: 20px; bottom: 36px; display: flex; gap: 5px; align-items: center; }
@@ -79,11 +81,11 @@
   .info .buffs span { width: 16px; height: 16px; flex: none; }
   .info .islot { position: absolute; left: 167px; top: 1px; width: 20px; height: 20px; }   /* the item it carries (Info.usl m_pxItemslot) */
   .info .carry.big { position: absolute; left: 18px; top: 44px; bottom: auto; font-size: 14px; }
-  .info .hint { position: absolute; left: 18px; top: 72px; color: #d8c49a; }
-  .info .prog { position: absolute; left: 16px; bottom: 16px; width: 178px; height: 12px; background: #1b130c; border: 1px solid #6d5430; }
+  .info .hint { position: absolute; left: 104px; top: 38px; width: 94px; color: #d8c49a; }
+  .info .prog { position: absolute; left: 32px; top: 118px; width: 165px; height: 12px; background: #1b130c; border: 1px solid #6d5430; }
   .info .prog i { display: block; height: 100%; background: linear-gradient(#f0d070, #a07820); }
   .info .prog span { position: absolute; inset: 0; text-align: center; font-size: 9px; line-height: 11px; color: #fff; text-shadow: 0 1px 1px #000; }
-  .info .queue { position: absolute; left: 16px; bottom: 28px; display: flex; gap: 2px; }
+  .info .queue { position: absolute; left: 33px; top: 146px; display: flex; gap: 2px; }
   .info .qi { position: relative; width: 31px; height: 30px; border: 1px solid #8a6a38; cursor: pointer; background-color: #1b130c; }
   .info .qi i { position: absolute; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,.55); }
   .info .grp { position: absolute; left: 14px; top: 14px; width: 184px; display: flex; flex-wrap: wrap; gap: 2px; }
@@ -113,6 +115,7 @@
   .flyout .card .cd { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.55); color: #ffe7a0; font-weight: bold; font-size: 15px; text-shadow: 0 0 3px #000; }
   .flyout .frow.armed .ftitle { color: #fff6c8; text-shadow: 0 0 4px #f0b040, 0 1px 2px #000; }
   .flyout .card .hk { position: absolute; left: 2px; top: 0; font-size: 12px; font-weight: bold; color: #ffe070; text-shadow: 0 0 3px #000, 0 0 3px #000; z-index: 2; }
+  .flyout .card .lvo { position: absolute; left: 0; top: 0; pointer-events: none; }
   .flyout .card .qn { position: absolute; right: 1px; bottom: 0; font-size: 12px; font-weight: bold; color: #fff; text-shadow: 0 0 3px #000, 0 0 3px #000; }
 
   .pyrwrap { position: absolute; left: 0; top: 74px; transform-origin: 0 0; }

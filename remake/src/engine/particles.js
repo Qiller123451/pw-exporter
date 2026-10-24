@@ -205,6 +205,7 @@ export class Particles {
     const P = e.params || {};
     const fl = (P.flags >>> 0) || 0, sc = e.scale || [0, 0, 0], X = Math.max(sc[0], 0.01), sp = e.spread || 0;
     Object.assign(x, { e, P, T, F: fl, parts: [], started: false, idle: 0, anims: e.anims ? new Set(e.anims.map((a) => a.toLowerCase())) : null, fire: !!(attr & FIRING) && !!x.node,
+      boneFire: !(attr & FIRING) && !!x.node && !e.anims,
       pivot: [((T.mid_x ?? 127) - 127) / 127, ((T.mid_y ?? 127) - 127) / 127],
       // the outward tilt of the default velocity (constructor 0x707d06); a spread of -pi/2 or less: none
       k: sp > -Math.PI / 2 ? Math.hypot(0.7 * sc[2], X) * Math.sin(sp) / X : null,
@@ -276,6 +277,7 @@ export class Particles {
         if (on && this.seen && !this.seen(_v.x, _v.z)) on = false;
         if (on && x.anims && !Particles.playing(x)) on = false;
         if (on && x.fire && !Particles.firing(x)) on = false;
+        if (on && x.boneFire && Particles.attackBone(x) && !Particles.firing(x)) on = false;
         if (!x.parts.length && (!on || _v.distanceTo(target) > RANGE || !this.frustum.intersectsSphere(_s.set(_v, 15)))) continue;
         const near = on && _v.distanceTo(target) <= RANGE;
         // the source's level of detail (0x703e40): every slot within ParticleSrcOffset (120 m) of the camera, then
@@ -341,6 +343,23 @@ export class Particles {
     }
     const c = x.wielder;
     return !c || (!!c.cur && c.cur.isRunning() && ATTACK.test(c.curName || ''));
+  }
+  // an emitter without the weapon bit on a bone that only attack clips move (MIRAGE's exo flamethrower: the flame on
+  // its gun's helper bone, which only attack_front animates) is a weapon's too: it sprays while the wielder attacks
+  static attackBone(x) {
+    if (x.atkBone !== undefined) return x.atkBone;
+    const bone = x.node.parent;
+    let ctl = null;
+    for (let o = x.node; o && !ctl; o = o.parent) ctl = o.userData.animCtl || null;
+    // (the model's animations may come after its emitters: asked again for a few frames)
+    if (!ctl && (x.atkTries = (x.atkTries || 0) + 1) < 30) return false;
+    x.atkBone = false;
+    if (!bone || !bone.name || !ctl) return false;
+    const pre = bone.name + '.', moving = [];
+    for (const [n, c] of ctl.byName) if (c.tracks.some((t) => t.name.startsWith(pre))) moving.push(n);
+    x.atkBone = moving.length > 0 && moving.every((n) => ATTACK.test(n));
+    if (x.atkBone) x.wielder = ctl;
+    return x.atkBone;
   }
   static attached(node) { for (let o = node; o; o = o.parent) if (o.isScene) return true; return false; }
   // one frame of a source (Process 0x704a10): every particle slot moves (ProcPart); a dead one starts again (InitPart)

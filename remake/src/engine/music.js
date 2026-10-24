@@ -90,6 +90,16 @@ export class Music {
       this.attacks[k] = { x, z, t: time };
     } else this.attacks.push({ x, z, t: time });
   }
+  // a cutscene starts / ends (MusicMgr.usl OnSequenceStart / OnSequenceEnd): the Sequence switch - above Combat - is on
+  // for its length with the scene's music or "-silence-" (the client always passes one of them); the remake's
+  // cutscenes play their own music items, so it is silence here. The user: "fight music still plays once the mission
+  // ends and the cutscene starts".
+  sequence(on) {
+    const s = this.S('Sequence');
+    if (on) { s.on = true; this.setTrack(s, '-silence-'); } else { s.on = false; s.track = ''; s.file = ''; }
+    if (this.current === this.sw.indexOf(s) && on) this.current = -1;
+    this.refresh();
+  }
   // the trigger action MUSI: a track id or a file below Audio/ ('music/x.mp3'); looped = BackgroundLeveled
   trigger(track, loop) {
     const s = this.S(loop ? 'BackgroundLeveled' : 'Trigger');
@@ -112,6 +122,12 @@ export class Music {
     if (k < 0) return;
     if (k !== this.current) this.activate(k);
     else if (this.current >= 0 && this.el) this.sw[this.current].pos = this.el.currentTime;
+  }
+  // switch to the highest switch that is on, without the timed checks
+  refresh() {
+    let k = -1;
+    for (let i = this.sw.length - 1; i >= 0; i--) if (this.sw[i].on) { k = i; break; }
+    if (k >= 0 && k !== this.current) this.activate(k);
   }
   combat(time) {
     const M = this.misc, delay = M.combat_delay_in_seconds || 10, n = M.combat_attack_trigger || 3;
