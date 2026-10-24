@@ -132,12 +132,37 @@ WALK_TRANSITION_SLOT = 28     # holds a 1-based index into the archive's walk tr
 
 # ------------------------------------------------------------------------------------------------- object model
 class EmptySlot:
-    """a null entry of a model's chunk table"""
+    """a null entry of a model's chunk table. Some modded archives have them (legacy hand edits); they are kept in
+    place and written back with their raw value (0 or 0x80000000). raw None = a chunk that could not be read,
+    written as 0x80000000."""
     KIND = 'empty'
     IS_ANIM = False
 
+    def __init__(self, raw=0x80000000):
+        self.raw = raw
+
     def __repr__(self):
-        return '<EmptySlot>'
+        return '<EmptySlot %s>' % ('unreadable' if self.raw is None else '0x%08X' % self.raw)
+
+
+class ZeroChunk(EmptySlot):
+    """a chunk-table entry that points to a block of zero bytes (a chunk blanked out by hand in modded archives,
+    e.g. MIRAGE's dilophosaurud). Kept as it is: written as a pointer to `size` zero bytes."""
+    SIZE = 256              # covers the chunk struct and the mesh header the game would read through a 0 offset
+
+    def __init__(self, size=SIZE):
+        super().__init__(None)
+        self.size = size
+
+    def __repr__(self):
+        return '<ZeroChunk %d bytes>' % self.size
+
+
+# model-info values computed from the chunks; models with legacy empty slots keep the file's values
+CHUNK_COUNT_FIELDS = ('num_chunks', 'first_particle_chunk_index', 'num_particle_chunks', 'first_link_chunk_index',
+                      'num_link_chunks', 'has_billboards_or_particles', 'num_skeleton_chunks', 'num_physcoll_chunks',
+                      'num_cloth_chunks', 'first_light_volume_chunk_index', 'num_light_volume_chunks',
+                      'num_speedline_chunks')
 
 
 class Sound:
@@ -244,8 +269,12 @@ class Model:
 
     # -- ordering and derived values
     def sort_chunks(self):
-        """stable sort by group (skeletons, cloth colliders, emitters, links, light volumes, cloth, the rest)"""
-        self.chunks.sort(key=lambda c: c.group() if isinstance(c, Chunk) else 9)
+        """stable sort by group (skeletons, cloth colliders, emitters, links, light volumes, cloth, the rest).
+        Empty slots stay where they are; the chunks fill the other positions."""
+        fixed = [i for i, c in enumerate(self.chunks) if not isinstance(c, Chunk)]
+        moving = sorted((c for c in self.chunks if isinstance(c, Chunk)), key=lambda c: c.group())
+        it = iter(moving)
+        self.chunks = [self.chunks[i] if i in fixed else next(it) for i in range(len(self.chunks))]
 
     def _range(self, kind):
         idx = [i for i, c in enumerate(self.chunks) if getattr(c, 'KIND', None) == kind]
@@ -281,6 +310,9 @@ class Model:
         v['num_physcoll_chunks'] = len(self.chunks_of('phys_coll'))
         v['num_cloth_chunks'] = len(cl)
         v['num_speedline_chunks'] = len(self.chunks_of('speedline'))
+        legacy = getattr(self, 'legacy_counts', None)
+        if legacy and len(self.chunks) == legacy.get('num_chunks'):
+            v.update(legacy)        # a model with legacy empty slots, read from a file: its own counts stay
         v['num_collision_volumes'] = len(self.collision)
         v['num_object_anim'] = len(self.anims)
         # chunk -> chunk references back to indices
@@ -380,13 +412,18 @@ class GsfArchive:
         for k in range(vals['num_chunks'] if ct is not None else 0):
             p = r.ptr(ct + 4 * k)
             if p is None:
-                m.chunks.append(EmptySlot())
+                m.chunks.append(EmptySlot(r.u32(ct + 4 * k)))
                 continue
             try:
                 m.chunks.append(self._read_chunk(r, p))
             except (GsfError, struct.error, ValueError, IndexError) as e:
+                if not any(r.d[p:p + ZeroChunk.SIZE]):
+                    m.chunks.append(ZeroChunk())        # blanked out by hand: kept as zeros
+                    continue
                 self.warnings.append('%s: chunk %d unreadable (%s) - left empty' % (m.name, k, e))
-                m.chunks.append(EmptySlot())
+                m.chunks.append(EmptySlot(None))
+        if any(not isinstance(c, Chunk) for c in m.chunks):
+            m.legacy_counts = {f: m.v[f] for f in CHUNK_COUNT_FIELDS if f in m.v}
         mlp = ptrs['ptr_material_list']
         m.material_list = r.obj('matlist', mlp, MaterialList.read) if mlp is not None else None
         cp = ptrs['ptr_collision_table']
@@ -603,6 +640,45 @@ class GsfArchive:
         if self.toc_order is not None:
             self.toc_order.append(model)
 
+    def copy_model(self, src, name, dusttrails=True):
+        """add a copy of model `src` named `name`: its own copy of every component, mesh, collision volume, material
+        list, walk set and animation table. Animation data, materials and sounds are shared with the original, as
+        the game's archives share them between models anyway. dusttrails: copy the effects started by src's
+        animations too."""
+        new = self.duplicate_model(src, name)
+        self.add_model(new)
+        if dusttrails:
+            for d in [d for d in self.dusttrails if d.model is src]:
+                nd = DustTrail(d.name, new, d.anim_index)
+                nd.anim = new.anim_name(d.anim.name) if d.anim is not None else None
+                nd.start_frame = d.start_frame
+                nd.entries = list(d.entries)
+                self.dusttrails.append(nd)
+        return new
+
+    def duplicate_model(self, src, name):
+        """a copy of model `src` named `name`, not added to the archive (see copy_model)"""
+        import copy
+        memo = {}
+        for x in self.materials:
+            memo[id(x)] = x
+        for x in self.sounds:
+            memo[id(x)] = x
+        for ai in self.anim_infos:
+            for c in ai.chunks:
+                if c is not None:
+                    memo[id(c)] = c
+        for m in self.models:
+            for ma in m.anims:
+                for _, a, _ in ma.tracks:
+                    memo[id(a)] = a
+        new = copy.deepcopy(src, memo)
+        new.name = name
+        if new.object_name is not None:
+            new.object_name = name
+        new.object_name_meta = (None, None)
+        return new
+
     def replace_model(self, old, new):
         i = self.models.index(old)
         self.models[i] = new
@@ -798,6 +874,10 @@ class GsfArchive:
             for c in m.chunks:
                 if isinstance(c, Chunk):
                     w.ptr(w.need(key_of(c), c.write))
+                elif isinstance(c, ZeroChunk):
+                    w.ptr(w.need(key_of(c), lambda w, n=c.size: w.raw(b'\0' * n)))
+                elif getattr(c, 'raw', None) in (0, 0x80000000):
+                    w.u32(c.raw)            # an empty slot, written back exactly as it was
                 else:
                     w.ptr(None)
         w.need(kc, chunk_table)

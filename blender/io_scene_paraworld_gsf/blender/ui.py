@@ -52,9 +52,10 @@ def _fourcc_of(obj):
 class GSF_UL_entries(bpy.types.UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_property, index=0, flt_flag=0):
         icons = {'FILE': 'FILE', 'SCENE': 'OBJECT_DATA', 'REMOVE': 'X'}
+        icon = 'DUPLICATE' if item.copy_of and item.state == 'FILE' else icons.get(item.state, 'DOT')
         row = layout.row(align=True)
         row.prop(item, 'select', text='')
-        row.label(text=item.name, icon=icons.get(item.state, 'DOT'))
+        row.label(text=item.name, icon=icon)
         row.label(text=item.fourcc)
 
     def filter_items(self, context, data, propname):
@@ -141,6 +142,7 @@ class GSF_PT_archive(bpy.types.Panel):
         row.operator('gsf.import_entries', text='Import', icon='IMPORT')
         row.operator('gsf.entry_state', text='Keep').state = 'FILE'
         row.operator('gsf.entry_state', text='Remove', icon='X').state = 'REMOVE'
+        row.operator('gsf.entry_copy', text='Copy', icon='DUPLICATE')
         row = lay.row(align=True)
         row.operator('gsf.model_new', icon='EMPTY_AXIS')
         row.operator('gsf.sort_lods', text='', icon='OUTLINER_COLLECTION').all_models = True
@@ -385,6 +387,8 @@ class GSF_PT_object(bpy.types.Panel):
         if g.has_object_name:
             lay.prop(g, 'object_name')
         lay.prop(g, 'source_name')
+        if g.empty_slots:
+            lay.prop(g, 'empty_slots')
         draw_struct(lay, g, P.GSF_PG_model.STRUCT, 'model')
         lay.prop(g, 'auto_bbox')
         if not g.auto_bbox:

@@ -387,4 +387,82 @@ for mirror8 in ('X', 'Y', 'NONE'):
     good = sum(b.matrix_local.col[1].to_3d().dot((c.head_local - b.head_local).normalized()) > 0.9 for b, c in pairs)
     check(good == len(pairs) and arm8.data.display_type == 'OCTAHEDRAL',
           'mirror %s: every bone points at its children (%d of %d), octahedral display' % (mirror8, good, len(pairs)))
+# ------------------------------------------------------------------ 9. legacy empty / zero chunks (modded archives)
+mirage = os.path.join(gsf_dir, '..', '..', 'MIRAGE', 'GSF', 'mirage_animals.gsf')
+if os.path.isfile(mirage):
+    from io_scene_paraworld_gsf.core.archive import EmptySlot, ZeroChunk  # noqa: E402
+    names9 = 'saltasaurud,dilophosaurud,atroxosaurud'
+    bpy.ops.import_scene.paraworld_gsf(filepath=mirage, models=names9, textures=False)
+    col9 = next(c for c in bpy.data.collections if c.gsf_archive.is_archive and
+                os.path.abspath(bpy.path.abspath(c.gsf_archive.source_path)) == os.path.abspath(mirage))
+    out9 = os.path.join(out_dir, 'legacy_mirage_animals.gsf')
+    bpy.ops.export_scene.paraworld_gsf(filepath=out9, archive=col9.name)
+    D9, E9 = GsfArchive.load(mirage), GsfArchive.load(out9)
+    for n9 in names9.split(','):
+        a9, b9 = D9.model(n9), E9.model(n9)
+        slots = [(type(c).__name__, getattr(c, 'raw', None)) if isinstance(c, EmptySlot) else c.KIND for c in a9.chunks]
+        slots9 = [(type(c).__name__, getattr(c, 'raw', None)) if isinstance(c, EmptySlot) else c.KIND for c in b9.chunks]
+        same_hdr = all(a9.v[k] == b9.v[k] for k in ('num_chunks', 'first_link_chunk_index', 'num_link_chunks', 'num_cloth_chunks'))
+        issues9, _ = compare.compare_model(a9, b9, None, None)
+        check(slots == slots9 and same_hdr and not issues9,
+              '%s: empty / zero slots, header counts and animations kept (%s)' % (n9, issues9[:2] or 'identical'))
+else:
+    print('(no MIRAGE archive: legacy slot test skipped)')
+# ------------------------------------------------------------------ 10. copies of models (Copy button)
+import shutil  # noqa: E402
+src = os.path.join(out_dir, 'all_animals_for_copies.gsf')     # its own archive collection (not the one scenario 8 used)
+shutil.copyfile(os.path.join(gsf_dir, 'all_animals.gsf'), src)
+bpy.ops.import_scene.paraworld_gsf(filepath=src, textures=False)          # open only (default)
+col = next(c for c in bpy.data.collections if c.gsf_archive.is_archive and
+           os.path.abspath(bpy.path.abspath(c.gsf_archive.source_path)) == os.path.abspath(src))
+g = col.gsf_archive
+bpy.context.scene['gsf_active_archive'] = col.name
+def pick(name):
+    g.entry_index = [e.name for e in g.entries].index(name)
+for e in g.entries: e.select = False
+# 1. plain copies
+pick('allosaurus'); bpy.ops.gsf.entry_copy(name='allo_copy')
+pick('brachiosaurus'); bpy.ops.gsf.entry_copy(name='brachio_copy')
+# 2. import a copy and edit it (remove an animation)
+pick('brachio_copy'); bpy.ops.gsf.import_entries()
+e_bc = next(e for e in g.entries if e.name == 'brachio_copy')
+root_bc = e_bc.root
+check(e_bc.state == 'SCENE' and root_bc is not None and root_bc.gsf_model.name == 'brachio_copy' and
+      next(e for e in g.entries if e.name == 'brachiosaurus').state == 'FILE', 'imported copy is its own model; the original stays Keep')
+check(all(o.name.startswith('brachio_copy') for o in root_bc.children_recursive if o.type == 'MESH'), 'copy objects named after the copy')
+bpy.context.view_layer.objects.active = root_bc
+root_bc.gsf_model.anim_index = 0
+removed = root_bc.gsf_model.anims[0].name
+bpy.ops.gsf.anim_remove()
+# 3. copy of an edited model: import stegosaurus, move its first mesh, copy it
+pick('stegosaurus'); bpy.ops.gsf.import_entries()
+steg = next(e for e in g.entries if e.name == 'stegosaurus').root
+me = next(o for o in steg.children_recursive if o.type == 'MESH').data
+for v in me.vertices: v.co.z += 0.5
+bpy.context.view_layer.objects.active = None
+pick('stegosaurus'); bpy.ops.gsf.entry_copy(name='steg_copy')
+# 4. copy, then remove the original
+pick('kentrosaurus'); bpy.ops.gsf.entry_copy(name='kentro_renamed')
+pick('kentrosaurus'); bpy.ops.gsf.entry_state(state='REMOVE')
+out = os.path.join(out_dir, 'copies_all_animals.gsf')
+r = bpy.ops.export_scene.paraworld_gsf(filepath=out, archive=col.name)
+A, B = GsfArchive.load(src), GsfArchive.load(out)
+names = B.names()
+check(r == {'FINISHED'} and {'allo_copy', 'brachio_copy', 'steg_copy', 'kentro_renamed'} <= set(names) and 'kentrosaurus' not in names,
+      'saved: 4 copies, kentrosaurus removed (%d -> %d models)' % (len(A.models), len(B.models)))
+def same(a, b):
+    iss, _ = compare.compare_model(a, b, None, None)
+    return [i for i in iss if 'name' not in i]
+check(not same(A.model('allosaurus'), B.model('allo_copy')), 'allo_copy identical to allosaurus')
+check(not same(A.model('allosaurus'), B.model('allosaurus')), 'allosaurus itself unchanged')
+check(not same(A.model('kentrosaurus'), B.model('kentro_renamed')), 'copy of a removed model kept')
+bc = B.model('brachio_copy')
+check([x.name for x in bc.anim_names] == [x.name for x in A.model('brachiosaurus').anim_names if x.name != removed] and
+      not same(A.model('brachiosaurus'), B.model('brachiosaurus')), 'edited copy lost "%s"; brachiosaurus unchanged' % removed)
+st_e, st_c, st_o = B.model('stegosaurus'), B.model('steg_copy'), A.model('stegosaurus')
+check(not same(st_e, st_c) and same(st_o, st_c), 'copy of the edited stegosaurus has the edit')
+dt_a = [d for d in A.dusttrails if d.model.name == 'allosaurus']
+dt_c = [d for d in B.dusttrails if d.model.name == 'allo_copy']
+check(len(dt_a) == len(dt_c) and len(dt_a) > 0 and [d.anim.name if d.anim else None for d in dt_c] == [d.anim.name if d.anim else None for d in dt_a],
+      'dust trails of allosaurus copied (%d)' % len(dt_c))
 print('FAILURES:', fails or 'none')

@@ -197,6 +197,14 @@ class GSF_OT_import_entries(bpy.types.Operator):
                        self.animations, True)
         imp.col = col
         sel = [m for m in a.models if m.name in names]
+        # copies (made with Copy) are imported from their source model, under their own name
+        for e in g.entries:
+            if e.name in names and e.copy_of and e.state == 'FILE':
+                src = entry_source(g, a, e)
+                if src is None:
+                    self.report({'WARNING'}, '%s: its source model %s is not in the archive file' % (e.name, e.copy_of))
+                    continue
+                sel.append(a.duplicate_model(src, e.name))
         roots = imp.import_models(sel)
         for e in g.entries:
             e.select = False
@@ -223,6 +231,80 @@ class GSF_OT_entry_state(bpy.types.Operator):
             if self.state == 'FILE' and e.root is not None:
                 e.root.gsf_model.source_name = ''
             e.state = 'REMOVE' if self.state == 'REMOVE' else ('SCENE' if (e.root is not None and self.state != 'FILE') else 'FILE')
+        return {'FINISHED'}
+
+
+def entry_source(g, a, e):
+    """the model of the archive file a copy entry comes from (following copies of copies)"""
+    seen = set()
+    name = e.copy_of
+    while name and name not in seen:
+        seen.add(name)
+        m = a.model(name) if name in a.names() else None
+        if m is not None:
+            return m
+        nxt = next((x for x in g.entries if x.name == name), None)
+        name = nxt.copy_of if nxt is not None else ''
+    return None
+
+
+class GSF_OT_entry_copy(bpy.types.Operator):
+    """Add a copy of the active model under a new name: every component, flag, mesh, material, collision volume,
+animation, walk set and the dust trails of its animations. An edited model is copied as it is in the scene when the
+archive is saved; import the copy to change it"""
+    bl_idname = 'gsf.entry_copy'
+    bl_label = 'Copy model'
+    bl_options = {'REGISTER', 'UNDO'}
+    name: StringProperty(name='Name of the copy')
+
+    def invoke(self, context, event):
+        col = active_archive(context)
+        if col is None:
+            return {'CANCELLED'}
+        g = col.gsf_archive
+        if not 0 <= g.entry_index < len(g.entries):
+            return {'CANCELLED'}
+        base = g.entries[g.entry_index].name
+        names = {e.name for e in g.entries}
+        k, self.name = 1, base + '_copy'
+        while self.name in names:
+            k += 1
+            self.name = '%s_copy%d' % (base, k)
+        return context.window_manager.invoke_props_dialog(self)
+
+    def execute(self, context):
+        col = active_archive(context)
+        if col is None:
+            return {'CANCELLED'}
+        g = col.gsf_archive
+        if not 0 <= g.entry_index < len(g.entries):
+            return {'CANCELLED'}
+        src = g.entries[g.entry_index]
+        name = self.name.strip()
+        if not name or any(e.name == name for e in g.entries):
+            self.report({'ERROR'}, 'Choose a name that no model of the archive has')
+            return {'CANCELLED'}
+        if src.state == 'REMOVE':
+            self.report({'ERROR'}, '%s is marked Remove' % src.name)
+            return {'CANCELLED'}
+        src_name, src_fourcc = src.name, src.fourcc
+        e = g.entries.add()          # (src may move in memory now: only the copied values are used below)
+        e.name, e.fourcc, e.copy_of, e.state = name, src_fourcc, src_name, 'FILE'
+        e.info = 'copy of %s' % src_name
+        # the effects its animations start (dust trails refer to the model by name). Read them before adding:
+        # adding to a collection can move its items in memory.
+        found = [({k: getattr(d, k) for k in ('name', 'anim', 'anim_index', 'start_frame')},
+                  [(kv.name, kv.value) for kv in d.entries]) for d in g.dusttrails if d.model == src_name]
+        for vals, kvs in found:
+            nd = g.dusttrails.add()
+            for k, v in vals.items():
+                setattr(nd, k, v)
+            nd.model = name
+            for kn, kvv in kvs:
+                x = nd.entries.add()
+                x.name, x.value = kn, kvv
+        g.entry_index = len(g.entries) - 1
+        self.report({'INFO'}, '%s: copy of %s' % (name, src_name))
         return {'FINISHED'}
 
 
@@ -708,7 +790,7 @@ def frame_handler(scene, depsgraph=None):
                 o.data = me
 
 
-CLASSES = [IMPORT_SCENE_OT_paraworld_gsf, EXPORT_SCENE_OT_paraworld_gsf, GSF_OT_import_entries, GSF_OT_entry_state, GSF_OT_entry_move,
+CLASSES = [IMPORT_SCENE_OT_paraworld_gsf, EXPORT_SCENE_OT_paraworld_gsf, GSF_OT_import_entries, GSF_OT_entry_state, GSF_OT_entry_copy, GSF_OT_entry_move,
            GSF_OT_archive_new, GSF_OT_model_new, GSF_OT_sort_lods, GSF_OT_set_kind, GSF_OT_anim_apply, GSF_OT_anim_clear, GSF_OT_anim_add,
            GSF_OT_anim_remove, GSF_OT_collection_edit, GSF_OT_archive_list, GSF_OT_toggle_bit, GSF_OT_rebuild_material]
 

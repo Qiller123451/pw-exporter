@@ -37,6 +37,9 @@ Edit > Preferences > Add-ons > (drop-down) Install from Disk… and choose `io_s
      scene when you save.
    - **Remove** leaves the ticked models out of the saved archive.
    - **Keep** writes a model exactly as it is in the source file.
+   - **Copy** adds a copy of the active model under a new name: every component, flag, mesh, material, collision
+     volume, animation and walk set, and the dust trails of its animations. The copy is saved as it is (a copy of
+     the model as it is in the file, or as edited in the scene); tick it and press **Import** to change it.
    - The arrows beside the list move the active model up, down, to the top or to the bottom (with a filter they step
      over the hidden models). Once the list has been rearranged, the archive is saved in its order; models added
      with *New model from selection* go where their entry stands. An archive whose list was not touched keeps the
@@ -119,6 +122,21 @@ Edited animations are rebuilt from the F-curves:
 - Each track keeps its stored format. *Simple* tracks can only rotate; *Trans* tracks can also stretch along the
   bone. The exporter warns when a bone's motion does not fit its format.
 - Constraints and IK are not evaluated. Bake the action first.
+
+## Legacy edits in modded archives
+
+Some modded archives were edited by hand (hex editor). The add-on keeps those edits as they are:
+- **Empty chunk-table slots** (the value 0 or 0x80000000 instead of a chunk) stay in their position with their exact
+  value, in models kept from the file and in imported models. The model root shows them as *Empty chunk slots*
+  (e.g. `1`, `7=0`, `13=zero`).
+- **Blanked-out chunks** (a slot that points to zero bytes, e.g. MIRAGE's dilophosaurud) are written back as zeros.
+- **Header counts:** a model with empty slots keeps the file's own counts (number of links, cloth chunks and so
+  on), even where they don't match the chunks.
+- **Animation tracks of empty slots** are copied unchanged from the source archive.
+- **Blanked meshes** (every vertex and triangle byte zero) and **zero rotations** (a quaternion of four zeros)
+  are written back as zeros while they are not edited.
+
+Imported models keep the chunk order of the file; new components follow, grouped by kind.
 
 ## Known limits
 

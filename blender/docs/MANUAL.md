@@ -90,6 +90,10 @@ The line under the list describes the active model: number of chunks by kind and
 - **Tick boxes + Import**: tick models and press **Import** to bring them into the scene. They become *Edited*.
 - **Keep / Remove**: set the ticked models (or the active one) to *Keep* or *Remove*. *Keep* also undoes an import:
   the model is written from the file again and its objects in the scene are ignored.
+- **Copy**: adds a copy of the active model under a name you choose. It copies every component, flag, mesh,
+  material, collision volume, animation and walk set, and the dust trails its animations start. In the list the copy
+  shows a copy icon. Saved as it is, it is a copy of the source model as the file has it, or as you edited it in the
+  scene. To change the copy itself, tick it and press **Import**: it comes in as its own model.
 - **Arrows** beside the list move the active model up, down, to the top or to the bottom. Once you move a model, the
   archive is saved in the list's order (the panel says *Saved in the order of the list*). With a filter, the arrows
   step over hidden models.
@@ -312,8 +316,9 @@ warnings (for example a mesh vertex without bone weights) are shown in Blender's
 
 **Copy a model under a new name**
 
-1. Import it, change *Model name* on the root and clear *Replaces*.
-2. Save. The original is written as it is in the file, and the copy is added after it.
+1. Make it the active model in the list and press **Copy**. Name the copy.
+2. To change the copy, tick it and press **Import**, then edit it like any model.
+3. Save. The original stays as it is, and the copy is added at the end of the archive.
 
 **Give an animal a new animation**
 
@@ -338,4 +343,5 @@ warnings (for example a mesh vertex without bone weights) are shown in Blender's
 | A model is "marked Edited but its root object is gone" | Its root empty was deleted. It is saved from the file instead. Import it again to edit it. |
 | An edited animation looks different in the game | Bake constraints and IK into keys first. Check the *Tracks* list in the *GSF Action* panel: a *Simple* track cannot move a bone. |
 | An animation of a model shares data with others | Unchanged animations stay shared between models in the file. Once you edit one, the edited model gets its own copy. |
+| A modded archive has empty chunk slots or zeroed parts | They are legacy hand edits and are kept as they are: the model root lists them as *Empty chunk slots*. See *Legacy edits in modded archives* in the README. |
 | The archive is slow to import | Import only the models you need (*Only open the archive*, then tick and **Import**), or untick *Animations*. |

@@ -200,6 +200,15 @@ class Importer:
             self._common(obj, c, i, m)
             ctx['objs'][id(c)] = obj
         self._resolve_refs(m, ctx)
+        # empty chunk-table slots (legacy hand edits): remembered on the root and written back in place
+        from ..core.archive import ZeroChunk
+        g.empty_slots = P.format_empty_slots([(i, 'zero' if isinstance(c, ZeroChunk) else
+                                               (c.raw if c.raw is not None else 0x80000000))
+                                              for i, c in enumerate(m.chunks) if not isinstance(c, Chunk)])
+        if any(not isinstance(c, Chunk) and c.raw is None and not isinstance(c, ZeroChunk) for c in m.chunks):
+            self.warnings.append('%s: unreadable chunks are kept as empty slots' % m.name)
+        if getattr(m, 'legacy_counts', None):
+            root['gsf_legacy_counts'] = dict(m.legacy_counts)      # the file's own chunk counts (written back)
         for k, cv in enumerate(m.collision):
             self._collision(cv, k, ctx)
         if self.animations:
@@ -320,7 +329,11 @@ class Importer:
         tri_sub = np.concatenate(tri_sub) if tri_sub else np.zeros(0, np.int64)
         pos = VX.dequantize(q, md.bbox)
         n = len(q)
-        # weld vertices that share position and skin
+        # weld vertices that share position and skin. Not when every vertex is the same (a mesh blanked out by hand
+        # in a modded archive, all zero bytes): welding would collapse it to one point and lose its triangles.
+        if weld and n > 1 and (q == q[0]).all() and (bid == bid[0]).all() and (bw == bw[0]).all() \
+                and (nidx == nidx[0]).all() and (uv == uv[0]).all():
+            weld = False
         if weld:
             key = np.concatenate([q.astype(np.int64), bid.astype(np.int64), bw.astype(np.int64)], 1)
             _, first, inv = np.unique(key, axis=0, return_index=True, return_inverse=True)
@@ -470,6 +483,10 @@ class Importer:
         me, skin = self._mesh_from_data(c.mesh, chunk_name(m, c, i, 'mesh'), mats, c, weld=self.weld and not c.is_cloth)
         for k, x in raw_mats.items():
             me['gsf_raw_material_%d' % k] = x          # index past the model's material list (kept as it is)
+        if c.mesh.submeshes and all(not s.raw.any() and not s.tris.any() for s in c.mesh.submeshes):
+            # blanked out by hand (legacy edit in modded archives): every vertex and triangle byte is zero. Written
+            # back as the same zeros while the mesh is not edited.
+            me['gsf_blanked'] = [int(x) for s in c.mesh.submeshes for x in (len(s.raw), s.raw.shape[1], len(s.tris))]
         obj = bpy.data.objects.new(me.name, me)
         local = self.space.matrix(c.v['transform'])
         if c.skin == 2 and self._bone_parent(obj, c, ctx, local):
@@ -727,6 +744,10 @@ class Importer:
             for c, a, n in e.anim.tracks:
                 obj = ctx['objs'].get(id(c))
                 if obj is None:
+                    if not isinstance(c, Chunk) and a is not None and a.offset is not None:
+                        # a track on an empty slot (legacy): remembered, copied from the source file on save
+                        slot = next(k for k, x in enumerate(m.chunks) if x is c)
+                        it.legacy_tracks = ' '.join(filter(None, [it.legacy_tracks, '%d:%d:%d' % (slot, a.offset, n)]))
                     continue
                 try:
                     act = A.import_anim(self, a, c, obj, ctx, '%s|%s' % (m.name, e.name))

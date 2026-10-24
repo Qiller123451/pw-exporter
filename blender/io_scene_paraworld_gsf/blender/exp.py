@@ -18,8 +18,9 @@ from ..core import GsfArchive, GsfError
 from ..core import normals as NRM
 from ..core import vertex as VX
 from ..core import names as NAMES
-from ..core.archive import Model, ModelAnim, AnimName, WalkSet, Sound, DustTrail, CollisionVolume, AnimInfo, WALK_TRANSITION_SLOT
+from ..core.archive import Model, ModelAnim, AnimName, WalkSet, Sound, DustTrail, CollisionVolume, AnimInfo, EmptySlot, ZeroChunk, WALK_TRANSITION_SLOT
 from ..core.chunks import KINDS, MeshData, Submesh, SkeletonChunk, Bone
+from ..core.chunks.base import Chunk
 from ..core.materials import MaterialList
 from ..core.archive import SOUND
 from . import props as P
@@ -156,6 +157,7 @@ class Exporter:
         a.walk_transitions = [x.name for x in ga.walk_transitions]
         # models
         by_name = {m.name: m for m in a.models}
+        file_models = dict(by_name)          # as in the file (copies of removed models still find their source)
         for e in ga.entries:
             if e.state == 'REMOVE' and e.name in by_name:
                 a.remove_model(by_name.pop(e.name))
@@ -185,6 +187,27 @@ class Exporter:
                 a.add_model(model)
             placed[g.source_name or name] = placed_root[root.name] = model
             self._anim_infos(model, root)
+        # copies made with Copy and not imported: a copy of the source model (as edited in the scene if it was)
+        for e in ga.entries:
+            if not (e.copy_of and e.state == 'FILE'):
+                continue
+            current = {m.name: m for m in a.models}
+            if e.name in current:
+                self.warnings.append('copy %s: the archive already has a model with this name - left out' % e.name)
+                continue
+            src, name, seen = None, e.copy_of, set()
+            while name and name not in seen and src is None:
+                seen.add(name)
+                src = current.get(name) or file_models.get(name)
+                if src is None:
+                    nxt = next((x for x in ga.entries if x.name == name), None)
+                    name = nxt.copy_of if nxt is not None else ''
+            if src is None:
+                self.warnings.append('copy %s: its source model %s was not found - left out' % (e.name, e.copy_of))
+                continue
+            copy = a.duplicate_model(src, e.name)
+            a.add_model(copy)
+            placed[e.name] = copy
         # a rearranged list: the archive takes its order (model infos and table of contents alike); models without
         # an entry stay behind them in their order
         if ga.order_changed:
@@ -335,7 +358,11 @@ class Exporter:
         self.depsgraph = depsgraph
         try:
             chunk_objs = [o for o in objs if o.gsf.kind != 'COLLISION']
-            chunk_objs.sort(key=lambda o: (GROUP_OF.get(o.gsf.kind.lower(), 5 if self._is_cloth(o) else 9), o.gsf.order, o.name))
+            # imported components keep their position in the file's chunk table (their order); new ones (order 1000
+            # and up) follow, grouped by kind. Model.prepare regroups if a kind's chunks are no longer together.
+            chunk_objs.sort(key=lambda o: (o.gsf.order >= 1000, o.gsf.order if o.gsf.order < 1000 else 0,
+                                           GROUP_OF.get(o.gsf.kind.lower(), 5 if self._is_cloth(o) else 9),
+                                           o.gsf.order, o.name))
             self.skels = {}
             obj_chunk = {}
             for o in chunk_objs:
@@ -352,6 +379,10 @@ class Exporter:
                 if c is not None:
                     obj_chunk[o] = c
             m.chunks = [obj_chunk[o] for o in chunk_objs if o in obj_chunk]
+            for i, raw in P.parse_empty_slots(g.empty_slots):       # legacy empty slots, back in their places
+                m.chunks.insert(min(i, len(m.chunks)), ZeroChunk() if raw == 'zero' else EmptySlot(raw))
+            if g.empty_slots and 'gsf_legacy_counts' in root:
+                m.legacy_counts = {k: int(v) for k, v in root['gsf_legacy_counts'].items()}
             self._refs(obj_chunk)
             m.collision = [self.collision(o) for o in sorted((o for o in objs if o.gsf.kind == 'COLLISION'),
                                                                key=lambda o: (o.gsf.order, o.name))]
@@ -425,6 +456,8 @@ class Exporter:
             d = np.abs(old - new).max()
             if f.kind == 'quat':
                 d = min(d, np.abs(old + new).max())
+                if not old.any() and np.abs(new[:3]).max() < tol and abs(abs(new[3]) - 1) < tol:
+                    d = 0.0     # a zero quaternion (legacy hand edit) that Blender shows as no rotation: kept
             if d < tol:
                 c.v[f.name] = tuple(float(x) for x in old)
 
@@ -572,6 +605,9 @@ class Exporter:
                                                      md.type != 'ARMATURE' and md.show_viewport for md in o.modifiers))
         finally:
             done()
+        blank = o.data.get('gsf_blanked')
+        if blank is not None and o.data.get('gsf_geometry') == geometry_signature(o.data) and len(blank) % 3 == 0:
+            c.mesh = self._blanked_mesh(c.mesh, blank, o.data.get('gsf_bbox'))
         if c.is_cloth:
             for attr in ('points_a', 'points_b'):
                 v = o.get('gsf_' + attr)
@@ -580,6 +616,24 @@ class Exporter:
                 v = o.get('gsf_cloth_triples_%d' % k)
                 s.cloth_triples = np.array(v, dtype=np.uint16).reshape(-1, 3) if v is not None else None
         return c
+
+    @staticmethod
+    def _blanked_mesh(md, blank, bbox):
+        """the zero bytes of a mesh blanked out by hand (see the importer), with the file's bounding box"""
+        from ..core.chunks.mesh import MeshData, Submesh
+        out = MeshData(md.cloth)
+        if bbox is not None and len(bbox) == 6:
+            out.v['bounding_box'] = tuple(float(x) for x in bbox)
+        n = len(blank) // 3
+        for k in range(n):
+            nv, stride, nt = blank[3 * k:3 * k + 3]
+            s = Submesh(md.cloth)
+            s.raw = np.zeros((nv, stride), dtype=np.uint8)
+            s.tris = np.zeros((nt, 3), dtype=np.uint16)
+            out.submeshes.append(s)
+        mats = list(md.submesh_materials)
+        out.submesh_materials = mats[:n] + [0] * (n - len(mats[:n]))
+        return out
 
     def _corner_normals_game(self, me, tri_loops):
         """SEK's way: area-weighted triangle normals summed over the smooth fan at each corner"""
@@ -1047,6 +1101,18 @@ class Exporter:
                     # share identical animations between models (bone animations of identical skeletons)
                     cache[key] = an
                 ma.tracks.append((obj_chunk[o], an, an.frame_count()))
+            for tok in it.legacy_tracks.split():
+                # tracks on legacy empty slots: the source file's animation chunks, unchanged
+                try:
+                    slot, off, n = (int(x) for x in tok.split(':'))
+                except ValueError:
+                    continue
+                an = self.archive.anim_by_offset.get(off) if self.source_path else None
+                if an is None or not (0 <= slot < len(m.chunks)) or isinstance(m.chunks[slot], Chunk):
+                    self.warnings.append('%s %s: track of empty slot %d not found in the source archive - left out'
+                                         % (m.name, it.name, slot))
+                    continue
+                ma.tracks.append((m.chunks[slot], an, n))
             e = AnimName(it.name, ma)
             e.v['anim_flags'] = P.parse_hex(it.anim_flags)
             for s in it.sounds.replace(';', ',').split(','):

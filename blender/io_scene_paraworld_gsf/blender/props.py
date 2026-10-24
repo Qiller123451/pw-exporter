@@ -320,6 +320,9 @@ class GSF_PG_anim(PropertyGroup):
     tracks: CollectionProperty(type=GSF_PG_track_ref)
     track_index: IntProperty()
     info_name: StringProperty(name='Animation info', default='Helper01')
+    legacy_tracks: StringProperty(name='Tracks on empty slots', description=(
+        'Animation tracks of empty chunk-table slots (legacy edits in modded archives): "slot:offset:frames" each, '
+        'copied unchanged from the source archive on save'))
 
 
 class GSF_PG_walkslot(PropertyGroup):
@@ -346,7 +349,31 @@ GSF_PG_model = make_group('GSF_PG_model', MODEL_INFO, 'model', {
     'walkset_index': IntProperty(),
     'materials': CollectionProperty(type=GSF_PG_matref),
     'source_name': StringProperty(name='Replaces', description='Model of the source archive this one replaces on save'),
+    'empty_slots': StringProperty(name='Empty chunk slots', description=(
+        'Positions in the chunk table that hold no chunk (legacy edits in modded archives), comma separated. They '
+        'are written back where they are: "1" = the null value 0x80000000, "1=0" = the value 0, '
+        '"1=zero" = a pointer to a blanked-out (all zero) chunk')),
 })
+
+
+def parse_empty_slots(text):
+    """'1, 5=0, 7=zero' -> [(1, 0x80000000), (5, 0), (7, 'zero')]"""
+    out = {}
+    for tok in text.replace(';', ',').split(','):
+        tok = tok.strip()
+        if not tok:
+            continue
+        i, _, raw = tok.partition('=')
+        raw = raw.strip().lower()
+        try:
+            out[int(i)] = 'zero' if raw == 'zero' else (0 if raw in ('0', '0x0', '0x00000000') else 0x80000000)
+        except ValueError:
+            continue
+    return sorted(out.items())
+
+
+def format_empty_slots(slots):
+    return ', '.join('%d=zero' % i if raw == 'zero' else ('%d=0' % i if raw == 0 else '%d' % i) for i, raw in slots)
 
 
 GSF_PG_sound_fields = make_group('GSF_PG_sound_values', SOUND, 'sound')
@@ -389,6 +416,8 @@ class GSF_PG_entry(PropertyGroup):
         ('REMOVE', 'Remove', 'Left out when the archive is saved')], default='FILE')
     root: PointerProperty(type=bpy.types.Object)
     select: BoolProperty(name='Select', default=False)
+    copy_of: StringProperty(name='Copy of', description='This model is a copy of that one (made with Copy): '
+                            'written as a copy of it under this name, or imported from it')
 
 
 GSF_PG_archive = make_group('GSF_PG_archive', HEADER2, 'archive', {

@@ -133,13 +133,18 @@ def compare_model(m0, m1, mats0, mats1):
     stats = {}
     if len(m0.chunks) != len(m1.chunks):
         issues.append('chunk count %d -> %d' % (len(m0.chunks), len(m1.chunks)))
-    k0 = Counter(c.KIND for c in m0.chunks)
-    k1 = Counter(c.KIND for c in m1.chunks)
+    k0 = Counter(c.KIND for c in m0.chunks if isinstance(c, Chunk))
+    k1 = Counter(c.KIND for c in m1.chunks if isinstance(c, Chunk))
     if k0 != k1:
         issues.append('chunk kinds %s -> %s' % (dict(k0), dict(k1)))
     by_guid1 = {}
     for c in m1.chunks:
-        by_guid1.setdefault((c.KIND, c.v.get('guid')), []).append(c)
+        if isinstance(c, Chunk):
+            by_guid1.setdefault((c.KIND, c.v.get('guid')), []).append(c)
+    e0 = [(i, getattr(c, 'raw', None), type(c).__name__) for i, c in enumerate(m0.chunks) if not isinstance(c, Chunk)]
+    e1 = [(i, getattr(c, 'raw', None), type(c).__name__) for i, c in enumerate(m1.chunks) if not isinstance(c, Chunk)]
+    if e0 != e1:
+        issues.append('empty chunk slots %s -> %s' % (e0, e1))
     ml0 = [x for x in (m0.material_list.materials if m0.material_list else [])]
     ml1 = [x for x in (m1.material_list.materials if m1.material_list else [])]
     nsame = ntot = 0
@@ -216,11 +221,11 @@ def compare_model(m0, m1, mats0, mats1):
             issues.append('anim %s: %d animated chunks -> %d' % (e0.name, len(e0.anim.tracks), len(e1.anim.tracks)))
         if e0.v != e1.v or [s.name for s in e0.sounds] != [s.name for s in e1.sounds]:
             issues.append('anim %s: flags / sounds differ' % e0.name)
-        sk0 = next((c for c in m0.chunks if c.KIND == 'skeleton'), None)
-        sk1 = next((c for c in m1.chunks if c.KIND == 'skeleton'), None)
-        t1 = {(c.KIND, c.v.get('guid')): (a, n) for c, a, n in e1.anim.tracks}
+        sk0 = next((c for c in m0.chunks if getattr(c, 'KIND', '') == 'skeleton'), None)
+        sk1 = next((c for c in m1.chunks if getattr(c, 'KIND', '') == 'skeleton'), None)
+        t1 = {(c.KIND, getattr(c, 'v', {}).get('guid')): (a, n) for c, a, n in e1.anim.tracks}
         for c0, a0, n0 in e0.anim.tracks:
-            hit = t1.get((c0.KIND, c0.v.get('guid')))
+            hit = t1.get((c0.KIND, getattr(c0, 'v', {}).get('guid')))
             if hit is None:
                 issues.append('anim %s: %s %08X not animated' % (e0.name, c0.KIND, c0.guid))
                 continue
