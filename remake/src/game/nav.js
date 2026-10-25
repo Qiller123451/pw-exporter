@@ -1,6 +1,11 @@
 // Walkability grid + A* with string pulling. Cells hold a block counter (trees, stones, buildings).
 // A clearance field (distance to the nearest blocked cell, in cells) lets big units (dinosaurs, vehicles)
 // path only through gaps they fit through; it is rebuilt lazily whenever the grid changed.
+const COARSE = 4;              // fine cells per side of a coarse block (coarseRoute)
+const COARSE_MIN = 60;         // goals at least this many cells away (120 m) take the coarse route
+const LEG = 10;                // blocks per leg (about 80 m)
+const LEG_ITER = 6000;         // the fine search's limit per leg
+
 export class NavGrid {
   constructor(size, cell = 2) {
     this.size = size; this.cell = cell; this.half = size / 2;
@@ -175,6 +180,135 @@ export class NavGrid {
     }
     return this.nearestFree(c, maxR);
   }
+  // ---- far goals: a coarse route, then short fine searches along it
+  // One plain A* over the whole grid of a campaign map (736 x 736 cells) to a goal several hundred metres away opens
+  // up to its limit of 30,000 cells and often ends short of the goal: 10-40 ms per unit, a stall of a second when an
+  // army or an attack wave set off - and the units walked to the end of a partial way and searched again. Instead the
+  // grid is cut into blocks of COARSE x COARSE cells; the free cells of a block that hang together form a node, nodes
+  // whose cells touch across a block border are linked (so the nodes connect exactly as the cells do: a thin cliff
+  // or wall inside a block splits it). A route is found over the nodes and the way searched in legs of about 80 m
+  // between cells of the route's nodes. A leg that does not get through (a closed gate) gives up the coarse way: the
+  // plain search runs as before. The nodes are rebuilt when the grid changed (buildings), on the next far search.
+  buildCoarse() {
+    const F = COARSE, n = this.n, cn = Math.ceil(n / F), b = this.block, N = n * n;
+    if (!this.comp || this.comp.length !== N) this.comp = new Int32Array(N);
+    const comp = this.comp.fill(-1);
+    const rep = [], stack = [];
+    let id = 0;
+    for (let cj = 0; cj < cn; cj++) for (let ci = 0; ci < cn; ci++) {
+      const i0 = ci * F, j0 = cj * F, i1 = Math.min(n, i0 + F), j1 = Math.min(n, j0 + F);
+      for (let j = j0; j < j1; j++) for (let i = i0; i < i1; i++) {
+        const k0 = j * n + i;
+        if (b[k0] || comp[k0] >= 0) continue;
+        // one node: the free cells of this block reachable from k0 inside the block (diagonals as in find)
+        comp[k0] = id; stack.length = 0; stack.push(k0);
+        let sx = 0, sz = 0, cnt = 0;
+        while (stack.length) {
+          const c = stack.pop(), x = c % n, z = (c - x) / n;
+          sx += x; sz += z; cnt++;
+          for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+            if (!di && !dj) continue;
+            const x2 = x + di, z2 = z + dj;
+            if (x2 < i0 || x2 >= i1 || z2 < j0 || z2 >= j1) continue;
+            const k = z2 * n + x2;
+            if (b[k] || comp[k] >= 0 || (di && dj && (b[z * n + x2] || b[z2 * n + x]))) continue;
+            comp[k] = id; stack.push(k);
+          }
+        }
+        rep.push(k0, sx / cnt, sz / cnt);     // a cell of the node, and its centre (for distances)
+        id++;
+      }
+    }
+    // links between nodes whose cells touch (right, down, and both diagonals below)
+    const adj = Array.from({ length: id }, () => []);
+    const link = (a, c) => { if (a === c) return; const l = adj[a]; if (!l.includes(c)) { l.push(c); adj[c].push(a); } };
+    for (let z = 0; z < n; z++) for (let x = 0; x < n; x++) {
+      const k = z * n + x, a = comp[k];
+      if (a < 0) continue;
+      if (x + 1 < n && comp[k + 1] >= 0 && comp[k + 1] !== a) link(a, comp[k + 1]);
+      if (z + 1 < n) {
+        if (comp[k + n] >= 0 && comp[k + n] !== a) link(a, comp[k + n]);
+        if (x + 1 < n && comp[k + n + 1] >= 0 && !b[k + 1] && !b[k + n] && comp[k + n + 1] !== a) link(a, comp[k + n + 1]);
+        if (x > 0 && comp[k + n - 1] >= 0 && !b[k - 1] && !b[k + n] && comp[k + n - 1] !== a) link(a, comp[k + n - 1]);
+      }
+    }
+    // the gates' cells (free in `block`, shut or open by the moment and the player): their nodes are tested per search
+    const gates = new Map();
+    for (const k of this.gateAt.keys()) { const c = comp[k]; if (c >= 0) { if (!gates.has(c)) gates.set(c, []); gates.get(c).push(k); } }
+    this.cRep = rep; this.cAdj = adj; this.cN = id; this.cGates = gates; this.cGateN = this.gateAt.size;
+    if (!this.cg || this.cg.length < id) {
+      const M = Math.max(id, 16);
+      this.cg = new Float32Array(M); this.cf = new Float32Array(M); this.cfrom = new Int32Array(M);
+      this.cstamp = new Uint32Array(M); this.cclosed = new Uint32Array(M); this.cheap = new Int32Array(M * 8); this.ccur = 1;
+    }
+    this.coarseVersion = this.version;
+  }
+  // { cells, found }: the fine cells from s towards t (both fine cell indices) along a coarse route - found false: t
+  // is out of reach, the cells end at the nearest reachable point - or null (the plain search instead); astar(s, t,
+  // maxIter) is find's search
+  coarseRoute(s, t, astar) {
+    const n = this.n;
+    const si = s % n, sj = Math.floor(s / n), ti = t % n, tj = Math.floor(t / n);
+    if (Math.max(Math.abs(ti - si), Math.abs(tj - sj)) < COARSE_MIN) return null;
+    if (this.coarseVersion !== this.version || !this.comp || this.cGateN !== this.gateAt.size) this.buildCoarse();
+    const comp = this.comp, cs = comp[s], ct = comp[t];
+    if (cs < 0 || ct < 0) return null;
+    const rep = this.cRep, adj = this.cAdj, g = this.cg, f = this.cf, from = this.cfrom, heap = this.cheap, closed = this.cclosed;
+    const tx = rep[ct * 3 + 1], tz = rep[ct * 3 + 2];
+    const h = (c) => { const ax = rep[c * 3 + 1] - tx, az = rep[c * 3 + 2] - tz; return Math.sqrt(ax * ax + az * az); };
+    const stamp = ++this.ccur;
+    let hn = 0;
+    const push = (c) => { let i = hn++; heap[i] = c; while (i > 0) { const p = (i - 1) >> 1; if (f[heap[p]] <= f[heap[i]]) break; const tmp = heap[p]; heap[p] = heap[i]; heap[i] = tmp; i = p; } };
+    const pop = () => { const top = heap[0]; heap[0] = heap[--hn]; let i = 0; for (;;) { const l = 2 * i + 1, r = l + 1; let m = i; if (l < hn && f[heap[l]] < f[heap[m]]) m = l; if (r < hn && f[heap[r]] < f[heap[m]]) m = r; if (m === i) break; const tmp = heap[m]; heap[m] = heap[i]; heap[i] = tmp; i = m; } return top; };
+    this.cstamp[cs] = stamp; g[cs] = 0; f[cs] = h(cs); from[cs] = -1; push(cs);
+    let found = false, best = cs, bestH = 1e9, gated = false;
+    const gates = this.cGates, who = this.who;
+    while (hn > 0) {
+      const c = pop();
+      if (closed[c] === stamp) continue;
+      closed[c] = stamp;
+      if (c === ct) { found = true; break; }
+      const hc = f[c] - g[c];
+      if (hc < bestH) { bestH = hc; best = c; }
+      const cx = rep[c * 3 + 1], cz = rep[c * 3 + 2];
+      for (const k of adj[c]) {
+        if (closed[k] === stamp) continue;
+        // a node with a gate that is shut for this player (a node split by a gate is taken as shut as a whole)
+        const gl = gates.size ? gates.get(k) : null;
+        if (gl && k !== ct && gl.some((q) => this.gateBlocks(q, who))) { gated = true; continue; }
+        const ax = rep[k * 3 + 1] - cx, az = rep[k * 3 + 2] - cz, ng = g[c] + Math.sqrt(ax * ax + az * az);
+        if (this.cstamp[k] !== stamp || ng < g[k]) { this.cstamp[k] = stamp; g[k] = ng; f[k] = ng + h(k) * 1.02; from[k] = c; push(k); }
+        if (hn >= heap.length - 8) break;
+      }
+    }
+    // the goal cannot be reached (the nodes connect as the cells do): the way leads to the reachable node nearest to
+    // it - what the plain search would end at after opening all its 30,000 cells, at a fraction of the cost
+    // (not when a gate was in the way: a node only partly a gate may still let one pass beside it - the plain search
+    // decides then)
+    const end = found ? ct : best;
+    if (!found && (end === cs || gated)) return null;
+    const route = [];
+    for (let c = end; c !== -1; c = from[c]) route.push(c);
+    route.reverse();
+    // the legs: to a cell of every LEG-th node of the route, then to t
+    const out = [];
+    let cur = s;
+    for (let r = LEG; r < route.length - LEG / 2; r += LEG) {
+      const w = rep[route[r] * 3];
+      if (w === cur) continue;
+      const leg = astar(cur, w, LEG_ITER);
+      if (!leg.found) return null;
+      for (const c of leg.cells) out.push(c);
+      cur = w;
+    }
+    const goal = found ? t : rep[end * 3];
+    if (goal !== cur) {
+      const last = astar(cur, goal, LEG_ITER * 2);
+      if (!last.found) return null;
+      for (const c of last.cells) out.push(c);
+    }
+    return { cells: out, found };
+  }
   // path from (sx,sz) to (tx,tz) for a unit of the given radius; returns [[x,z],...] or null
   // breach: closed gates of the enemy count as passable at a high cost - an attacker whose way they block attacks
   // the first of them (World unitUpdate); the result then has .gate. this.found: the goal was reached.
@@ -203,39 +337,49 @@ export class NavGrid {
     const t = tb ? this.nearestFit(tIdx, need) : tIdx;
     if (!tb && ok(sIdx) && this.los(sx, sz, tx, tz, need)) { this.found = true; return [[tx, tz]]; }
     if (s === t) { this.found = true; return [tb ? this.center(t) : [tx, tz]]; }
-    const stamp = ++this.cur;
-    const { g, f, from, heap, closed, block } = this;
-    const tcx = t % n, tcz = Math.floor(t / n);
-    const h = (c) => { const dx = Math.abs(c % n - tcx), dz = Math.abs(Math.floor(c / n) - tcz); return (dx + dz) + (Math.SQRT2 - 2) * Math.min(dx, dz); };
-    let hn = 0;
-    const push = (c) => { let i = hn++; heap[i] = c; while (i > 0) { const p = (i - 1) >> 1; if (f[heap[p]] <= f[heap[i]]) break; const tmp = heap[p]; heap[p] = heap[i]; heap[i] = tmp; i = p; } };
-    const pop = () => { const top = heap[0]; heap[0] = heap[--hn]; let i = 0; for (;;) { const l = 2 * i + 1, r = l + 1; let m = i; if (l < hn && f[heap[l]] < f[heap[m]]) m = l; if (r < hn && f[heap[r]] < f[heap[m]]) m = r; if (m === i) break; const tmp = heap[m]; heap[m] = heap[i]; heap[i] = tmp; i = m; } return top; };
-    this.stamp[s] = stamp; g[s] = 0; f[s] = h(s); from[s] = -1; push(s);
-    let found = false, it = 0, best = s, bestH = 1e9;
-    while (hn > 0 && it++ < maxIter) {
-      const c = pop();
-      if (closed[c] === stamp) continue;
-      closed[c] = stamp;
-      if (c === t) { found = true; break; }
-      const hc = f[c] - g[c];
-      if (hc < bestH) { bestH = hc; best = c; }
-      const ci = c % n, cj = (c - ci) / n;
-      for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) {
-        if (!di && !dj) continue;
-        const i = ci + di, j = cj + dj;
-        if (i < 0 || j < 0 || i >= n || j >= n) continue;
-        const k = j * n + i;
-        if (!ok(k) || closed[k] === stamp) continue;
-        if (di && dj && (!ok(cj * n + i) || !ok(j * n + ci))) continue;
-        const ng = g[c] + (di && dj ? 1.41421 : 1) + toll(k);
-        if (this.stamp[k] !== stamp || ng < g[k]) { this.stamp[k] = stamp; g[k] = ng; f[k] = ng + h(k) * 1.02; from[k] = c; push(k); }
+    // the fine search (A*) from cell s0 to t0: the cells after s0 up to t0 - or, when maxIter runs out, up to the cell
+    // nearest t0 that it reached (found false)
+    const astar = (s, t, maxIter) => {
+      const stamp = ++this.cur;
+      const { g, f, from, heap, closed } = this;
+      const tcx = t % n, tcz = Math.floor(t / n);
+      const h = (c) => { const dx = Math.abs(c % n - tcx), dz = Math.abs(Math.floor(c / n) - tcz); return (dx + dz) + (Math.SQRT2 - 2) * Math.min(dx, dz); };
+      let hn = 0;
+      const push = (c) => { let i = hn++; heap[i] = c; while (i > 0) { const p = (i - 1) >> 1; if (f[heap[p]] <= f[heap[i]]) break; const tmp = heap[p]; heap[p] = heap[i]; heap[i] = tmp; i = p; } };
+      const pop = () => { const top = heap[0]; heap[0] = heap[--hn]; let i = 0; for (;;) { const l = 2 * i + 1, r = l + 1; let m = i; if (l < hn && f[heap[l]] < f[heap[m]]) m = l; if (r < hn && f[heap[r]] < f[heap[m]]) m = r; if (m === i) break; const tmp = heap[m]; heap[m] = heap[i]; heap[i] = tmp; i = m; } return top; };
+      this.stamp[s] = stamp; g[s] = 0; f[s] = h(s); from[s] = -1; push(s);
+      let found = false, it = 0, best = s, bestH = 1e9;
+      const W_H = 1.02;                         // (a heuristic a touch above the distance: fewer cells opened)
+      while (hn > 0 && it++ < maxIter) {
+        const c = pop();
+        if (closed[c] === stamp) continue;
+        closed[c] = stamp;
+        if (c === t) { found = true; break; }
+        const hc = f[c] - g[c];
+        if (hc < bestH) { bestH = hc; best = c; }
+        const ci = c % n, cj = (c - ci) / n;
+        for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) {
+          if (!di && !dj) continue;
+          const i = ci + di, j = cj + dj;
+          if (i < 0 || j < 0 || i >= n || j >= n) continue;
+          const k = j * n + i;
+          if (!ok(k) || closed[k] === stamp) continue;
+          if (di && dj && (!ok(cj * n + i) || !ok(j * n + ci))) continue;
+          const ng = g[c] + (di && dj ? 1.41421 : 1) + toll(k);
+          if (this.stamp[k] !== stamp || ng < g[k]) { this.stamp[k] = stamp; g[k] = ng; f[k] = ng + h(k) * W_H; from[k] = c; push(k); }
+        }
       }
-    }
-    const end = found ? t : best;
+      const end = found ? t : best;
+      const cells = [];
+      for (let c = end; c !== -1 && c !== s; c = from[c]) cells.push(c);
+      cells.reverse();
+      return { found, cells };
+    };
+    // far goals: a coarse route first, then short fine searches along it (coarseRoute); null = search the plain way
+    const far = need === 1 && !breach ? this.coarseRoute(s, t, astar) : null;
+    let cells, found;
+    if (far) { cells = far.cells; found = far.found; } else { const r = astar(s, t, maxIter); cells = r.cells; found = r.found; }
     this.found = found;
-    const cells = [];
-    for (let c = end; c !== -1 && c !== s; c = from[c]) cells.push(c);
-    cells.reverse();
     const gk = breach ? cells.find((c) => enemyGate(c)) : undefined;
     const pts = cells.map((c) => this.center(c));
     if (found && !tb && pts.length) pts[pts.length - 1] = [tx, tz];

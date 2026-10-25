@@ -7,7 +7,7 @@ import { watchRenderer, loopError, report, reportError, setReportContext, watchG
 import * as THREE from 'three';
 import { Renderer, RTSCamera } from './engine/renderer.js';
 import { initAssets, loadModel, Assets, cloneModel } from './engine/assets.js';
-import { HeightField, buildTerrain, FogOfWar, refreshTerrain, refreshSplat } from './engine/terrain.js';
+import { HeightField, buildTerrain, FogOfWar, refreshTerrain, refreshSplat, applyFow } from './engine/terrain.js';
 import { GroundBrushes, levelGround, brushCells } from './game/ground.js';
 import { PropField, FoliageField, treeSprites, holeUniforms, spriteLight, spriteTexture } from './engine/props.js';
 import { FX } from './engine/fx.js';
@@ -181,6 +181,59 @@ function tpl(name, soft) {
   if (!t && name && params.has('stubart')) t = G.templates.get(/^sq_|_b$/.test(name.toLowerCase()) ? 'seas_turret_tower' : '') || [...G.templates.values()].find((x) => x && x.info) || null;
   if (!t && !soft) throw new Error('missing model ' + name);
   return t || null;
+}
+
+// The graphics card prepares every model the game has loaded while the loading screen is still up: its textures are
+// uploaded and its shaders compiled (with and without the fog-of-war patch that units, buildings and props get).
+// Otherwise this happens in the frame a kind of object is first seen - a unit type's first appearance, the first
+// explosion of a kind, the AI's first attack wave, a building's ruin, a cutscene's actors - and that frame takes
+// tens to hundreds of milliseconds (the D3D shader compiler under Chrome on Windows is slow): the stutter "when
+// something big happens". Programs are shared by key, so compiling copies of the materials is enough; the model
+// itself is not changed. Option "Prepare all graphics while loading" (settings.warmup, on by default); skipped in
+// ?manual (tests) unless ?warm; ?nowarm turns it off.
+async function warmGraphics() {
+  const R = G.renderer && G.renderer.renderer;
+  if (!R || params.has('nowarm') || G.settings.warmup === false || (MANUAL && !params.has('warm'))) return;
+  const t0 = performance.now(), list = [...G.templates.values()].filter((t) => t && t.scene);
+  const tex = new Set();
+  const texOf = (m) => { for (const k in m) { const v = m[k]; if (v && v.isTexture) tex.add(v); } if (m.uniforms) for (const u of Object.values(m.uniforms)) if (u && u.value && u.value.isTexture) tex.add(u.value); };
+  for (const t of list) t.scene.traverse((o) => { if (o.material) for (const m of [].concat(o.material)) if (m) texOf(m); });
+  let i = 0;
+  const all = [...tex];
+  for (const t of all) {
+    try { R.initTexture(t); } catch (e) { /* a texture without its image yet */ }
+    if (++i % 40 === 0) { progress(0.99, `Preparing the graphics: textures ${i} / ${all.length}`); await new Promise((r) => setTimeout(r, 0)); }
+  }
+  const party = G.me && G.me.partyColor != null ? G.me.partyColor : null;
+  const twin = (m, fow) => {
+    if (!m) return m;
+    const c = m.clone();
+    c.userData = { ...m.userData };
+    c.onBeforeCompile = m.onBeforeCompile; c.customProgramCacheKey = m.customProgramCacheKey;
+    if (fow && !m.userData.fow) applyFow(c);
+    return c;
+  };
+  const jobs = [];
+  for (const [k, t] of list.entries()) {
+    let m;
+    try { m = cloneModel(t, party); } catch (e) { continue; }
+    if (G.particles) G.particles.untrack(m);
+    const made = [];
+    // the model's own materials and their fog-of-war twins (what an entity or a prop of it will use; the twins are
+    // not disposed: that would release the programs just made)
+    m.traverse((o) => { if (o.material && !Array.isArray(o.material) && !o.material.userData.fow) made.push([o, twin(o.material, true)]); });
+    jobs.push(R.compileAsync(m, G.camera, G.scene).catch(() => {}));
+    if (made.length) {
+      for (const [o, c] of made) { o.userData.warmWas = o.material; o.material = c; }
+      jobs.push(R.compileAsync(m, G.camera, G.scene).catch(() => {}));
+      for (const [o] of made) { o.material = o.userData.warmWas; delete o.userData.warmWas; }
+    }
+    if (k % 20 === 19) { progress(0.99, `Preparing the graphics: models ${k + 1} / ${list.length}`); await new Promise((r) => setTimeout(r, 0)); }
+  }
+  // (at most a few seconds: a slow compiler finishes the rest in the background)
+  await Promise.race([Promise.all(jobs), new Promise((r) => setTimeout(r, 8000))]);
+  G.warmInfo = { models: list.length, textures: all.length, shaders: (R.info.programs || []).length, ms: Math.round(performance.now() - t0) };
+  console.info('[warm]', JSON.stringify(G.warmInfo));
 }
 
 // ---------------------------------------------------------------------------- world setup
@@ -1059,11 +1112,18 @@ function handleEvents() {
   // a building appeared / disappeared: the grass there is rebuilt
   if (G.grass) for (const e of G.world.events) if (e.type === 'ground') G.grass.invalidate(e.x, e.z, e.r);
   G.feedback.handle(G.world.events);
+  for (const e of G.world.events) frameEvents[e.type] = (frameEvents[e.type] || 0) + 1;     // (frame spikes: noteHitch)
   G.world.events.length = 0;
   if (G.campaign) G.campaign.evAt = 0;     // its read position in the list (game/campaign/setup.js update): the list starts again
   if (G.sequel) G.sequel.evAt = 0;
 }
 
+// the fights are over (a game or mission ended): no combat music behind the end screen - its attack times stand still
+// with the game, so the Combat switch would stay on
+function stopCombatMusic() {
+  const M = G.audio && G.audio.mus;
+  if (M && M.S) { M.attacks = []; M.S('Combat').on = false; M.refresh(); }
+}
 let endT = 0;
 // a player is out when nothing that could rebuild is left (no building, no worker, no Aje collector);
 // the warp gate countdown (systems/buildings.js) ends the game directly
@@ -1078,6 +1138,7 @@ function checkEnd(dt) {
   const lost = G.me.defeated, won = G.me.won;
   if (!lost && !won) return;
   G.over = true;
+  stopCombatMusic();
   const t = Math.floor(W.time);
   setTimeout(() => G.menu.end(won && !lost, { time: `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`, kills: G.me.kills, lost: G.me.lost, epoch: EPOCH[G.me.epoch()], enemy: G.ai.name }), 1500);
 }
@@ -1132,8 +1193,28 @@ const DRAW_STEPS = [
   ['mission', (dt) => { if (G.mission) G.mission.update(dt); if (G.sequelUI) G.sequelUI.update(dt); }],
 ];
 // where a frame's time goes (the performance overlay, F9): ms per step, smoothed
-const prof = G.prof = {};
-const timed = (name, t0) => { const t = performance.now(); prof[name] = (prof[name] || 0) * 0.95 + (t - t0) * 0.05; return t; };
+const prof = G.prof = {}, profRaw = G.profRaw = {};
+const timed = (name, t0) => { const t = performance.now(); profRaw[name] = t - t0; prof[name] = (prof[name] || 0) * 0.95 + (t - t0) * 0.05; return t; };
+// Frame spikes ("the frame rate drops for a moment when something big happens"): a frame that took far longer than
+// the usual is noted with where its time went, what the graphics card had to take on for the first time (shaders
+// compiled, textures uploaded, geometry) and what happened in the world that frame. The F9 overlay counts them; the
+// debug tools copy the list (G.hitchReport) for a bug report.
+const hitches = G.hitches = [];
+let frameEvents = {}, gpuWas = null;
+function gpuCounts() { const i = G.renderer && G.renderer.renderer.info; return i ? { shaders: (i.programs || []).length, textures: i.memory.textures, geometries: i.memory.geometries } : null; }
+function noteHitch(ms) {
+  const now = gpuCounts(), was = gpuWas;
+  gpuWas = now;
+  const ev = frameEvents;
+  frameEvents = {};
+  const usual = prof.frame || 16;
+  if (!(ms > 45 && ms > usual * 2.5) || !G.world) return;
+  const steps = Object.entries(profRaw).filter(([k]) => k !== 'frame').sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, v]) => `${k} ${v.toFixed(0)}`);
+  const gpu = now && was ? Object.entries(now).map(([k, v]) => [k, v - was[k]]).filter(([, d]) => d > 0).map(([k, d]) => `+${d} ${k}`) : [];
+  hitches.push({ t: +G.world.time.toFixed(1), ms: Math.round(ms), usual: +usual.toFixed(1), steps, gpu, events: Object.entries(ev).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k, n]) => `${k} ${n}`), cine: !!(G.mission && G.mission.cine) });
+  if (hitches.length > 40) hitches.shift();
+}
+G.hitchReport = () => hitches.map((h) => `${h.t}s ${h.ms} ms (usual ${h.usual}): ${h.steps.join(', ')}${h.gpu.length ? ' | ' + h.gpu.join(', ') : ''}${h.events.length ? ' | events: ' + h.events.join(', ') : ''}${h.cine ? ' | cutscene' : ''}`).join('\n');
 function draw(dt, now) {
   let t = performance.now();
   for (const [name, fn] of DRAW_STEPS) { try { fn(dt); } catch (e) { loopError(name, e); } t = timed(name, t); }
@@ -1175,7 +1256,7 @@ function frame(now) {
   if (!G.paused) { try { simulate(dt * (G.settings.speed || 1)); } catch (e) { loopError('simulation', e); } }
   timed('simulation', t0);
   draw(dt, now);
-  timed('frame', t0);
+  noteHitch(timed('frame', t0) - t0);
   autosave(now);
   // 8 s after the start: check the game really runs (simulation time, fog of war, camera) - shows what's wrong
   if (!G.selfChecked && (G.frames = (G.frames || 0) + 1) > 30 && now - (G.startedAt || (G.startedAt = now)) > 8000) {
@@ -1381,6 +1462,7 @@ async function startGame(cfg) {
       G.selChanged();
       G.loading = false;
     }
+    try { await warmGraphics(); } catch (e) { console.warn('warm-up', e); }
     progress(1, 'Ready');
     loadEl.classList.add('done');
     setTimeout(() => { loadEl.style.display = 'none'; }, 600);
@@ -1420,7 +1502,7 @@ G.endMission = (won, info = {}) => {
   if (G.over) return;
   G.over = true;
   // the fights are over: no combat music behind the end screen (its attack times stand still with the game)
-  if (G.audio && G.audio.mus && G.audio.mus.S) { G.audio.mus.attacks = []; G.audio.mus.S('Combat').on = false; G.audio.mus.refresh(); }
+  stopCombatMusic();
   const W = G.world, t = Math.floor(W.time), C = G.campaign;
   const show = () => G.menu.end(!!won, {
     time: `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`, kills: G.me.kills, lost: G.me.lost, epoch: EPOCH[G.me.epoch()],

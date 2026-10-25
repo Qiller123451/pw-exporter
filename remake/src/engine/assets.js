@@ -9,6 +9,26 @@ import { modelSprites } from './props.js';
 // Loads converted ParaWorld models on demand and hands out clones.
 // Materials are swapped to cheap Lambert materials, and skinned pieces that share a skeleton+material are merged.
 
+// Copies keep userData as a SHALLOW copy. three.js deep-copies it with JSON.stringify / JSON.parse on every
+// Object3D.copy and Material.copy: a character's root carries ~50 KB of extras (sounds, walk sets, parts) that were
+// serialised and parsed again for every unit made, and a party-coloured material's userData.untinted (its base
+// material) was serialised with its textures - the pictures encoded with canvas.toDataURL - each time a tamed animal
+// or a vehicle was tinted (compose.js updateMask): ~80 ms per unit on a slow processor, the stutter when an army or
+// an attack wave appeared. userData here holds read-only model data and per-instance values that are assigned, not
+// changed in place, so sharing the nested objects is safe (and keeps Sets and matrices intact, which JSON did not).
+const shallowUserData = (proto) => {
+  const copy = proto.copy;
+  proto.copy = function (source, ...rest) {
+    const ud = source.userData;
+    source.userData = {};
+    try { copy.call(this, source, ...rest); } finally { source.userData = ud; }
+    this.userData = ud && typeof ud === 'object' ? { ...ud } : {};
+    return this;
+  };
+};
+shallowUserData(THREE.Object3D.prototype);
+shallowUserData(THREE.Material.prototype);
+
 const loader = new GLTFLoader();
 const texCache = new Map();
 export const Assets = {

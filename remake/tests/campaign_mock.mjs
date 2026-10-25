@@ -57,6 +57,9 @@ class MockWorld {
   unloadAll(t) { for (const u of t.passengers || []) u.inside = null; t.passengers = []; }
   leaveTransport(u) { const t = u.inside; if (t) t.passengers = t.passengers.filter((x) => x !== u); u.inside = null; }
   height() { return 0; }
+  setLevel(u, lv) { u.level = lv; }
+  setDisarmed(u, on) { u.disarmed = !!on; }
+  nearestResource() { return null; }            // (the bot's gather(): the mock world has no resources - the cheats top them up)
   // walking: units move 6 m/s towards their goal
   update(dt) {
     this.time += dt;

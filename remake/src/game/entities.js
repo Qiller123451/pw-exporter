@@ -305,6 +305,25 @@ export class Unit extends Entity {
     // a goal it found no way to a moment ago: keep going the way it has (the searches that fail are the costly ones)
     const nf = this.noWay;
     if (nf && W.time - nf.t < 3 && Math.abs(nf.x - x) < 1 && Math.abs(nf.z - z) < 1) { this.goal = [x, z]; this.stuckT = 0; this.stuckFrom.copy(this.pos); return this.path.length > 0; }
+    // a group given the same order in the same moment (a player's army, a computer player's attack wave): a unit
+    // standing near the one that searched first, with a clear line to the start of its way, takes that way and only
+    // its own end. Each searching alone cost 20-40 ms per unit across a campaign map - a stall of a second or more
+    // when 60 units set off (the frame-rate drop "when something big happens").
+    const need = nav.need(this.radius), S = W.pathShare;
+    if (this.radius <= 1 && S && S.t === W.time && S.nav === nav && S.ver === nav.version && S.need === need && S.owner === this.owner &&
+        Math.hypot(S.tx - x, S.tz - z) < 40 && Math.hypot(S.sx - this.pos.x, S.sz - this.pos.z) < 16) {
+      const P = S.path, prev = P.length > 1 ? P[P.length - 2] : null;
+      // (a way that does not reach the goal - across water, behind a wall - ends where the first one's ends, and the
+      // failed search is not repeated: the costly ones)
+      if (prev && nav.los(this.pos.x, this.pos.z, P[0][0], P[0][1], need) && (!S.found || (nav.isFree(x, z) && nav.los(prev[0], prev[1], x, z, need)))) {
+        this.path = P.map((q) => q.slice());
+        if (S.found) this.path[this.path.length - 1] = [x, z];
+        this.goal = [x, z];
+        this.breach = null; this.noWay = S.found ? null : { x, z, t: W.time };
+        this.stuckT = 0; this.stuckFrom = this.pos.clone();
+        return true;
+      }
+    }
     let p = nav.find(this.pos.x, this.pos.z, x, z, this.radius, 30000, this.owner);
     // big units (spider walkers, dinosaurs) squeeze through the narrow passes of the original maps' walk grid
     // rather than not going at all
@@ -328,6 +347,8 @@ export class Unit extends Entity {
     this.path = p || [];
     this.goal = [x, z];
     this.stuckT = 0; this.stuckFrom = this.pos.clone();
+    // (offered to the others of the group: a way of more than one leg, no gate to break)
+    if (!this.breach && this.radius <= 1 && p && p.length > 1) W.pathShare = { t: W.time, nav, ver: nav.version, need, owner: this.owner, found: nav.found, sx: this.pos.x, sz: this.pos.z, tx: x, tz: z, path: p };
     return this.path.length > 0;
   }
   // is a unit next to this one, nearer the point (tx, tz) than this one's distance d, standing or on its way to the

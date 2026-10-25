@@ -19,7 +19,7 @@ import { raiseEpoch, spawnable, spawnObject, objectReport } from '../game/cheats
 import { copyText, shownProblems } from './diagnostics.js';
 
 export const DEFAULT_SETTINGS = {
-  showIncome: false, mentor: true, autosave: true, autosaveMin: 10, shadows: 'on', grass: 'on', particles: 'on', weather: true, fpsCap: 60, resScale: 1, uiScale: 0, perf: false, edgeScroll: true, autoMenu: true, tipNear: true, minimapRotate: true, minimapPlayerColors: true, antialias: true, speed: 1,
+  showIncome: false, mentor: true, autosave: true, autosaveMin: 10, shadows: 'on', grass: 'on', particles: 'on', weather: true, warmup: true, fpsCap: 60, resScale: 1, uiScale: 0, perf: false, edgeScroll: true, autoMenu: true, tipNear: true, minimapRotate: true, minimapPlayerColors: true, antialias: true, speed: 1,
   sound: true, volMaster: 0.8, volSfx: 0.9, volVoice: 1, volMusic: 0.45, volAtmo: 0.8,
   // the two-player skirmish of the URL parameters (main.js quickConfig: tests) and the start of skirmishSetup
   skirmish: { me: 'SEAS', ai: 'Aje', aiLevel: 'normal', seed: 1234, warpgate: true, debug: false, meColor: 'blue', aiColor: 'red' },
@@ -230,7 +230,7 @@ export class Menu {
     const credits = Math.max((k.credits || {})[m.id] || 0, m.min_credits != null ? m.min_credits : PB.cost({ cards: units, res: {} }, tribe));
     const total = PB.total(credits, tribe, { mp: false, buildings });
     const load = () => PB.load(preset, tribe, total, { fixed: true, buildings, mp: false, lockedRes });
-    armyPage(this, { tribe, credits, total, shown: credits, army: load(), mp: false, buildings, allowed, defaults: load,
+    armyPage(this, { tribe, credits, total, shown: credits, army: load(), mp: false, buildings, allowed, defaults: load, debugFree: true,
       limits: (hp.unit_limits || []).map((l) => (l && l.max != null ? l.max : null)), title: `${D.ui('_MyArmy', 'My Army')} · ${m.title || m.name}`,
       back, done: (army) => go({ ...cfg, army }) });
   }
@@ -319,7 +319,7 @@ export class Menu {
         ${this.btn('spawn', 'Put down', 'small')}</div><small>At the middle of the screen. Your new Workshop objects are in the list too.</small></div>
       <div class="pwgrp"><b>World</b><div class="btns row">${this.btn('fog', G.fow && G.fow.revealAll ? 'Fog of war: off' : 'Fog of war: on', 'small')}${(G.campaign || G.sequel) ? this.btn('win', 'Win the mission', 'small') + this.btn('lose', 'Lose the mission', 'small') : ''}</div></div>
       ${this.objectivesGroup()}
-      <div class="pwgrp"><b>Report</b><div class="btns row">${this.btn('report', 'Copy a report of the objects at the middle of the screen', 'small')}</div><small>For bug reports: centre the camera on the objects (select your units too), then paste the copied text.</small></div>
+      <div class="pwgrp"><b>Report</b><div class="btns row">${this.btn('report', 'Copy a report of the objects at the middle of the screen', 'small')}${this.btn('hitches', 'Copy the frame spikes', 'small')}</div><small>For bug reports: centre the camera on the objects (select your units too), then paste the copied text.</small></div>
       <p id="d_did"></p><div class="btns row">${this.btn('back', 'Back', 'small')}${this.btn('resume', 'Resume game', 'small')}</div>`);
     this.bind({
       res: () => { for (const r of ['food', 'wood', 'stone']) me.res[r] = (me.res[r] || 0) + 1000; say('+1000 food, wood and stone (above the storage limit too).'); },
@@ -364,6 +364,12 @@ export class Menu {
         const errs = shownProblems().filter((k) => k.startsWith('err:'));
         text += '\n' + (errs.length ? 'errors shown: ' + errs.join(' | ') : 'no errors shown') + (G.build ? '\nbuild ' + G.build : '');
         say((await copyText(text)) ? 'The report is copied - paste it into the chat.' : 'Copying failed.');
+      },
+      // the frames that took far longer than usual (main.js noteHitch; counted in the F9 overlay)
+      hitches: async () => {
+        const text = G.hitchReport ? G.hitchReport() : '';
+        if (!text) return say('No frame spikes so far.');
+        say((await copyText(`frame spikes (game time, frame ms, slowest steps | first-time GPU work | world events)\n${text}\n${G.gpu || ''}${G.build ? '\nbuild ' + G.build : ''}`)) ? `${G.hitches.length} frame spikes copied - paste them into the chat.` : 'Copying failed.');
       },
       back: () => this.main(), resume: () => this.close(),
     });
@@ -549,6 +555,7 @@ export class Menu {
         <span>Frame rate limit</span><select class="pwsel" id="s_fps">${opt(30, s.fpsCap, '30 fps')}${opt(60, s.fpsCap, '60 fps')}${opt(120, s.fpsCap, '120 fps')}${opt(0, s.fpsCap, 'Unlimited')}</select>
         <span>Render resolution</span><select class="pwsel" id="s_res">${opt(0.5, s.resScale, '50 %')}${opt(0.67, s.resScale, '67 %')}${opt(0.75, s.resScale, '75 %')}${opt(1, s.resScale, '100 %')}</select>
         ${chk('s_aa', s.antialias, 'Anti-aliasing (after restart)')}
+        ${chk('s_warm', s.warmup !== false, 'Prepare all graphics while loading (fewer stutters, longer loading)')}
         ${chk('s_perf', s.perf, 'Show performance (F9)')}
       </div></div>
       <div class="pwgrp"><b>Sound</b><div class="set">
@@ -563,7 +570,7 @@ export class Menu {
     const $ = (id) => this.win.querySelector('#' + id);
     const apply = () => {
       s.showIncome = $('s_income').checked; s.edgeScroll = $('s_edge').checked; s.autoMenu = $('s_automenu').checked; s.tipNear = $('s_tipnear').checked; s.mentor = $('s_mentor').checked; s.minimapRotate = $('s_mmrot').checked; s.minimapPlayerColors = $('s_mmcol').checked; s.speed = +$('s_speed').value; s.uiScale = +$('s_ui').value; s.autosave = $('s_autosave').checked; s.autosaveMin = +$('s_autosavemin').value;
-      s.shadows = $('s_shadows').value; s.grass = $('s_grass').value; s.particles = $('s_particles').value; s.weather = $('s_weather').checked; s.fpsCap = +$('s_fps').value; s.resScale = +$('s_res').value; s.antialias = $('s_aa').checked; s.perf = $('s_perf').checked;
+      s.shadows = $('s_shadows').value; s.grass = $('s_grass').value; s.particles = $('s_particles').value; s.weather = $('s_weather').checked; s.fpsCap = +$('s_fps').value; s.resScale = +$('s_res').value; s.antialias = $('s_aa').checked; s.warmup = $('s_warm').checked; s.perf = $('s_perf').checked;
       s.sound = $('s_sound').checked; s.volMaster = $('s_vm').value / 100; s.volSfx = $('s_vs').value / 100; s.volVoice = $('s_vv').value / 100; s.volMusic = $('s_vmu').value / 100; s.volAtmo = $('s_vat').value / 100;
       saveSettings(s);
       if (this.hooks.applySettings) this.hooks.applySettings(s);

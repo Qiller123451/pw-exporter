@@ -75,7 +75,7 @@ const SPECS = [
 const KEY_SPECS = {
   world: { name: 'World', skip: ['scene', 'data', 'templates', 'height', 'fx', 'audio', 'props', 'foliage', 'fow', 'adaptTerrain', 'nightFn', 'clearVegetation', 'decorIndex', 'onEntity', 'nav', 'waterNav',
     'uHash', 'bHash', 'rHash', 'reserved', 'events', 'hooks', 'dead', 'standIns', '_amp', '_resCan', '_resBy', '_noModel', 'wetCell', 'steepCell', 'shoreCell', 'cloneModel', 'applyFow',
-    'MOVES', 'THREE', 'size', 'play', 'playHalf', 'water', 'setting', 'wallGrid', 'productWood', 'regionOf', '_walkable', '_island', 'prewarm'] },
+    'MOVES', 'THREE', 'size', 'play', 'playHalf', 'water', 'setting', 'wallGrid', 'productWood', 'regionOf', '_walkable', '_island', 'prewarm', 'pathShare'] },
   trig: { name: 'Trigger', skip: ['E', 'data', 'conds', 'actions', 'expr', 'index', 'guid', 'name', 'folder', 'once', 'random', 'byDifficulty', 'startEnabled', 'nodeOff'] },
   cond: { name: 'Cond', skip: ['E', 't', 'type', 'p', 'index'] },
 };

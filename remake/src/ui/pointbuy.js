@@ -6,7 +6,8 @@
 //                         gauge names), army,
 //                         mp (multiplayer rules: presets, Clear, 30 food), buildings, allowed (Set of classes or null),
 //                         limits ([max per level] or null), defaults () => army (the Default button), title,
-//                         done (army), back () }
+//                         done (army), back (), debugFree (show the debug "Free" switch: every card and resource
+//                         costs nothing while it is on; remembered in localStorage pwr.pbFree) }
 // The army (game/pointbuy.js) is changed in place; done() gets it.
 
 import { PYR, ICON_LVL } from './hud.js';
@@ -20,6 +21,9 @@ const RES_BTN = [[0, 35], [35, 33], [68, 33], [101, 33], [134, 33], [167, 35]];
 // the "buy at level n" arrows beside the pyramid (PD:96-124: y 431 / 281 / 177 / 99 / 25 for the levels 1..5)
 const ARROW_Y = [431, 281, 177, 99, 25];
 const OWN_KEY = 'pwr.pbPresets';
+const FREE_KEY = 'pwr.pbFree';
+const ALL_KEY = 'pwr.pbAll';
+const FREE_POINTS = 1e7;            // the debug switch "Free": a budget no army reaches (the gauge says "Free")
 
 function ownPresets() { try { return JSON.parse(localStorage.getItem(OWN_KEY) || '[]'); } catch (e) { return []; } }
 function saveOwn(list) { try { localStorage.setItem(OWN_KEY, JSON.stringify(list)); } catch (e) { /* private mode */ } }
@@ -27,9 +31,15 @@ function saveOwn(list) { try { localStorage.setItem(OWN_KEY, JSON.stringify(list
 export function armyPage(menu, opt) {
   const G = menu.G, D = G.data, PB = new PointBuy(D, G.aiData), tribe = opt.tribe;
   let army = opt.army;
+  let free = false;
+  if (opt.debugFree) { try { free = localStorage.getItem(FREE_KEY) === '1'; } catch (e) { free = false; } }
+  const tot = () => (free ? FREE_POINTS : opt.total);
   const ui = (k, d) => D.ui(k, d);
   const blocked = (opt.limits || [null, null, null, null, null]).map((m, i) => (m == null ? 0 : Math.max(0, (SLOT_LEVELS[i][1] - SLOT_LEVELS[i][0] + 1) - m)));
-  const shop = PB.shop(tribe, opt.allowed || null);
+  // debug "All units": the shop offers every class of the tribe, not only those the mission allows
+  let all = false;
+  if (opt.debugFree && opt.allowed) { try { all = localStorage.getItem(ALL_KEY) === '1'; } catch (e) { all = false; } }
+  let shop = PB.shop(tribe, all ? null : opt.allowed || null);
   let tab = 0, sel = shop[0] ? shop[0].cls : null;
   const resBtns = RES.map((r, i) => `<div class="pbr" data-r="${r}">
       <b class="m" data-b="${2 * i}" title="${esc(ui('_UI_AC_PointBuy_Resource_Buy_' + 2 * i))}"></b><b class="p" data-b="${2 * i + 1}" title="${esc(ui('_UI_AC_PointBuy_Resource_Buy_' + (2 * i + 1)))}"></b><span></span></div>`).join('');
@@ -38,6 +48,8 @@ export function armyPage(menu, opt) {
       <div class="pbpyr"><div class="pyramid"></div>${ARROW_Y.map((y, i) => `<div class="pbarrow" data-lv="${i + 1}" style="top:${y}px" title="${esc(ui('_UI_AC_PointBuy_Arrow_' + i + '_TT'))}"><span></span></div>`).join('')}</div>
       <div class="pbres">${resBtns}</div>
       <div class="pbtools">${opt.mp ? `<button class="pwbtn small" data-a="clear" title="${esc(ui('_UI_AC_PointBuy_Clear'))}">${esc(ui('_PointBuyMenu_Clear', 'Clear'))}</button>` : ''}
+        ${opt.debugFree ? `<button class="pwbtn small pbfree" data-a="free" title="Debug: every unit, hero and resource costs nothing (click again to pay normally)">Free</button>` : ''}
+        ${opt.debugFree && opt.allowed ? `<button class="pwbtn small pbfree" data-a="all" title="Debug: the shop offers every unit and hero of the tribe, not only those the mission allows">All units</button>` : ''}
         ${opt.defaults ? `<button class="pwbtn small" data-a="defaults" title="${esc(ui('_UI_AC_PointBuy_Default_TT'))}">${esc(ui('_UI_PBMenu_Button_Default', 'Default'))}</button>` : ''}</div>
     </div>
     <div class="pbright">
@@ -55,7 +67,7 @@ export function armyPage(menu, opt) {
   W.classList.add('wide');
   const pyr = $('.pbpyr .pyramid');
   pyr.style.backgroundImage = 'url(assets/ui/hud_pyramid_open.png)';
-  const left = () => PB.left(army, opt.total, tribe);
+  const left = () => PB.left(army, tot(), tribe);
 
   // ------------------------------------------------------------ the pyramid: slot ids in the order of the HUD's cells
   const cell = (slot) => { const lv = slotLevel(slot); return PYR[lv - 1][slot - SLOT_LEVELS[lv - 1][0]]; };
@@ -105,7 +117,7 @@ export function armyPage(menu, opt) {
       }
       ghost.style.left = e.clientX - 14 + 'px'; ghost.style.top = e.clientY - 14 + 'px';
       const to = slotAt(e.clientX, e.clientY);
-      ghost.classList.toggle('bad', to >= 0 ? !PB.canMove(army, from, to, opt.total, tribe) && to !== from : to === -1 && !!army.fixed[from]);
+      ghost.classList.toggle('bad', to >= 0 ? !PB.canMove(army, from, to, tot(), tribe) && to !== from : to === -1 && !!army.fixed[from]);
     };
     const up = (e) => {
       window.removeEventListener('mousemove', move);
@@ -113,7 +125,7 @@ export function armyPage(menu, opt) {
       if (!ghost) return;
       ghost.remove();
       const to = slotAt(e.clientX, e.clientY);
-      if (to >= 0 && PB.canMove(army, from, to, opt.total, tribe)) PB.move(army, from, to);
+      if (to >= 0 && PB.canMove(army, from, to, tot(), tribe)) PB.move(army, from, to);
       else if (to === -1) PB.sell(army, from);
       else return;
       menu.click();
@@ -132,7 +144,7 @@ export function armyPage(menu, opt) {
       a.classList.toggle('hidden', !price);
       a.classList.toggle('off', !can);
       a.querySelector('span').textContent = price || '';
-      a.onclick = () => { if (can && PB.buy(army, sel, lv, opt.total, tribe, blocked) != null) { menu.click(); refresh(); } };
+      a.onclick = () => { if (can && PB.buy(army, sel, lv, tot(), tribe, blocked) != null) { menu.click(); refresh(); } };
     });
   }
   function drawRes() {
@@ -148,7 +160,7 @@ export function armyPage(menu, opt) {
         b.onclick = (ev) => {
           if (off) return;
           const step = (ev.shiftKey ? 10 : 1) * (ev.ctrlKey || ev.metaKey ? 100 : 1);
-          PB.addRes(army, r, plus ? step : -step, opt.total, tribe);
+          PB.addRes(army, r, plus ? step : -step, tot(), tribe);
           menu.click();
           refresh();
         };
@@ -156,8 +168,19 @@ export function armyPage(menu, opt) {
     });
   }
   function drawGauge() {
-    const l = left(), shown = opt.shown != null ? opt.shown : opt.total;
-    $('.pbgauge i').style.width = Math.max(0, Math.min(1, l / Math.max(1, opt.total))) * 100 + '%';
+    const fb = $('[data-a="free"]'), ab = $('[data-a="all"]');
+    if (fb) fb.classList.toggle('on', free);
+    if (ab) ab.classList.toggle('on', all);
+    // over the budget (the debug "Free" switch was turned off again): Done waits until cards or resources are sold
+    const done = $('[data-a="done"]'), over = !free && left() < 0;
+    if (done) { done.classList.toggle('off', over); done.title = over ? 'The army costs more than the budget: sell cards or resources (or turn "Free" on)' : ''; }
+    if (free) {
+      $('.pbgauge i').style.width = '100%';
+      $('.pbgauge span').textContent = `Free (debug) · army ${PB.cost(army, tribe)} points`;
+      return;
+    }
+    const l = left(), shown = opt.shown != null ? opt.shown : tot();
+    $('.pbgauge i').style.width = Math.max(0, Math.min(1, l / Math.max(1, tot()))) * 100 + '%';
     $('.pbgauge span').textContent = ui('_PointBuyMenu_PointGauge', '%1 of %2 points').replace('%1', l).replace('%2', shown);
   }
 
@@ -175,7 +198,7 @@ export function armyPage(menu, opt) {
       const ic = iconFor(e.cls), lo = e.prices.findIndex((p) => p > 0);
       row.innerHTML = `<i style="${ic ? spriteCss(ic, 2, 26, 25) || '' : ''}"></i><span>${esc(D.text(e.cls).name)}</span><em>${lo >= 0 ? e.prices[lo] : ''}</em>`;
       row.onclick = () => { sel = e.cls; menu.click(); refresh(); };
-      row.ondblclick = () => { if (PB.buyLowest(army, e.cls, opt.total, tribe, blocked) != null) { menu.click(); refresh(); } };
+      row.ondblclick = () => { if (PB.buyLowest(army, e.cls, tot(), tribe, blocked) != null) { menu.click(); refresh(); } };
       row.onmouseenter = () => describe(e.cls);
       list.appendChild(row);
     }
@@ -195,7 +218,7 @@ export function armyPage(menu, opt) {
       if (!v) return;
       const pre = v.startsWith('d:') ? PB.preset(tribe, opt.credits, v.slice(2)) : ownPresets().find((p) => p.tribe === tribe && p.cost === opt.credits && p.name === v.slice(2));
       if (!pre) return;
-      army = PB.load(pre, tribe, opt.total, { mp: true, buildings: opt.buildings !== false });
+      army = PB.load(pre, tribe, tot(), { mp: true, buildings: opt.buildings !== false });
       army.preset = v;
       menu.click();
       refresh();
@@ -231,7 +254,15 @@ export function armyPage(menu, opt) {
   const leave = () => W.classList.remove('wide');
   menu.bind({
     back: () => { leave(); opt.back(); },
-    done: () => { leave(); opt.done(army); },
+    done: () => { if (!free && left() < 0) return; leave(); opt.done(army); },
+    all: () => {
+      all = !all;
+      try { localStorage.setItem(ALL_KEY, all ? '1' : '0'); } catch (e) { /* private mode */ }
+      shop = PB.shop(tribe, all ? null : opt.allowed || null);
+      if (!shop.some((x) => x.cls === sel)) { const f = shop.find((x) => x.tab === tab) || shop[0]; sel = f ? f.cls : null; }
+      menu.click(); refresh();
+    },
+    free: () => { free = !free; try { localStorage.setItem(FREE_KEY, free ? '1' : '0'); } catch (e) { /* private mode */ } menu.click(); refresh(); },
     clear: () => { army = PB.clear(tribe, { buildings: opt.buildings !== false, mp: true }); refresh(); },
     defaults: () => { army = opt.defaults(); refresh(); },
     save: savePreset,

@@ -299,7 +299,9 @@ export class HUD {
       // two slowest other steps
       const P = G.prof || {}, ms = (v) => (v || 0).toFixed(1);
       const top = Object.entries(P).filter(([k]) => !['frame', 'simulation', 'render'].includes(k)).sort((a, b) => b[1] - a[1]).slice(0, 2);
-      this.perfEl.textContent = `${s.fps} fps  ·  frame ${ms(P.frame)} ms: simulation ${ms(P.simulation)}, drawing ${ms(P.render)}, ${top.map(([k, v]) => `${k} ${ms(v)}`).join(', ')}  ·  ${s.calls || 0} draw calls  ·  ${((s.tris || 0) / 1000).toFixed(0)}k tris  ·  units ${W.units.length}`;
+      this.perfEl.textContent = `${s.fps} fps  ·  frame ${ms(P.frame)} ms: simulation ${ms(P.simulation)}, drawing ${ms(P.render)}, ${top.map(([k, v]) => `${k} ${ms(v)}`).join(', ')}  ·  ${s.calls || 0} draw calls  ·  ${((s.tris || 0) / 1000).toFixed(0)}k tris  ·  units ${W.units.length}` +
+        // frame spikes (main.js noteHitch): how many, and the last one
+        (G.hitches && G.hitches.length ? `\nspikes ${G.hitches.length} · last ${G.hitches[G.hitches.length - 1].ms} ms: ${G.hitches[G.hitches.length - 1].steps.join(', ')}${G.hitches[G.hitches.length - 1].gpu.length ? ' · ' + G.hitches[G.hitches.length - 1].gpu.join(', ') : ''}` : '');
     }
   }
 

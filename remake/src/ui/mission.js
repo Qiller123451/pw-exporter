@@ -668,8 +668,12 @@ export class MissionUI {
     if (f.k >= f.list.length) { this.endCine(); return; }
     this.log.push(['film', c.seq.id, f.list[f.k]]);
     v.src = 'assets/video/' + String(f.list[f.k]).replace(/\.bik$/i, '').toLowerCase() + '.webm';
+    v.muted = !!f.mutedByLock;
     const p = v.play();
-    if (p && p.catch) p.catch(() => {});
+    // the browser holds the sound back until the first click after a reload (the same as the cutscenes' speech,
+    // lateVoice): a film with sound is then refused and stood still. It plays muted instead, with the "click for
+    // sound" hint; the click turns its sound on (update)
+    if (p && p.catch) p.catch((e) => { if (e && e.name === 'NotAllowedError' && this.cine && this.cine.film === f) { f.mutedByLock = true; v.muted = true; v.play().catch(() => {}); } });
     this.filmSubtitle();
   }
   // the share of the subtitle lines that belongs to the current film, spread evenly over its length
@@ -813,7 +817,12 @@ export class MissionUI {
     this.updateCine(dt);
     // speech that waits for the sound to be allowed, and the "click for sound" hint (lateVoice)
     const h = this.cine && !this.cine.film ? this.cine : this.scene && !this.scene.hidden ? this.scene : null;
-    if (h) this.lateVoice(h, h === this.cine ? 'cine' : 'ds'); else if (this.sndHint) this.soundHint(false);
+    const film = this.cine && this.cine.film;
+    if (film && film.mutedByLock) {
+      const ok = !!(A && A.ready && A.ready());
+      if (ok) { const v = this.filmEl && this.filmEl.querySelector('video'); if (v) v.muted = false; film.mutedByLock = false; }
+      this.soundHint(!ok && !(A && A.muted) && !(this.G.settings && this.G.settings.sound === false));
+    } else if (h) this.lateVoice(h, h === this.cine ? 'cine' : 'ds'); else if (this.sndHint) this.soundHint(false);
     for (let i = this.news_.length - 1; i >= 0; i--) {
       const n = this.news_[i];
       n.t -= dt;
