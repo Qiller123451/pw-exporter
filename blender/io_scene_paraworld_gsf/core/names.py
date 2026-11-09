@@ -125,3 +125,13 @@ def _wall_part_names():
 
 
 KNOWN_COMPONENT_NAMES = _wall_part_names()
+
+
+# Model classes whose components the game draws by construction / damage state: a mesh is drawn only when its bits
+# match the object's state (Con 0-4, UseConFlags, Dest 1-2). A mesh with LOD bits only is never drawn.
+STATE_CLASSES = ('Bldg', 'Wall', 'Ship', 'Fiel')
+STATE_BITS = 0x1FE00000          # bits 21-28: Con 0-3, Con 4, UseConFlags, Dest 1, Dest 2 = shown in every state
+
+
+def needs_state_bits(fourcc):
+    return (fourcc or '').strip() in STATE_CLASSES

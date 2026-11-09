@@ -397,6 +397,13 @@ class Exporter:
                 o.data.pose_position = p
             bpy.context.view_layer.update()
         m.prepare()
+        if NAMES.needs_state_bits(m.fourcc):
+            hidden = [o.name for o, c in obj_chunk.items() if c.KIND == 'mesh' and not c.is_cloth
+                      and c.v.get('attributes', 0) >> 5 == 0]
+            if hidden:
+                self.warnings.append('%s: %d meshes have no construction / damage bits and are never drawn in a %s '
+                                     'model (%s). Select them and press "Show in every state".'
+                                     % (m.name, len(hidden), m.fourcc.strip(), ', '.join(hidden[:4])))
         return m
 
     def _is_cloth(self, o):

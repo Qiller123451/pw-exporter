@@ -336,6 +336,11 @@ class GSF_PT_object(bpy.types.Panel):
         pg = getattr(g, 'p_' + kind, None)
         if pg is None:
             return
+        if kind == 'mesh' and NAMES.needs_state_bits(_fourcc_of(o)) and not any(g.attributes[5:]):
+            box = lay.box()
+            box.label(text='Never drawn: a %s model draws a mesh only in the' % _fourcc_of(o).strip(), icon='ERROR')
+            box.label(text='construction / damage states its bits name.')
+            box.operator('gsf.state_bits', icon='CHECKMARK')
         cls = KINDS[kind]
         lay.prop(pg, 'type_id')
         lay.prop(g, 'guid')

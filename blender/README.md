@@ -46,6 +46,10 @@ Edit > Preferences > Add-ons > (drop-down) Install from Disk… and choose `io_s
      file's own order.
    - An edited model replaces the one of the same name in its place: it keeps its single entry and position.
 3. **Add models.** Select objects (meshes, an armature, empties for links) and press **New model from selection**.
+   - Buildings, walls, ships and fields (`Bldg`, `Wall`, `Ship`, `Fiel`) draw a mesh only in the construction /
+     damage states its attribute bits name (*Con 0-4*, *UseConFlags*, *Dest 1-2*). A mesh with LOD bits only is
+     never drawn: the game shows just the selection box. New components of such models get every state bit; the
+     mesh panel warns when they are missing (button *Show in every state*), and so does saving.
 4. **Animations.** Select any object of a model. In the GSF tab, the *GSF Model* panel lists its animations:
    - ▶ plays one: assigns its actions and sets the frame range.
    - The armature button returns to the rest pose.

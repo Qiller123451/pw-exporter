@@ -465,4 +465,25 @@ dt_a = [d for d in A.dusttrails if d.model.name == 'allosaurus']
 dt_c = [d for d in B.dusttrails if d.model.name == 'allo_copy']
 check(len(dt_a) == len(dt_c) and len(dt_a) > 0 and [d.anim.name if d.anim else None for d in dt_c] == [d.anim.name if d.anim else None for d in dt_a],
       'dust trails of allosaurus copied (%d)' % len(dt_c))
+# ------------------------------------------------------------------ 11. state bits of building-type models
+from io_scene_paraworld_gsf.blender.exp import Exporter  # noqa: E402
+from io_scene_paraworld_gsf.blender import props as P  # noqa: E402
+from io_scene_paraworld_gsf.blender.ops import model_root  # noqa: E402
+bpy.ops.object.select_all(action='DESELECT')
+bpy.ops.mesh.primitive_cube_add(size=1.0)
+cube11 = bpy.context.active_object
+cube11.select_set(True)
+bpy.ops.gsf.model_new(name='state_test_building', fourcc='Bldg')
+check(P.bits_to_int(cube11.gsf.attributes) == 0x1FE0001F, 'new building component: LOD 0-4 + every construction / damage state')
+for i in range(5, 32):
+    cube11.gsf.attributes[i] = False
+col11 = model_root(cube11).users_collection[0]
+while not col11.gsf_archive.is_archive:
+    col11 = next(c for c in bpy.data.collections if col11.name in c.children)
+exp11 = Exporter(col11, 'AUTO')
+exp11.save(os.path.join(out_dir, 'state_bits.gsf'))
+check(any('never drawn' in w and 'state_test_building' in w for w in exp11.warnings), 'saving warns about a building mesh with LOD bits only')
+bpy.context.view_layer.objects.active = cube11
+bpy.ops.gsf.state_bits()
+check(P.bits_to_int(cube11.gsf.attributes) == 0x1FE0001F, '"Show in every state" sets the bits again')
 print('FAILURES:', fails or 'none')

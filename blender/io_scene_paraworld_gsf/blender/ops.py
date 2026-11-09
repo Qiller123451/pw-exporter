@@ -12,6 +12,7 @@ from ..core.archive import WALKSET_SLOTS
 from . import props as P
 from . import compat
 from . import lods
+from ..core import names as NAMES
 from .space import MIRRORS
 
 _cache = {}
@@ -248,6 +249,24 @@ def entry_source(g, a, e):
     return None
 
 
+class GSF_OT_state_bits(bpy.types.Operator):
+    """Show the selected components in every construction and damage state (sets Con 0-4, UseConFlags, Dest 1 and
+Dest 2). Building, wall, ship and field models draw a mesh only when its bits match the object's state"""
+    bl_idname = 'gsf.state_bits'
+    bl_label = 'Show in every state'
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        objs = [o for o in context.selected_objects if o.gsf.kind != 'NONE'] or \
+            ([context.active_object] if context.active_object is not None else [])
+        for o in objs:
+            for i in range(32):
+                if NAMES.STATE_BITS >> i & 1:
+                    o.gsf.attributes[i] = True
+        self.report({'INFO'}, '%d components shown in every state' % len(objs))
+        return {'FINISHED'}
+
+
 class GSF_OT_entry_copy(bpy.types.Operator):
     """Add a copy of the active model under a new name: every component, flag, mesh, material, collision volume,
 animation, walk set and the dust trails of its animations. An edited model is copied as it is in the scene when the
@@ -414,6 +433,10 @@ class GSF_OT_model_new(bpy.types.Operator):
             o.gsf.attributes[0] = True
             for i in range(1, 5):
                 o.gsf.attributes[i] = True
+            if NAMES.needs_state_bits(self.fourcc):         # buildings: shown in every construction / damage state
+                for i in range(32):
+                    if NAMES.STATE_BITS >> i & 1:
+                        o.gsf.attributes[i] = True
         e = col.gsf_archive.entries.add()
         e.name = self.name
         e.fourcc = self.fourcc
@@ -790,7 +813,7 @@ def frame_handler(scene, depsgraph=None):
                 o.data = me
 
 
-CLASSES = [IMPORT_SCENE_OT_paraworld_gsf, EXPORT_SCENE_OT_paraworld_gsf, GSF_OT_import_entries, GSF_OT_entry_state, GSF_OT_entry_copy, GSF_OT_entry_move,
+CLASSES = [IMPORT_SCENE_OT_paraworld_gsf, EXPORT_SCENE_OT_paraworld_gsf, GSF_OT_import_entries, GSF_OT_entry_state, GSF_OT_entry_copy, GSF_OT_state_bits, GSF_OT_entry_move,
            GSF_OT_archive_new, GSF_OT_model_new, GSF_OT_sort_lods, GSF_OT_set_kind, GSF_OT_anim_apply, GSF_OT_anim_clear, GSF_OT_anim_add,
            GSF_OT_anim_remove, GSF_OT_collection_edit, GSF_OT_archive_list, GSF_OT_toggle_bit, GSF_OT_rebuild_material]
 
