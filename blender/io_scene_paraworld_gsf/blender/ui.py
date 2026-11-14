@@ -34,13 +34,27 @@ def draw_struct(layout, pg, struct, kind, ctx=None, path=''):
             draw_bits(box, path, pg, f.name, names)
 
 
-def draw_attributes(layout, pg, fourcc):
-    names = NAMES.attribute_bit_names(fourcc)
+def draw_bbox(lay, pg, scope):
+    """automatic box switch, the box when set, and the cube buttons (bboxes.py)"""
+    lay.prop(pg, 'auto_bbox')
+    if not pg.auto_bbox:
+        lay.prop(pg, 'bbox')
+    r = lay.row(align=True)
+    op = r.operator('gsf.bbox_cubes', text='Show box cube', icon='CUBE')
+    op.action, op.scope = 'SHOW', scope
+    op = r.operator('gsf.bbox_cubes', text='Hide', icon='HIDE_ON')
+    op.action, op.scope = 'HIDE', scope
+
+
+def draw_attributes(layout, pg, fourcc, path):
+    """the 32 visibility bits as toggle buttons; hovering a bit shows what it does in the game"""
+    info = NAMES.attribute_bit_info(fourcc)
     col = layout.column(align=True)
     col.label(text='Attributes (visibility bits) = %s' % P.hexs(P.bits_to_int(pg.attributes)))
     grid = col.grid_flow(columns=4, align=True)
     for i in range(32):
-        grid.prop(pg, 'attributes', index=i, text=names[i], toggle=True)
+        op = grid.operator('gsf.toggle_attribute', text=info[i][0], depress=bool(pg.attributes[i]))
+        op.path, op.bit, op.fourcc = path, i, (fourcc or '').strip()
 
 
 def _fourcc_of(obj):
@@ -307,7 +321,7 @@ class GSF_PT_action(bpy.types.Panel):
                 r.prop(m, 'material', text='')
                 remove_button(r, 'gsf.materials', k, act)
             add_button(box, 'gsf.materials', 'Add material', act)
-        draw_attributes(lay, g, _fourcc_of(context.active_object))
+        draw_attributes(lay, g, _fourcc_of(context.active_object), 'active_object.animation_data.action.gsf')
 
 
 # ============================================================================================ properties editor
@@ -330,7 +344,7 @@ class GSF_PT_object(bpy.types.Panel):
         if g.kind == 'COLLISION':
             lay.prop(g, 'shape')
             lay.label(text='Position and size: the object\'s location and scale')
-            draw_attributes(lay, g, _fourcc_of(o))
+            draw_attributes(lay, g, _fourcc_of(o), 'object.gsf')
             return
         kind = g.kind.lower()
         pg = getattr(g, 'p_' + kind, None)
@@ -354,9 +368,10 @@ class GSF_PT_object(bpy.types.Panel):
             lay.prop(g, 'material')
         if kind == 'mesh':
             lay.prop(g, 'keep_tangents')
+            draw_bbox(lay, g, 'ACTIVE')
         if kind == 'particle':
             self.draw_particle(lay, o)
-        draw_attributes(lay, g, _fourcc_of(o))
+        draw_attributes(lay, g, _fourcc_of(o), 'object.gsf')
 
     def draw_particle(self, lay, o):
         g = o.gsf
@@ -395,9 +410,8 @@ class GSF_PT_object(bpy.types.Panel):
         if g.empty_slots:
             lay.prop(g, 'empty_slots')
         draw_struct(lay, g, P.GSF_PG_model.STRUCT, 'model')
-        lay.prop(g, 'auto_bbox')
-        if not g.auto_bbox:
-            lay.prop(g, 'bbox')
+        draw_bbox(lay, g, 'ACTIVE')
+        lay.operator('gsf.bbox_cubes', text='Show all bounding box cubes of the model', icon='CUBE').scope = 'MODEL'
         box = lay.box()
         box.label(text='Material list (order = indices used by sprites and emitters)')
         for k, m in enumerate(g.materials):

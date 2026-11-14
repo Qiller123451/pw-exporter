@@ -148,7 +148,7 @@ Select the root empty and open **Object properties > ParaWorld GSF**.
   *Replaces* to save a renamed copy in place of the original.
 - **fourcc**: the model class (`Bldg`, `Char`, `Anim`, `Vehi`, `Deko` …). It also decides the names of the
   attribute bits.
-- **Bounding box**: untick *Automatic bounding box* to type it in; ticked, it is computed on save.
+- **Bounding box**: see [Bounding boxes](#bounding-boxes) below.
 - **Material list**: the materials sprites and emitters refer to by position. **X** removes one, *Add material*
   adds one.
 - **Walk sets** (characters and animals): which animation the game plays for each movement. Each slot picks one of
@@ -194,6 +194,27 @@ does not use Blender's shader nodes; only the fields of this panel are saved.)
 called `b_<CRC>` unless the name is known), flags, rest scale and order.
 
 ![Bone properties](images/15_bone.png)
+
+### Bounding boxes
+
+The model has a bounding box, and so has every mesh (the mesh's box is also the range its vertex positions are
+stored in). Each has the checkbox **Automatic bounding box**, ticked by default:
+
+- **Ticked**: the box is computed from the geometry on save. A box read from the file is kept as long as the geometry
+  still fits in it, so unchanged models are saved exactly as they were.
+- **Unticked**: the box shown below the checkbox is written as it is. For a mesh, vertices outside it are moved onto
+  it (the save warns about it), so make it at least as big as the mesh.
+
+Every box also has a **cube**: an empty with the display type *Cube*, named `<object> bbox` and parented to the model
+root or the mesh. The import makes them hidden. Show them with **Show box cube** (the selected root or mesh) or
+**Show all bounding box cubes of the model** (root panel), hide them with **Hide**, or use the eye / monitor icons in
+the outliner.
+
+- **Moving or scaling a cube** sets that box and unticks its *Automatic bounding box*. The cube's location is the
+  centre and its scale the half size; rotating it has no effect.
+- **Typing values** into *Bounding box* moves the cube.
+- After a save, the cubes of automatic boxes show the box that was written.
+- For a new model, *Show box cube* makes the missing cubes from the current geometry.
 
 ### Geometry
 

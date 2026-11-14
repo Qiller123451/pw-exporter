@@ -19,7 +19,7 @@ import { raiseEpoch, spawnable, spawnObject, objectReport } from '../game/cheats
 import { copyText, shownProblems } from './diagnostics.js';
 
 export const DEFAULT_SETTINGS = {
-  showIncome: false, mentor: true, autosave: true, autosaveMin: 10, shadows: 'on', grass: 'on', particles: 'on', weather: true, warmup: true, fpsCap: 60, resScale: 1, uiScale: 0, perf: false, edgeScroll: true, autoMenu: true, tipNear: true, minimapRotate: true, minimapPlayerColors: true, antialias: true, speed: 1,
+  showIncome: false, mentor: true, autosave: true, autosaveMin: 10, shadows: 'on', grass: 'on', particles: 'on', weather: true, warmup: true, fpsCap: 60, resScale: 1, uiScale: 0, perf: false, edgeScroll: true, autoMenu: true, tipNear: true, minimapRotate: true, minimapPlayerColors: true, hpBarColors: 'health', antialias: true, speed: 1,
   sound: true, volMaster: 0.8, volSfx: 0.9, volVoice: 1, volMusic: 0.45, volAtmo: 0.8,
   // the two-player skirmish of the URL parameters (main.js quickConfig: tests) and the start of skirmishSetup
   skirmish: { me: 'SEAS', ai: 'Aje', aiLevel: 'normal', seed: 1234, warpgate: true, debug: false, meColor: 'blue', aiColor: 'red' },
@@ -542,6 +542,7 @@ export class Menu {
         ${chk('s_mentor', s.mentor !== false, 'Show the mentor\'s hints in campaign missions')}
         ${chk('s_mmrot', !!s.minimapRotate, ui('_UI_OptionsM_CheckBox_RotateMinimap', 'Rotate Minimap'))}
         ${chk('s_mmcol', s.minimapPlayerColors !== false, ui('_UI_OptionsM_CheckBox_UsePlayerColors', 'Use Player Colors'))}
+        <span>Health bar colour</span><select class="pwsel" id="s_hpcol">${opt('health', s.hpBarColors || 'health', 'By health (red .. green)')}${opt('player', s.hpBarColors, 'Player colour')}</select>
         ${chk('s_autosave', s.autosave !== false, ui('_UI_OptionsM_AutoSave', 'Enable autosave'))}
         <span>Autosave every</span><select class="pwsel" id="s_autosavemin">${[5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60].map((v) => opt(v, s.autosaveMin || 10, v + ' min')).join('')}</select>
         <span>Game speed</span><select class="pwsel" id="s_speed">${opt(0.5, s.speed, 'Slow')}${opt(1, s.speed, 'Normal')}${opt(1.5, s.speed, 'Fast')}${opt(2, s.speed, 'Very fast')}</select>
@@ -569,7 +570,7 @@ export class Menu {
       <div class="btns">${this.btn('ok', 'OK')}</div>`, { title: !this.inGame });
     const $ = (id) => this.win.querySelector('#' + id);
     const apply = () => {
-      s.showIncome = $('s_income').checked; s.edgeScroll = $('s_edge').checked; s.autoMenu = $('s_automenu').checked; s.tipNear = $('s_tipnear').checked; s.mentor = $('s_mentor').checked; s.minimapRotate = $('s_mmrot').checked; s.minimapPlayerColors = $('s_mmcol').checked; s.speed = +$('s_speed').value; s.uiScale = +$('s_ui').value; s.autosave = $('s_autosave').checked; s.autosaveMin = +$('s_autosavemin').value;
+      s.showIncome = $('s_income').checked; s.edgeScroll = $('s_edge').checked; s.autoMenu = $('s_automenu').checked; s.tipNear = $('s_tipnear').checked; s.mentor = $('s_mentor').checked; s.minimapRotate = $('s_mmrot').checked; s.minimapPlayerColors = $('s_mmcol').checked; s.hpBarColors = $('s_hpcol').value; s.speed = +$('s_speed').value; s.uiScale = +$('s_ui').value; s.autosave = $('s_autosave').checked; s.autosaveMin = +$('s_autosavemin').value;
       s.shadows = $('s_shadows').value; s.grass = $('s_grass').value; s.particles = $('s_particles').value; s.weather = $('s_weather').checked; s.fpsCap = +$('s_fps').value; s.resScale = +$('s_res').value; s.antialias = $('s_aa').checked; s.warmup = $('s_warm').checked; s.perf = $('s_perf').checked;
       s.sound = $('s_sound').checked; s.volMaster = $('s_vm').value / 100; s.volSfx = $('s_vs').value / 100; s.volVoice = $('s_vv').value / 100; s.volMusic = $('s_vmu').value / 100; s.volAtmo = $('s_vat').value / 100;
       saveSettings(s);

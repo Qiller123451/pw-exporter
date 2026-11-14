@@ -9,32 +9,157 @@ def crc32(name):
 
 # --------------------------------------------------------------------------------------------- chunk attribute bits
 # Bits are numbered from the least significant bit (1 << bit), as SEK's tools do.
-_COMMON = {0: 'LOD 0', 1: 'LOD 1', 2: 'LOD 2', 3: 'LOD 3', 4: 'LOD 4', 18: 'SelVol (pick volume)'}
-_BUILDING = {5: 'AnimateConStart', 6: 'AnimateConEnd', 9: 'Age 1', 10: 'Age 2', 11: 'Age 3', 12: 'Age 4',
-             13: 'Age 5', 19: 'ShadowModel', 20: 'Night', 21: 'Con 0', 22: 'Con 1', 23: 'Con 2', 24: 'Con 3',
-             25: 'Con 4 (finished)', 26: 'UseConFlags', 27: 'Dest 1', 28: 'Dest 2'}
-_ANIM = {5: 'PartyCol', 6: 'Saddle', 7: 'Helmet', 8: 'Armor', 9: 'Standarte', 10: 'Armorsaddle', 11: 'Misc',
-         16: 'Activated', 20: 'Wound arm_li', 21: 'Wound arm_re', 22: 'Wound leg_li', 23: 'Wound leg_re',
-         24: 'Wound bauch_li', 25: 'Wound bauch_re', 26: 'Wound head', 27: 'Wound tail'}
-_CHAR = {5: 'Head', 6: 'Body', 7: 'Legs'}
-_RESS = {5: 'res_1', 6: 'res_2', 7: 'res_3', 8: 'res_4', 9: 'res_5', 10: 'res_6'}
-_MISC = {5: 'Misc_Step0', 6: 'Misc_Step1', 7: 'Misc_Step2', 19: 'ShadowModel', 20: 'Night'}
+# The same bit numbers are the part flags of the game's scripts: CObjBase.SetRndInvMaskSingleFlagInv(bit, bShow)
+# (index 0-31; the engine uses index & 31) shows (true) or hides (false) the meshes that carry the bit.
+# Each entry: bit -> (label, meaning, engine part name or '', script constant or ''). Engine part names are the ones
+# PWClient.exe's sequence part table (CItemFlags) uses for that FourCC; script constants are MIRAGE's USL names.
+_HIDE = 'In the game: SetRndInvMaskSingleFlagInv(%d, true) shows these meshes, (%d, false) hides them.'
 
-ATTRIBUTE_BITS = {
-    'Bldg': _BUILDING, 'Fiel': _BUILDING, 'Wall': _BUILDING,
-    'Ship': {**_BUILDING, 5: 'ram_low', 6: 'ram_high'},
-    'Vehi': {5: 'ram_low', 6: 'ram_high', 19: 'ShadowModel'},
-    'Anim': _ANIM, 'Char': _CHAR, 'Ress': _RESS, 'Misc': _MISC,
-    'Deko': {5: 'Sequence', 19: 'ShadowModel', 20: 'Night'},
-    'Vgtn': {19: 'TreeBillboard'},
-    'RIVR': {21: 'UseWaterShader'},
+_COMMON = {
+    0: ('LOD 0', 'Level of detail 0 (closest). The engine picks the level from the camera distance', '',
+        'CFightingObj.VIS_FLAG_LOD0 = 0 (engine-controlled, do not set from scripts)'),
+    1: ('LOD 1', 'Level of detail 1. Chosen by the engine', '', 'CFightingObj.VIS_FLAG_LOD1 = 1 (engine-controlled)'),
+    2: ('LOD 2', 'Level of detail 2. Chosen by the engine', '', 'CFightingObj.VIS_FLAG_LOD2 = 2 (engine-controlled)'),
+    3: ('LOD 3', 'Level of detail 3. Chosen by the engine', '', 'CFightingObj.VIS_FLAG_LOD3 = 3 (engine-controlled)'),
+    4: ('LOD 4', 'Level of detail 4 (farthest). Chosen by the engine', '',
+        'CFightingObj.VIS_FLAG_LOD4 = 4 (engine-controlled)'),
+    18: ('SelVol (pick volume)', 'Selection / pick volume: never drawn, used for clicking the object', '',
+         'CFightingObj.VIS_FLAG_SELVOL = 18 (engine-controlled)'),
 }
+_SHADOW = (19, ('ShadowModel', 'Mesh that only casts the shadow', '', 'CFightingObj.VIS_FLAG_SHADOWMODEL = 19'))
+_DAY = (17, ('Day (not at night)', 'Shown in daylight, hidden at night: at night the buildings hide bit 17 and show '
+             'bit 20 (the engine part "Night" switches both)', 'Night (inverted)', 'CFightingObj.VIS_FLAG_BLDG_INIGHTMODE = 17'))
+_NIGHT = (20, ('Night', 'Shown at night only (lights), switched together with bit 17', 'Night',
+               'CFightingObj.VIS_FLAG_BLDG_NIGHTMODE = 20'))
+_BUILDING = {
+    5: ('AnimateConStart', 'Animated part at the start of construction. Scarecrows (Bldg) show and hide their '
+        'figure with this bit', '', 'CFightingObj.VIS_FLAG_BLDG_ANIMATECONSTART = 5, '
+        'CFightingObj.VIS_FLAG_BLDG_SCARECROW = 5'),
+    6: ('AnimateConEnd', 'Animated part at the end of construction', '',
+        'CFightingObj.VIS_FLAG_BLDG_ANIMATECONEND = 6'),
+    9: ('Age 1', "Shown in the owner's epoch 1", '', 'CFightingObj.VIS_FLAG_BLDG_AGE1 = 9'),
+    10: ('Age 2', "Shown in the owner's epoch 2", '', 'CFightingObj.VIS_FLAG_BLDG_AGE2 = 10'),
+    11: ('Age 3', "Shown in the owner's epoch 3", '', 'CFightingObj.VIS_FLAG_BLDG_AGE3 = 11'),
+    12: ('Age 4', "Shown in the owner's epoch 4", '', 'CFightingObj.VIS_FLAG_BLDG_AGE4 = 12'),
+    13: ('Age 5', "Shown in the owner's epoch 5", '', 'CFightingObj.VIS_FLAG_BLDG_AGE5 = 13'),
+    _SHADOW[0]: _SHADOW[1], _DAY[0]: _DAY[1], _NIGHT[0]: _NIGHT[1],
+    21: ('Con 0', 'Construction stage 0', '', 'CFightingObj.VIS_FLAG_BLDG_CON0 = 21'),
+    22: ('Con 1', 'Construction stage 1', '', 'CFightingObj.VIS_FLAG_BLDG_CON1 = 22'),
+    23: ('Con 2', 'Construction stage 2', '', 'CFightingObj.VIS_FLAG_BLDG_CON2 = 23'),
+    24: ('Con 3', 'Construction stage 3', '', 'CFightingObj.VIS_FLAG_BLDG_CON3 = 24'),
+    25: ('Con 4 (finished)', 'Finished building', '', 'CFightingObj.VIS_FLAG_BLDG_CON4 = 25'),
+    26: ('UseConFlags', 'Part of the intact object', '', 'CFightingObj.VIS_FLAG_BLDG_USECONFLAGS = 26'),
+    27: ('Dest 1', 'Damage stage 1', '', 'CFightingObj.VIS_FLAG_BLDG_DEST1 = 27'),
+    28: ('Dest 2', 'Damage stage 2', '', 'CFightingObj.VIS_FLAG_BLDG_DEST2 = 28'),
+    29: ('Economy', 'Name from the scripts; no script switches it, meaning unknown', '', 'CFightingObj.VIS_FLAG_BLDG_ECONOMY = 29'),
+    30: ('Defense', 'Name from the scripts; no script switches it, meaning unknown', '', 'CFightingObj.VIS_FLAG_BLDG_DEFENSE = 30'),
+    31: ('Combat', 'Name from the scripts; no script switches it, meaning unknown', '', 'CFightingObj.VIS_FLAG_BLDG_COMBAT = 31'),
+}
+_RAM = {5: ('ram_low', 'Ram in the low position', 'ram_low', 'CFightingObj.VIS_FLAG_VHCL_RAM_LOW = 5'),
+        6: ('ram_high', 'Ram in the high position', 'ram_high', 'CFightingObj.VIS_FLAG_VHCL_RAM_HIGH = 6')}
+_WOUND = 'Wound decal, shown by the hit point ratio (0.8 ... 0.2)'
+_ANIM = {
+    5: ('PartyCol', 'Player-colour parts (tamed animal)', 'PartyCol', 'CFightingObj.VIS_FLAG_ANML_PARTYCOL = 5'),
+    6: ('Saddle', 'Saddle', 'Saddle', 'CFightingObj.VIS_FLAG_ANML_SADDLE = 6'),
+    7: ('Helmet', 'Helmet', 'Helmet', 'CFightingObj.VIS_FLAG_ANML_HELMET = 7'),
+    8: ('Armor', 'Armour', 'Armor', 'CFightingObj.VIS_FLAG_ANML_ARMOR = 8'),
+    9: ('Standarte', 'Standard (banner)', 'Standarte', 'CFightingObj.VIS_FLAG_ANML_STANDARTE = 9'),
+    10: ('Armorsaddle', 'Armoured saddle', 'Armorsaddle', 'CFightingObj.VIS_FLAG_ANML_ARMORSADDLE = 10'),
+    11: ('Misc', 'Other equipment (also the training dummies of MIRAGE)', 'Misc',
+         'CFightingObj.VIS_FLAG_ANML_MISC = 11'),
+    20: ('Wound arm_li', _WOUND + ': left arm', 'arm_li', 'CFightingObj.VIS_FLAG_ANML_WOUND_ARMLI = 20'),
+    21: ('Wound arm_re', _WOUND + ': right arm', 'arm_re', 'CFightingObj.VIS_FLAG_ANML_WOUND_ARMRE = 21'),
+    22: ('Wound leg_li', _WOUND + ': left leg', 'leg_li', 'CFightingObj.VIS_FLAG_ANML_WOUND_LEGLI = 22'),
+    23: ('Wound leg_re', _WOUND + ': right leg', 'leg_re', 'CFightingObj.VIS_FLAG_ANML_WOUND_LEGRE = 23'),
+    24: ('Wound bauch_li', _WOUND + ': left belly', 'bauch_li', 'CFightingObj.VIS_FLAG_ANML_WOUND_BELLI = 24'),
+    25: ('Wound bauch_re', _WOUND + ': right belly', 'bauch_re', 'CFightingObj.VIS_FLAG_ANML_WOUND_BELRE = 25'),
+    26: ('Wound head', _WOUND + ': head (only when the head is missing)', 'head',
+         'CFightingObj.VIS_FLAG_ANML_WOUND_HEAD = 26'),
+    27: ('Wound tail', _WOUND + ': tail', 'tail', 'CFightingObj.VIS_FLAG_ANML_WOUND_TAIL = 27'),
+}
+_CHAR = {
+    5: ('Head', 'Head variant', 'Head', 'CFightingObj.VIS_FLAG_CHTR_HEAD = 5'),
+    6: ('Body', 'Body variant', 'Body', 'CFightingObj.VIS_FLAG_CHTR_BODY = 6'),
+    7: ('Legs', 'Legs variant', 'Legs', 'CFightingObj.VIS_FLAG_CHTR_LEGS = 7'),
+    16: ('Activated', 'Activated part (healer staffs)', '', 'CFightingObj.VIS_FLAG_CHTR_ACTIVATED = 16'),
+}
+_RESS = {5 + k: ('res_%d' % (k + 1), 'Resource stage %d (res_6 = full)' % (k + 1), 'res_%d' % (k + 1),
+                 'CResource.VIS_FLAG_RSRC_STATE%d = %d' % (k + 1, 5 + k)) for k in range(6)}
+_MISC = {5 + k: ('Misc_Step%d' % k, 'Step %d of a Misc object (craters use 6 and 7)' % k, 'Misc_Step%d' % k,
+                 'CFightingObj.VIS_FLAG_MISC_STEP%d = %d' % (k, 5 + k)) for k in range(3)}
+_MISC.update({_SHADOW[0]: _SHADOW[1], _DAY[0]: _DAY[1], _NIGHT[0]: _NIGHT[1],
+              16: ('Activated', 'Activated part (healer staffs)', '', 'CFightingObj.VIS_FLAG_CHTR_ACTIVATED = 16')})
+# construction / damage bits on other classes: same bits as on buildings, not checked in the engine for these classes
+_STATE_P = {b: (_BUILDING[b][0], 'Probably as on buildings: ' + _BUILDING[b][1][0].lower() + _BUILDING[b][1][1:],
+                '', _BUILDING[b][3]) for b in range(21, 29)}
+_TOWER = {5 + k: ('Zinnen_%d' % (k + 1), 'Battlement %d of a tower' % (k + 1), 'Zinnen_%d' % (k + 1),
+                  'CFightingObj.VIS_FLAG_TOWE_ZINNEN%d = %d' % (k + 1, 5 + k)) for k in range(9)}
+_GATE = {
+    7: ('West (gate)', 'Gate piece shown when the gate stands diagonally', '', 'CGate.VIS_FLAG_WEST_BIT = 7'),
+    11: ('Ost (gate)', 'Gate piece shown when the gate stands diagonally (Bldg: Age 3)', '',
+         'CGate.VIS_FLAG_OST_BIT = 11'),
+    14: ('Open (gate collision)', 'Collision volume of the open gate', '', 'CGate.VIS_FLAG_OPEN_BIT = 14'),
+    16: ('Closed (gate collision)', 'Collision volume of the closed gate', '', 'CGate.VIS_FLAG_CLOSED_BIT = 16'),
+}
+
+ATTRIBUTE_FLAGS = {
+    'Bldg': _BUILDING,
+    'Fiel': _BUILDING,
+    'Wall': {**_BUILDING, **_GATE},
+    'Ship': {**_BUILDING, **_RAM},
+    'Towe': {**_BUILDING, **_TOWER},
+    'Vehi': {**_STATE_P, **_RAM, _SHADOW[0]: _SHADOW[1]},
+    'Anim': _ANIM, 'Char': {**_STATE_P, **_CHAR}, 'Ress': {**_STATE_P, **_RESS}, 'Misc': {**_STATE_P, **_MISC},
+    'Deko': {**_STATE_P,
+             5: ('Sequence', 'Part shown in cutscenes', 'Sequence', 'CFightingObj.VIS_FLAG_DEKO_SEQUENCE = 5'),
+             _SHADOW[0]: _SHADOW[1], _DAY[0]: _DAY[1], _NIGHT[0]: _NIGHT[1]},
+    'Vgtn': {**_STATE_P,
+             19: ('TreeBillboard', 'Far-away impostor of a tree', '', 'CFightingObj.VIS_FLAG_VGTN_TREEBILLBOARD = 19')},
+    'RIVR': {**_STATE_P, 21: ('UseWaterShader', 'Drawn with the water shader', '', '')},
+}
+# labels only, as before
+ATTRIBUTE_BITS = {k: {b: v[0] for b, v in d.items()} for k, d in ATTRIBUTE_FLAGS.items()}
+
+
+def _usage(fourcc, bit):
+    from .flag_usage import MODELS, USE
+    if fourcc not in MODELS:
+        return ''
+    n, ex = USE.get(fourcc, {}).get(bit, (0, ''))
+    if not n:
+        return 'Game data: no %s model uses it' % fourcc
+    return 'Game data: %d of %d %s models use it (e.g. %s)' % (n, MODELS[fourcc], fourcc, ex)
+
+
+def attribute_bit_info(fourcc):
+    """(label, tooltip) of the 32 attribute bits of a model class"""
+    fourcc = (fourcc or '').strip()
+    info = dict(_COMMON)
+    info.update(ATTRIBUTE_FLAGS.get(fourcc, {}))
+    out = []
+    for i in range(32):
+        e = info.get(i)
+        if e is None:
+            label, meaning, engine, script = 'bit %d' % i, 'No known use%s' % (
+                ' for %s models' % fourcc if fourcc else ''), '', ''
+        else:
+            label, meaning, engine, script = e
+        lines = ['%s.' % meaning, 'Bit %d, mask 0x%08X' % (i, 1 << i)]
+        if engine:
+            lines.append('Engine part name: %s' % engine)
+        if script:
+            lines.append('Script: %s' % script)
+        if i > 4 and i != 18:
+            lines.append(_HIDE % (i, i))
+        use = _usage(fourcc, i)
+        if use:
+            lines.append(use)
+        out.append((label, '\n'.join(lines)))
+    return out
 
 
 def attribute_bit_names(fourcc):
-    names = dict(_COMMON)
-    names.update(ATTRIBUTE_BITS.get((fourcc or '').strip(), {}))
-    return [names.get(i, 'bit %d' % i) for i in range(32)]
+    return [label for label, _ in attribute_bit_info(fourcc)]
 
 
 # ------------------------------------------------------------------------------------------------- material bits

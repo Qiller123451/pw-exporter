@@ -48,6 +48,14 @@ def fit_bbox(points, hint=None):
     return tight
 
 
+def box_holds(outer, inner):
+    """True if the box `inner` (min xyz, max xyz) lies in `outer` (with a little tolerance)"""
+    o = np.array(outer, dtype=np.float64)
+    i = np.array(inner, dtype=np.float64)
+    ext = np.maximum(o[3:] - o[:3], 1e-6)
+    return bool((i[:3] >= o[:3] - 1e-4 * ext).all() and (i[3:] <= o[3:] + 1e-4 * ext).all())
+
+
 def remap_bits(flags, pos):
     """move bit k to bit pos[k] (dropped when pos[k] is None); bits without an entry in pos stay"""
     out = 0
@@ -349,6 +357,9 @@ class Exporter:
         for it in g.materials:
             self.model_material(it.material)
         objs = [o for o in descendants(root) if o.gsf.kind != 'NONE']
+        from . import bboxes                                  # moved / scaled bbox cubes set their boxes
+        for o in [root] + [o for o in objs if o.gsf.kind == 'MESH']:
+            bboxes.sync_from_cube(o)
         arms = [o for o in objs if o.type == 'ARMATURE']
         saved = [(o, o.data.pose_position) for o in arms]
         for o in arms:
@@ -388,7 +399,13 @@ class Exporter:
                                                                key=lambda o: (o.gsf.order, o.name))]
             m.material_list = self.material_list_for(self.model_mat_list)
             if g.auto_bbox:
-                m.v['bounding_box'] = self._bbox(chunk_objs)
+                box = self._bbox(chunk_objs)
+                hint = root.get('gsf_bbox')
+                if hint is not None and len(hint) == 6 and box_holds(hint, box):
+                    box = tuple(float(x) for x in hint)     # the file's box while it still holds the geometry
+                m.v['bounding_box'] = box
+                if any(abs(a - b) > 1e-6 for a, b in zip(box, g.bbox)):
+                    g.bbox = box                            # the bbox cube shows what was saved
             else:
                 m.v['bounding_box'] = tuple(g.bbox)
             self._model_anims(m, root, obj_chunk)
@@ -608,6 +625,7 @@ class Exporter:
             mats = [s.material for s in o.material_slots] or [None]
             c.mesh, _ = self.mesh_data_from_mesh(me, o, mats, c, skin, self.warnings.append, cloth=c.is_cloth,
                                                  bbox_hint=o.data.get('gsf_bbox'), orig=o.data,
+                                                 bbox_set=None if o.gsf.auto_bbox else tuple(o.gsf.bbox),
                                                  modified=self.apply_modifiers and any(
                                                      md.type != 'ARMATURE' and md.show_viewport for md in o.modifiers))
         finally:
@@ -615,6 +633,10 @@ class Exporter:
         blank = o.data.get('gsf_blanked')
         if blank is not None and o.data.get('gsf_geometry') == geometry_signature(o.data) and len(blank) % 3 == 0:
             c.mesh = self._blanked_mesh(c.mesh, blank, o.data.get('gsf_bbox'))
+        if o.gsf.auto_bbox and 'bounding_box' in c.mesh.v:
+            box = tuple(float(x) for x in c.mesh.v['bounding_box'])
+            if any(abs(a - b) > 1e-6 for a, b in zip(box, o.gsf.bbox)):
+                o.gsf.bbox = box                    # the bbox cube shows what was saved
         if c.is_cloth:
             for attr in ('points_a', 'points_b'):
                 v = o.get('gsf_' + attr)
@@ -735,7 +757,7 @@ class Exporter:
         return ids, ws
 
     def mesh_data_from_mesh(self, me, o, mats, chunk, skin, warn, cloth=False, material_index=None, bbox_hint=None,
-                            orig=None, modified=False):
+                            orig=None, modified=False, bbox_set=None):
         """Blender mesh (object space) -> MeshData; mats: material per slot. material_index(bm) -> index in the
         material list the submeshes refer to (default: the model's list)"""
         S = self.space
@@ -820,7 +842,15 @@ class Exporter:
         md = MeshData(cloth)
         # bounding box over every used vertex
         used = np.unique(lv[tri_loops.reshape(-1)]) if nt else np.zeros(0, np.int64)
-        md.v['bounding_box'] = fit_bbox(co[used], bbox_hint) if len(used) else (0.0,) * 6
+        if bbox_set is not None:
+            # set by hand (bbox cube / panel): vertices outside it are clamped by the quantisation
+            b = [float(x) for x in bbox_set]
+            md.v['bounding_box'] = tuple(min(b[k], b[k + 3]) for k in range(3)) + \
+                tuple(max(b[k], b[k + 3]) for k in range(3))
+            if len(used) and not box_holds(md.v['bounding_box'], VX.bbox_of(co[used])):
+                warn('%s: some vertices lie outside the set bounding box and are moved onto it' % o.name)
+        else:
+            md.v['bounding_box'] = fit_bbox(co[used], bbox_hint) if len(used) else (0.0,) * 6
         qpos = VX.quantize(co, md.v['bounding_box'])
         qa = me.attributes.get('gsf_q')
         if qa is not None and qa.domain == 'POINT' and bbox_hint is not None and \

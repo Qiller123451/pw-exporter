@@ -176,7 +176,8 @@ class Importer:
         g.object_name = m.object_name or ''
         P.to_props(g, P.GSF_PG_model.STRUCT, m.v, 'model')
         g.bbox = m.v['bounding_box']
-        g.auto_bbox = False
+        g.auto_bbox = True      # 1.9.0: automatic, but the file's box is kept while it still holds the geometry
+        root['gsf_bbox'] = [float(x) for x in m.v['bounding_box']]
         mats = []
         if m.material_list is not None and m.material_list.materials is not None:
             for x in m.material_list.materials:
@@ -215,12 +216,28 @@ class Importer:
             self._animations(m, ctx)
         self._walksets(m, g)
         lods.sort_model(root, col)
+        self._bbox_cubes(root, ctx)
         # entry state
         for e in self.col.gsf_archive.entries:
             if e.name == m.name:
                 e.state = 'SCENE'
                 e.root = root
         return root
+
+    def _bbox_cubes(self, root, ctx):
+        """hidden cubes showing the model's and every mesh's bounding box (bboxes.py)"""
+        from . import bboxes
+        s3 = self.space.s3
+        bboxes.make_cube(root, tuple(root.gsf_model.bbox), s3, ctx['col'])
+        for obj in ctx['objs'].values():
+            if obj.gsf.kind != 'MESH' or obj.type != 'MESH':
+                continue
+            box = obj.data.get('gsf_bbox')
+            if box is None or len(box) != 6:
+                continue
+            obj.gsf.bbox = [float(x) for x in box]
+            obj.gsf.auto_bbox = True
+            bboxes.make_cube(obj, tuple(box), s3, obj.users_collection[0] if obj.users_collection else ctx['col'])
 
     def _common(self, obj, c, i, m):
         for f in c.STRUCT.fields:

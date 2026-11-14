@@ -186,6 +186,9 @@ export class WallMap {
   ownerId(owner) { return owner && owner.id != null ? owner.id & 0xf : -1; }
   // ---------------------------------------------------------------- writing a tile (0x7dcb70 / 0x7dcc40)
   write(i, j, owner, race, cls, type) {
+    // (2 bits per class, 0 = nothing; wallclassconfig_ex.txt has classes up to 5: the engine cut 4 -> 0 and 5 -> 1. Above
+    // 3 is stored as 3, as MIRAGE's wall-class patch of both exes does - ParaWorldToolkit_wip/mirage_wallclass_45)
+    cls = Math.min(cls, 3);
     let v = this.word(i, j);
     const base = (v & 0xff80) | ((race & 7) << RACE_SHIFT) | (owner & OWNER);
     if (type === WT.TRAP) { v = base | BLOCKED; this.setTrap(i, j, true); }

@@ -87,7 +87,11 @@ Save to a new file and keep the game's originals. The game reads archives from `
 | particle / speed line path | action on the empty (location per frame) |
 
 Every chunk field that the file does not derive from other data has its own property in *Object properties >
-ParaWorld GSF*. The attribute (visibility) bits are named after the model's FourCC.
+ParaWorld GSF*. The attribute (visibility) bits are named after the model's FourCC. Hover a bit to see what it does:
+its meaning, the engine's part name (from PWClient.exe's sequence part table), the script constant
+(`CFightingObj.VIS_FLAG_*`, `CResource.VIS_FLAG_RSRC_*`, `CGate.VIS_FLAG_*`), how scripts switch it
+(`SetRndInvMaskSingleFlagInv(bit, true)` shows the meshes with that bit, `false` hides them; bits 0-31 only) and how
+many models of that class use it in the game data.
 
 Coordinates: the game is left-handed. The add-on mirrors the x axis by default (*Handedness*, as the ParaWorld
 Toolkit's glTF files do) and mirrors it back on export. Bones point at their children, as in the game (shown as octahedra).
@@ -141,6 +145,19 @@ Some modded archives were edited by hand (hex editor). The add-on keeps those ed
   are written back as zeros while they are not edited.
 
 Imported models keep the chunk order of the file; new components follow, grouped by kind.
+
+## Bounding boxes (1.9.0)
+
+- The model and every mesh have **Automatic bounding box** (ticked by default, also for imported models) and a
+  **Bounding box** value. Automatic boxes are computed on save; a box read from the file is kept while the geometry
+  still fits in it, so unchanged models save as before. A set box is written as it is (mesh vertices outside it are
+  clamped, with a warning).
+- Each box has a **cube** (empty, display type Cube, tag `gsf_bbox_cube`), parented to the root or mesh and hidden
+  after import. Moving or scaling it sets the box and unticks the automatic box; typing the value moves the cube.
+  Buttons: *Show box cube* / *Hide* (object panel), *Show all bounding box cubes of the model* (root panel); operator
+  `gsf.bbox_cubes`. Module `blender/bboxes.py`; the exporter also reads moved cubes before it saves.
+- Checked (bpy 5.3): hu_tools, all_special_weapons and all_misc save byte-identical to 1.8.0; moving the model and
+  a mesh cube changes exactly those boxes in the saved file; the UI smoke test passes.
 
 ## Known limits
 

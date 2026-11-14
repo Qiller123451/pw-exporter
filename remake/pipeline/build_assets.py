@@ -52,7 +52,29 @@ KEEP_ANIMS = ['walk_0', 'walk_1', 'walk_2', 'walk_3', 'standanim', 'idle_0', 'id
               'victory_0', 'victory_1', 'victory_2', 'jans_anim_0', 'jans_anim_1', 'jans_anim_2', 'tavern_spawn', 'feeding', 'praying_wall',
               # on and off walls, ladders, the siege brachiosaurus, the fall (src/game/systems/wallwalk.js, siege.js)
               'jump_wall', 'jump_of_wall', 'climb_up_ladder', 'climb_down_ladder', 'hu_high_ladder_climb_up', 'trip',
-              'climb_up_brachio', 'climb_down_brachio', 'hit_front', 'hit_rotate_s']
+              'climb_up_brachio', 'climb_down_brachio', 'hit_front', 'hit_rotate_s',
+              # the death by the side of the last blow (character.usl CreateCorpse: the front "hit_fw"), the hit
+              # reactions of the four sides (FightingObj ProvideDmg EID_HitReactionOVLAnim_*: the walk set's slots 34-41,
+              # 84 character models have them), the snare trap's victim (Building.usl CSnareTrap: caught, hanging,
+              # let go, dead in the trap)
+              'hit_fw', 'hit_reaction_fa', 'hit_reaction_la', 'hit_reaction_ra', 'hit_reaction_ba', 'hit_reaction_fb',
+              'hit_reaction_lb', 'hit_reaction_rb', 'hit_reaction_bb', 'all_snar_trap_catching', 'all_snar_trap_hanging',
+              'all_snar_trap_end', 'snare_trap_dying']
+
+
+def head_models(classgfx, index):
+    """the heads a beheading leaves (character.usl CCharacter.DiePerHeadOff: CreateObj(<class>+"_head") - a static
+    mesh of all_characters.gsf): every class "<name>_head" of the class files with a model, the class's own name when
+    its gfx entry is broken (miyagi_s0_head)"""
+    out = set()
+    for c, g in (classgfx or {}).items():
+        if c.endswith('_head'):
+            g = (g or '').lower()
+            if g in index:
+                out.add(g)
+            elif c in index:
+                out.add(c)
+    return out
 
 
 def techtree_models():
@@ -232,6 +254,8 @@ def main(log=print, progress=None):
     lazy |= {g for g in map_object_models(paths.game(), index, cg) if g not in want}
     # the effects the campaign triggers play (EFCT: Scripts/Game/sequencer/particles.txt)
     lazy |= {g for g, _ in (data.get('particles') or {}).values() if g in index and g not in want}
+    # the beheaded characters' heads (loaded when a corpse has one)
+    lazy |= {g for g in head_models(cg, index) if g not in want}
     want |= lazy
     dest = {k for k in index if k.endswith('_dest') and k[:-5] in want}
     lazy |= {k for k in dest if k[:-5] in lazy and k not in want}

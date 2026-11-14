@@ -267,6 +267,80 @@ Dest 2). Building, wall, ship and field models draw a mesh only when its bits ma
         return {'FINISHED'}
 
 
+class GSF_OT_bbox_cubes(bpy.types.Operator):
+    """Show or hide the bounding box cubes of the active model: the model's box and every mesh's box. Moving or
+scaling a cube sets that box (its automatic box turns off). Missing cubes are made from the current boxes"""
+    bl_idname = 'gsf.bbox_cubes'
+    bl_label = 'Bounding box cubes'
+    bl_options = {'REGISTER', 'UNDO'}
+    action: EnumProperty(name='Action', items=[('SHOW', 'Show', 'Show the cubes'), ('HIDE', 'Hide', 'Hide the cubes')],
+                         default='SHOW')
+    scope: EnumProperty(name='Which', items=[('MODEL', 'Whole model', 'The model box and every mesh box'),
+                                             ('ACTIVE', 'Active object', 'Only the active object\'s box')],
+                        default='MODEL')
+
+    def execute(self, context):
+        import numpy as np
+        from . import bboxes
+        from .space import Space
+        o = context.active_object
+        if o is None:
+            return {'CANCELLED'}
+        root = o
+        while root is not None and not root.gsf_model.is_root:
+            root = root.parent
+        if o.get(bboxes.TAG) and o.parent is not None:
+            o = o.parent
+        col = active_archive(context)
+        s3 = Space(col.gsf_archive.mirror if col is not None else 'X').s3
+        if self.scope == 'ACTIVE' or root is None:
+            owners = [o]
+        else:
+            from .exp import descendants
+            owners = [root] + [x for x in descendants(root) if x.gsf.kind == 'MESH' and x.type == 'MESH']
+        n = 0
+        for x in owners:
+            pg = bboxes.owner_props(x)
+            if x.gsf_model.is_root is False and (x.gsf.kind != 'MESH' or x.type != 'MESH'):
+                continue
+            cube = bboxes.find_cube(x)
+            if cube is None:
+                box = tuple(pg.bbox)
+                if not any(box):          # never set (a new model): the tight box of the geometry
+                    box = _geometry_box(x, s3)
+                    pg.bbox = box
+                cube = bboxes.make_cube(x, box, s3, hidden=False)
+            cube.hide_viewport = self.action == 'HIDE'
+            cube.hide_set(self.action == 'HIDE')
+            n += 1
+        self.report({'INFO'}, '%d bounding box cubes %s' % (n, 'shown' if self.action == 'SHOW' else 'hidden'))
+        return {'FINISHED'}
+
+
+def _geometry_box(owner, s3):
+    """tight box (game space) of a mesh's vertices, or of every mesh below a model root in the root's space"""
+    import numpy as np
+    from .exp import descendants
+    objs = [owner] if not owner.gsf_model.is_root else \
+        [x for x in descendants(owner) if x.type == 'MESH' and x.gsf.kind not in ('NONE', 'COLLISION')]
+    pts = []
+    inv = owner.matrix_world.inverted()
+    for x in objs:
+        if x.type != 'MESH' or not len(x.data.vertices):
+            continue
+        co = np.zeros(len(x.data.vertices) * 3)
+        x.data.vertices.foreach_get('co', co)
+        co = co.reshape(-1, 3)
+        if x is not owner:
+            M = np.array(inv @ x.matrix_world)
+            co = co @ M[:3, :3].T + M[:3, 3]
+        pts.append(co * np.array(s3))
+    if not pts:
+        return (0.0,) * 6
+    p = np.concatenate(pts)
+    return tuple(float(v) for v in p.min(0)) + tuple(float(v) for v in p.max(0))
+
+
 class GSF_OT_entry_copy(bpy.types.Operator):
     """Add a copy of the active model under a new name: every component, flag, mesh, material, collision volume,
 animation, walk set and the dust trails of its animations. An edited model is copied as it is in the scene when the
@@ -771,6 +845,29 @@ class GSF_OT_toggle_bit(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class GSF_OT_toggle_attribute(bpy.types.Operator):
+    """Toggle a visibility bit of a component"""
+    bl_idname = 'gsf.toggle_attribute'
+    bl_label = 'Toggle visibility bit'
+    bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
+    path: StringProperty()
+    bit: IntProperty(min=0, max=31)
+    fourcc: StringProperty()
+
+    @classmethod
+    def description(cls, context, properties):
+        from ..core import names as NAMES
+        return NAMES.attribute_bit_info(properties.fourcc)[properties.bit][1]
+
+    def execute(self, context):
+        try:
+            pg = context.path_resolve(self.path)
+        except ValueError:
+            return {'CANCELLED'}
+        pg.attributes[self.bit] = not pg.attributes[self.bit]
+        return {'FINISHED'}
+
+
 class GSF_OT_rebuild_material(bpy.types.Operator):
     """Rebuild the preview shader of the material from its GSF settings (texture, alpha mode)"""
     bl_idname = 'gsf.rebuild_material'
@@ -813,9 +910,9 @@ def frame_handler(scene, depsgraph=None):
                 o.data = me
 
 
-CLASSES = [IMPORT_SCENE_OT_paraworld_gsf, EXPORT_SCENE_OT_paraworld_gsf, GSF_OT_import_entries, GSF_OT_entry_state, GSF_OT_entry_copy, GSF_OT_state_bits, GSF_OT_entry_move,
+CLASSES = [IMPORT_SCENE_OT_paraworld_gsf, EXPORT_SCENE_OT_paraworld_gsf, GSF_OT_import_entries, GSF_OT_entry_state, GSF_OT_entry_copy, GSF_OT_state_bits, GSF_OT_entry_move, GSF_OT_bbox_cubes,
            GSF_OT_archive_new, GSF_OT_model_new, GSF_OT_sort_lods, GSF_OT_set_kind, GSF_OT_anim_apply, GSF_OT_anim_clear, GSF_OT_anim_add,
-           GSF_OT_anim_remove, GSF_OT_collection_edit, GSF_OT_archive_list, GSF_OT_toggle_bit, GSF_OT_rebuild_material]
+           GSF_OT_anim_remove, GSF_OT_collection_edit, GSF_OT_archive_list, GSF_OT_toggle_bit, GSF_OT_toggle_attribute, GSF_OT_rebuild_material]
 
 
 def menu_import(self, context):
@@ -833,9 +930,13 @@ def register():
     bpy.types.TOPBAR_MT_file_export.append(menu_export)
     if frame_handler not in bpy.app.handlers.frame_change_post:
         bpy.app.handlers.frame_change_post.append(frame_handler)
+    from . import bboxes
+    bboxes.register()
 
 
 def unregister():
+    from . import bboxes
+    bboxes.unregister()
     if frame_handler in bpy.app.handlers.frame_change_post:
         bpy.app.handlers.frame_change_post.remove(frame_handler)
     bpy.types.TOPBAR_MT_file_import.remove(menu_import)

@@ -50,6 +50,9 @@ def main(log=print, progress=None):
         im = Image.open(sel).convert('RGBA')
         w, h = im.size
         im.crop((0, h // 2, w // 2, h)).save(os.path.join(OUT, 'heroring.png'), optimize=True)
+        # the whole sheet: selection circle colours, health bar gradient and the level emblems drawn at the left end
+        # of a unit's health bar (src/ui/groundrings.js EMBLEM; the Godot port reads it too)
+        im.save(os.path.join(OUT, 'selection.png'), optimize=True)
     log('images', len(have), 'atlas entries', len(atlas), 'definitions', len(defs))
 
 

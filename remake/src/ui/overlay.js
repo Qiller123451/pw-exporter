@@ -2,26 +2,25 @@ import * as THREE from 'three';
 import { cloneModel } from '../engine/assets.js';
 import { AnimCtl } from '../game/anim.js';
 import { UnitDecals } from './decals.js';
+import { GroundRings, ringRgbOf, RING_FAINT, hpGradient, BAR_BACK, BAR_BUILD, BAR_QUEUE, EMBLEM } from './groundrings.js';
+import { UIA } from './atlas.js';
 
 // rally points are marked with the tribe's flag (tech tree <tribe>_rally_point / _rally_point_harbour on water)
 const RALLY = { Hu: 'hu_rally_point', Aje: 'aje_rally_point', Ninigi: 'ninigi_rally_point', SEAS: 'seas_rally_point' };
 
-// World-space selection rings + 2D overlay (health bars, drag box). The minimap: ui/minimap.js.
-const ringGeo = new THREE.RingGeometry(0.88, 1.0, 48).rotateX(-Math.PI / 2);
-const ringGeoBig = new THREE.RingGeometry(0.965, 1.0, 64).rotateX(-Math.PI / 2);
-
-// the highlight ring: a 0.3 m line at any radius (geometries by radius in 0.25 m steps)
-const hlGeos = new Map();
-const hlGeo = (r) => {
-  const k = Math.round(r * 4);
-  if (!hlGeos.has(k)) hlGeos.set(k, new THREE.RingGeometry(Math.max(0.1, 1 - 0.3 / (k / 4)), 1.0, 64).rotateX(-Math.PI / 2));
-  return hlGeos.get(k);
-};
-
+// The selection circles (on the ground, merged where they overlap: ui/groundrings.js) + 2D overlay (health bars, drag
+// box). The minimap: ui/minimap.js.
+//
+// Colours as in the original: a circle is drawn in its owner's party colour (the player colour chosen at the start;
+// wild animals green (peaceful) or orange-red (hunters) as ACColors.txt, other objects without an owner grey), the
+// hover circle in the faint version of it. Health bars are thin lines: a unit's over its head with its level emblem at
+// the left end, a building's low across the front of its circle (both measured on screenshots of the original).
+// Their colour is an option, as the original's "alternative hitpoint bar colouring" (OptionsMenu.usl
+// AlternativeColoringPFHP): settings.hpBarColors 'health' (default) = the original's health gradient (red .. green),
+// 'player' = the owner's colour (lightened; wild animals their circle colour), the empty part dark.
 export class Overlay {
   constructor(G) {
     this.G = G;
-    this.rings = [];
     this.markers = [];
     this.canvas = document.createElement('canvas');
     this.canvas.className = 'overlay';
@@ -32,6 +31,12 @@ export class Overlay {
     this.v = new THREE.Vector3();
     this.flags = new Map();     // building -> {name, obj, anim}
     this.decals = new UnitDecals(G);   // hero rings and buff decals under units (ui/decals.js)
+    this.ground = new GroundRings(G);
+    // Effects/Selection.tga whole (assets/ui/selection.png, made by the data pipeline's ui step): the level emblems.
+    // Missing (data prepared before it existed): bars without emblems.
+    this.sheet = new Image();
+    this.sheet.onerror = () => { this.sheet = null; };
+    this.sheet.src = (UIA.base || 'assets/ui/') + 'selection.png';
   }
   // the rally flag of every selected own producer
   updateFlags(dt) {
@@ -64,16 +69,6 @@ export class Overlay {
     }
   }
   resize() { this.canvas.width = window.innerWidth; this.canvas.height = window.innerHeight; }
-  ring(i) {
-    if (!this.rings[i]) {
-      const m = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ transparent: true, depthTest: false, depthWrite: false, fog: false }));
-      m.renderOrder = 20;
-      this.G.scene.add(m);
-      this.rings[i] = m;
-    }
-    this.rings[i].visible = true;
-    return this.rings[i];
-  }
   marker(x, z, color) { this.markers.push({ x, z, t: 0, color }); }
   toScreen(p) {
     this.v.copy(p).project(this.G.camera);
@@ -84,22 +79,14 @@ export class Overlay {
     if (G.sees(e.owner)) return true;
     return G.fow.visible(e.pos.x, e.pos.z);
   }
+  // the radius of an object's circle
+  ringR(e) { return e.kind === 'building' ? e.radius * 1.05 : (e.radius || 1) * 1.25 + 0.2; }
   update(dt) {
-    const G = this.G, H = G.world.height;
-    let n = 0;
-    const put = (x, z, r, color, op = 0.9) => {
-      const m = this.ring(n++);
-      m.position.set(x, H(x, z) + 0.35, z);
-      m.scale.setScalar(r);
-      m.geometry = r > 4 ? ringGeoBig : ringGeo;
-      m.material.color.setHex(color);
-      m.material.opacity = op;
-    };
+    const G = this.G, R = this.ground;
     for (const e of G.sel) {
       if (!e.alive) continue;
-      const own = e.owner === G.me, rel = e.owner && !own ? G.me.relation(e.owner) : 0;
-      const col = own ? 0x7dff6a : e.owner ? (rel === 2 ? 0x6ab4ff : rel === 1 ? 0xf0e060 : 0xff4a3a) : e.kind === 'res' ? 0xffe070 : 0xffb050;
-      put(e.pos.x, e.pos.z, (e.kind === 'building' ? e.radius * 1.05 : e.radius * 1.25 + 0.2), col);
+      const rgb = ringRgbOf(e);
+      R.add(e.pos.x, e.pos.z, this.ringR(e), rgb, 1, 'sel/' + rgb.join(','));
     }
     // objects a mission handed over (OCPY chk_highlight): a steady thin ring of the object's radius until the time is
     // up; selecting and deselecting it ends it as in the original
@@ -108,60 +95,90 @@ export class Overlay {
       const sel = G.sel.has(e);
       if (!e.alive || e.owner !== G.me || G.world.time >= until || (e._hlSel && !sel)) { HL.delete(e); continue; }
       if (sel) { e._hlSel = true; continue; }
-      const r = Math.max(0.5, e.radius || 1);
-      const m = this.ring(n++);
-      m.position.set(e.pos.x, H(e.pos.x, e.pos.z) + 0.35, e.pos.z);
-      m.scale.setScalar(r);
-      m.geometry = hlGeo(r);
-      m.material.color.setHex(0x7dff6a);
-      m.material.opacity = 0.9;
+      R.add(e.pos.x, e.pos.z, Math.max(0.5, e.radius || 1), [125, 255, 106], 0.9, 'hl', 0.3);
     }
     const tg = new Set();
     for (const e of G.sel) if (e.alive && e.owner === G.me && e.task && e.task.type === 'attack' && e.task.target && e.task.target.alive && !e.task.auto) tg.add(e.task.target);
-    for (const t of tg) put(t.pos.x, t.pos.z, t.radius * 1.4 + 0.3 * Math.sin(G.world.time * 8), 0xff3a2a, 0.8);
+    for (const t of tg) R.add(t.pos.x, t.pos.z, t.radius * 1.4 + 0.3 * Math.sin(G.world.time * 8), [255, 58, 42], 0.8, 'target');
     const h = G.input.hover;
-    if (h && h.alive && !G.sel.has(h) && (h.kind !== 'unit' || this.visibleToMe(h))) put(h.pos.x, h.pos.z, h.kind === 'building' ? h.radius * 1.05 : h.radius * 1.25 + 0.2, h.owner === G.me ? 0xd8ffcf : h.owner ? 0xff8a70 : 0xffe0a0, 0.55);
+    if (h && h.alive && !G.sel.has(h) && (h.kind !== 'unit' || this.visibleToMe(h))) R.add(h.pos.x, h.pos.z, this.ringR(h), ringRgbOf(h), RING_FAINT, 'hover');
     for (let i = this.markers.length - 1; i >= 0; i--) {
       const m = this.markers[i];
       m.t += dt;
       if (m.t > 0.7) { this.markers.splice(i, 1); continue; }
-      put(m.x, m.z, 3.5 * (1 - m.t / 0.7) + 0.5, m.color, 1 - m.t / 0.7);
+      R.add(m.x, m.z, 3.5 * (1 - m.t / 0.7) + 0.5, [(m.color >> 16) & 255, (m.color >> 8) & 255, m.color & 255], 1 - m.t / 0.7, 'marker' + i);
     }
     // the formation arrow being drawn (right-drag): the places the units will take
     const fa = G.input.mouse.arrow;
-    if (fa) for (const [x, z] of fa.slots) put(x, z, 0.9, 0x7dff6a, 0.85);
+    if (fa) for (const [x, z] of fa.slots) R.add(x, z, 0.9, [125, 255, 106], 0.85, 'arrow');
     this.updateFlags(dt);
     this.decals.update((e) => !!(e.obj && e.obj.visible));
-    for (const e of G.sel) if (e.alive && e.rally && G.canRally(e) && !this.flags.has(e)) put(e.rally[0], e.rally[1], 1.2 + 0.2 * Math.sin(G.world.time * 5), 0xffe070, 0.9);
-    for (let i = n; i < this.rings.length; i++) this.rings[i].visible = false;
+    for (const e of G.sel) if (e.alive && e.rally && G.canRally(e) && !this.flags.has(e)) R.add(e.rally[0], e.rally[1], 1.2 + 0.2 * Math.sin(G.world.time * 5), [255, 224, 112], 0.9, 'rally');
+    R.flush();
     this.draw();
   }
   draw() {
     const G = this.G, ctx = this.ctx, W = this.canvas.width, Hh = this.canvas.height;
     ctx.clearRect(0, 0, W, Hh);
-    const cam = G.camera.position;
-    const hover = G.input.hover;
-    const bar = (e, f, col, yOff) => {
-      const p = e.pos.clone(); p.y += (e.kind === 'building' ? e.ht : e.height) + yOff;
-      const s = this.toScreen(p);
-      if (s.z > 1 || s.x < -60 || s.y < -60 || s.x > W + 60 || s.y > Hh + 60) return;
-      const dist = cam.distanceTo(e.pos);
-      const bw = Math.max(20, Math.min(90, (e.kind === 'building' ? 5200 : 2400) / dist * Math.min(2, Math.max(0.7, e.radius))));
-      ctx.fillStyle = 'rgba(0,0,0,0.7)';
-      ctx.fillRect(s.x - bw / 2 - 1, s.y - 1, bw + 2, 6);
-      ctx.fillStyle = col;
-      ctx.fillRect(s.x - bw / 2, s.y, bw * Math.max(0, Math.min(1, f)), 4);
-      return s;
+    const camera = G.camera, hover = G.input.hover, Hgt = G.world.height;
+    const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0); right.y = 0;
+    if (right.lengthSq() < 1e-6) right.set(1, 0, 0);
+    right.normalize();
+    const toCam = new THREE.Vector3(-right.z, 0, right.x);          // horizontal, towards the camera
+    const a = new THREE.Vector3(), b = new THREE.Vector3();
+    // the screen line of a horizontal segment of half length hl (m) through p, across the view; null when off screen
+    const span = (p, hl) => {
+      a.copy(p).addScaledVector(right, -hl); b.copy(p).addScaledVector(right, hl);
+      const s0 = this.toScreen(a), s1 = this.toScreen(b);
+      if (s0.z > 1 || s1.z > 1) return null;
+      const x0 = Math.min(s0.x, s1.x), x1 = Math.max(s0.x, s1.x), y = Math.round((s0.y + s1.y) / 2);
+      if (x1 < -60 || x0 > W + 60 || y < -60 || y > Hh + 60) return null;
+      return { x0, x1, y };
     };
-    const hpCol = (e, f) => e.owner === G.me ? (f > 0.6 ? '#6fdc5a' : f > 0.3 ? '#e8c43a' : '#e4492f') : e.owner ? (G.me.isEnemy(e.owner) ? (f > 0.5 ? '#ff6a4a' : '#d42a1a') : G.me.isFriend(e.owner) ? '#6ab4ff' : '#e8dc6a') : '#ffae3a';
+    // one bar: background, then the filled part; th = line thickness (px)
+    const line = (L, f, fill, back = BAR_BACK, th = 2) => {
+      const w = Math.max(14, L.x1 - L.x0), x = Math.round((L.x0 + L.x1) / 2 - w / 2), fw = Math.round(w * Math.max(0, Math.min(1, f)));
+      ctx.fillStyle = back; ctx.fillRect(x - 1, L.y - 1, w + 2, th + 2);
+      ctx.fillStyle = fill; ctx.fillRect(x, L.y, fw, th);
+      return x;
+    };
+    const p = new THREE.Vector3();
+    const byPlayer = G.settings && G.settings.hpBarColors === 'player';
+    const lt = (v) => Math.round(v + (255 - v) * 0.4), dk = (v) => v * 0.12 | 0;
+    // fill and background of an object's health bar
+    const colours = (e, f) => {
+      if (!byPlayer) return [hpGradient(f), BAR_BACK];
+      const c = ringRgbOf(e);
+      return [`rgb(${lt(c[0])},${lt(c[1])},${lt(c[2])})`, `rgba(${dk(c[0])},${dk(c[1])},${dk(c[2])},0.85)`];
+    };
     const draw = (e) => {
       if (!e.alive || e.kind === 'res') return;
       const show = G.sel.has(e) || e === hover || e.hp < e.maxHp - 0.5 || G.input.keys.AltLeft;
       if (!show || !this.visibleToMe(e)) return;
-      const f = e.hp / e.maxHp;
-      bar(e, f, hpCol(e, f), 1.0);
-      if (e.kind === 'building' && !e.built && e.owner === G.me) bar(e, e.progress, '#e0c060', 2.6);
-      else if (e.queue && e.queue.length && e.owner === G.me && G.sel.has(e)) bar(e, e.queue[0].t / e.queue[0].total, '#60b0ff', 2.6);
+      const f = e.hp / e.maxHp, r = this.ringR(e);
+      if (e.kind === 'building') {
+        // low across the front of the circle
+        p.set(e.pos.x, 0, e.pos.z).addScaledVector(toCam, r * 0.7);
+        p.y = Hgt(p.x, p.z) + 0.1;
+        const L = span(p, r * 0.85);
+        if (!L) return;
+        const [fill, back] = colours(e, f);
+        line(L, f, fill, back);
+        if (!e.built && e.owner === G.me) line({ x0: L.x0, x1: L.x1, y: L.y + 5 }, e.progress, BAR_BUILD);
+        else if (e.queue && e.queue.length && e.owner === G.me && G.sel.has(e)) line({ x0: L.x0, x1: L.x1, y: L.y + 5 }, e.queue[0].t / e.queue[0].total, BAR_QUEUE);
+        return;
+      }
+      // a unit: over its head, as wide as its circle; the level emblem at the left end
+      p.set(e.pos.x, e.pos.y + (e.height || 2) + 0.4, e.pos.z);
+      const L = span(p, r);
+      if (!L) return;
+      const [fill, back] = colours(e, f);
+      const x = line(L, f, fill, back);
+      if (this.sheet && this.sheet.complete && this.sheet.naturalWidth && e.level >= 1) {
+        const [sx, sy, sw, sh] = EMBLEM(e.level);
+        ctx.drawImage(this.sheet, sx, sy, sw, sh, x - 2 - sw / 2, L.y + 1 - sh / 2, sw, sh);
+      }
+      if (e.queue && e.queue.length && e.owner === G.me && G.sel.has(e)) line({ x0: L.x0, x1: L.x1, y: L.y - 5 }, e.queue[0].t / e.queue[0].total, BAR_QUEUE);
     };
     for (const u of G.world.units) draw(u);
     for (const b of G.world.buildings) draw(b);

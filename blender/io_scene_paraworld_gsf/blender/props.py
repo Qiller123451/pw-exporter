@@ -213,6 +213,11 @@ class GSF_PG_ref(PropertyGroup):
 REF_LABELS = {'skeleton_index': 'Skeleton', 'cloth_chunk_index': 'Cloth', 'light_volume_chunk': 'Light volume'}
 
 
+def _bbox_update(self, context):
+    from .bboxes import on_bbox_prop
+    on_bbox_prop(self, context)
+
+
 class GSF_PG_chunk(PropertyGroup):
     """GSF component data of an object"""
     kind: EnumProperty(name='Kind', items=[('NONE', 'Not part of a GSF model', '')] + [
@@ -234,6 +239,14 @@ class GSF_PG_chunk(PropertyGroup):
     # mesh: how the extra vertex byte is used
     keep_tangents: BoolProperty(name='Keep tangent data', default=True,
                                 description='Write the per-vertex tangent words (unk_tangent attribute) back')
+    # mesh: bounding box (= the quantisation box of the vertex positions), see bboxes.py
+    auto_bbox: BoolProperty(name='Automatic bounding box', default=True,
+                            description='Compute the mesh\'s bounding box from its vertices on export (the file\'s box '
+                                        'is kept while every vertex still lies in it). Off: the box below, which the '
+                                        'mesh\'s bbox cube shows and edits. Vertices outside a set box are clamped '
+                                        'to it')
+    bbox: FloatVectorProperty(name='Bounding box', size=6, precision=4, update=_bbox_update,
+                              description='min x y z, max x y z in game space (the mesh\'s own axes)')
 
 
 class GSF_PG_bone(PropertyGroup):
@@ -341,8 +354,11 @@ GSF_PG_model = make_group('GSF_PG_model', MODEL_INFO, 'model', {
     'object_name': StringProperty(name='Object name', description='Name stored in the model info (usually the same)'),
     'has_object_name': BoolProperty(default=True),
     'auto_bbox': BoolProperty(name='Automatic bounding box', default=True,
-                              description='Compute the bounding box from the geometry on export'),
-    'bbox': FloatVectorProperty(name='Bounding box', size=6, precision=4),
+                              description='Compute the model\'s bounding box from the geometry on export (the file\'s box '
+                                          'is kept while it still holds the geometry). Off: the box below, which the '
+                                          'model\'s bbox cube shows and edits'),
+    'bbox': FloatVectorProperty(name='Bounding box', size=6, precision=4, update=_bbox_update,
+                                description='min x y z, max x y z in game space'),
     'anims': CollectionProperty(type=GSF_PG_anim),
     'anim_index': IntProperty(),
     'walksets': CollectionProperty(type=GSF_PG_walkset),
