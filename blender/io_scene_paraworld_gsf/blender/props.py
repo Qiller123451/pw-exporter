@@ -358,7 +358,7 @@ GSF_PG_model = make_group('GSF_PG_model', MODEL_INFO, 'model', {
                                           'is kept while it still holds the geometry). Off: the box below, which the '
                                           'model\'s bbox cube shows and edits'),
     'bbox': FloatVectorProperty(name='Bounding box', size=6, precision=4, update=_bbox_update,
-                                description='min x y z, max x y z in game space'),
+                                description='min x y z, then SIZE x y z (not max) in game space, as in the file'),
     'anims': CollectionProperty(type=GSF_PG_anim),
     'anim_index': IntProperty(),
     'walksets': CollectionProperty(type=GSF_PG_walkset),

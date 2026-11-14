@@ -79,7 +79,7 @@ MODEL_INFO = Struct('model_info', [
     Field('unk_ptr_waypoints', 'ptr'),
     Field('ptr_collision_table', 'ptr'),
     Field('num_collision_volumes', 'u32', derived=True),
-    Field('bounding_box', 'bbox', 'Bounding box of the model.'),
+    Field('bounding_box', 'bbox', 'Bounding box of the model: min x y z, then size x y z (max = min + size).'),
     Field('ptr_anim_table', 'ptr'),
     Field('num_object_anim', 'u32', derived=True),
 ])

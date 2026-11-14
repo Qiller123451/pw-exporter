@@ -307,7 +307,7 @@ scaling a cube sets that box (its automatic box turns off). Missing cubes are ma
             if cube is None:
                 box = tuple(pg.bbox)
                 if not any(box):          # never set (a new model): the tight box of the geometry
-                    box = _geometry_box(x, s3)
+                    box = bboxes.minmax_to_prop(x, _geometry_box(x, s3))
                     pg.bbox = box
                 cube = bboxes.make_cube(x, box, s3, hidden=False)
             cube.hide_viewport = self.action == 'HIDE'

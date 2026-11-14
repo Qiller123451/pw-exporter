@@ -158,6 +158,16 @@ Imported models keep the chunk order of the file; new components follow, grouped
   `gsf.bbox_cubes`. Module `blender/bboxes.py`; the exporter also reads moved cubes before it saves.
 - Checked (bpy 5.3): hu_tools, all_special_weapons and all_misc save byte-identical to 1.8.0; moving the model and
   a mesh cube changes exactly those boxes in the saved file; the UI smoke test passes.
+- **1.9.1: the model box is min + SIZE, not min + max.** The game data shows it: in all_misc / hu_tools /
+  all_special_weapons the last three values are never the max corner of the geometry, but max − min. (The mesh box
+  is min + max, it's the quantisation range.) Before 1.9.1 an automatic model box (new or edited models, also in
+  1.8.0 and older) was written as min + max, so the game's red box did not cover the model; and the model's cube
+  showed the wrong box. Now the exporter writes min + size, the cube shows min … min + size, and the root's
+  *Bounding box* value is min x y z, size x y z, as in the file. Flat meshes (zero thickness) no longer switch to a
+  set box by themselves.
+- **1.9.1: billboards parented to a bone** (Parent: the armature, Parent Type: Bone) are saved as skinned billboards
+  (0x80000001) with every sprite on that bone. Before, they were always saved static, whatever type was set. A
+  billboard set to skinned without an armature parent is saved static with a warning.
 
 ## Known limits
 

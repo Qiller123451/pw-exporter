@@ -205,6 +205,10 @@ stored in). Each has the checkbox **Automatic bounding box**, ticked by default:
 - **Unticked**: the box shown below the checkbox is written as it is. For a mesh, vertices outside it are moved onto
   it (the save warns about it), so make it at least as big as the mesh.
 
+The numbers are stored like the file stores them: a **mesh** box is *min x y z, max x y z*; the **model** box is
+*min x y z, size x y z* (the far corner is min + size). The model box is the red box the game shows around a
+selected model.
+
 Every box also has a **cube**: an empty with the display type *Cube*, named `<object> bbox` and parented to the model
 root or the mesh. The import makes them hidden. Show them with **Show box cube** (the selected root or mesh) or
 **Show all bounding box cubes of the model** (root panel), hide them with **Hide**, or use the eye / monitor icons in

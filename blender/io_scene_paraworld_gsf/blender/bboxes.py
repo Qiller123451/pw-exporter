@@ -10,6 +10,11 @@ the box into the owner's `bbox` property and turns its automatic box off; editin
 
 Boxes are stored in GSF space (the game's axes); the cube lives in Blender space, so the mirror axis of the archive
 (stored on the cube as `gsf_s3`) is applied in between.
+
+The two boxes are stored differently in the file (checked on the game data, 1.9.1):
+    mesh box   min x y z, max x y z   (the quantisation range of the vertices)
+    model box  min x y z, SIZE x y z  (max = min + size; the red box the game shows around a selected model)
+The properties hold the file's form; the cube code works with min / max (prop_to_minmax / minmax_to_prop).
 """
 import bpy
 from mathutils import Matrix, Vector
@@ -23,6 +28,26 @@ def owner_props(owner):
     if owner is None:
         return None
     return owner.gsf_model if owner.gsf_model.is_root else owner.gsf
+
+
+def is_model(owner):
+    return owner is not None and owner.gsf_model.is_root
+
+
+def prop_to_minmax(owner, box):
+    """the owner's bbox property (file form) -> min xyz, max xyz"""
+    b = [float(x) for x in box]
+    if is_model(owner):
+        return tuple(b[:3]) + tuple(b[k] + b[k + 3] for k in range(3))
+    return tuple(b)
+
+
+def minmax_to_prop(owner, mm):
+    """min xyz, max xyz -> the owner's bbox property (file form)"""
+    b = [float(x) for x in mm]
+    if is_model(owner):
+        return tuple(b[:3]) + tuple(b[k + 3] - b[k] for k in range(3))
+    return tuple(b)
 
 
 def find_cube(owner):
@@ -74,7 +99,8 @@ def place_cube(cube, box):
 
 
 def make_cube(owner, box, s3, collection=None, hidden=True):
-    """the owner's cube, made if missing, placed on `box` (GSF space)"""
+    """the owner's cube, made if missing, placed on `box` (GSF space, the owner's bbox property form)"""
+    box = prop_to_minmax(owner, box)
     cube = find_cube(owner)
     if cube is None:
         cube = bpy.data.objects.new('%s bbox' % owner.name, None)
@@ -102,7 +128,7 @@ def on_bbox_prop(self, context):
     owner = self.id_data
     cube = find_cube(owner) if isinstance(owner, bpy.types.Object) else None
     if cube is not None:
-        place_cube(cube, tuple(self.bbox))
+        place_cube(cube, prop_to_minmax(owner, self.bbox))
 
 
 def sync_from_cube(owner):
@@ -114,8 +140,8 @@ def sync_from_cube(owner):
     pg = owner_props(owner)
     if cube is None or pg is None:
         return False
-    box = cube_to_gsf_box(cube)
-    if all(abs(a - b) <= 1e-4 * max(1.0, abs(b)) for a, b in zip(box, pg.bbox)):
+    box = minmax_to_prop(owner, cube_to_gsf_box(cube))
+    if all(abs(a - b) <= max(3e-4, 1e-4 * abs(b)) for a, b in zip(box, pg.bbox)):
         return False
     _busy = True
     try:
@@ -143,8 +169,8 @@ def depsgraph_handler(scene, depsgraph):
         pg = owner_props(cube.parent)
         if pg is None:
             continue
-        box = cube_to_gsf_box(cube)
-        if all(abs(a - b) <= 1e-4 * max(1.0, abs(b)) for a, b in zip(box, pg.bbox)):
+        box = minmax_to_prop(cube.parent, cube_to_gsf_box(cube))
+        if all(abs(a - b) <= max(3e-4, 1e-4 * abs(b)) for a, b in zip(box, pg.bbox)):
             continue        # float rounding of the cube's matrix, not an edit
         _busy = True
         try:

@@ -399,10 +399,14 @@ class Exporter:
                                                                key=lambda o: (o.gsf.order, o.name))]
             m.material_list = self.material_list_for(self.model_mat_list)
             if g.auto_bbox:
-                box = self._bbox(chunk_objs)
+                # the model box is stored as min xyz + SIZE xyz (not max): see bboxes.py
+                tight = self._bbox(chunk_objs)
+                box = tight[:3] + tuple(tight[k + 3] - tight[k] for k in range(3))
                 hint = root.get('gsf_bbox')
-                if hint is not None and len(hint) == 6 and box_holds(hint, box):
-                    box = tuple(float(x) for x in hint)     # the file's box while it still holds the geometry
+                if hint is not None and len(hint) == 6:
+                    h = [float(x) for x in hint]
+                    if box_holds(h[:3] + [h[k] + h[k + 3] for k in range(3)], tight):
+                        box = tuple(h)                      # the file's box while it still holds the geometry
                 m.v['bounding_box'] = box
                 if any(abs(a - b) > 1e-6 for a, b in zip(box, g.bbox)):
                     g.bbox = box                            # the bbox cube shows what was saved
@@ -1050,7 +1054,7 @@ class Exporter:
         return cv
 
     # ===================================================================================== effects
-    def points_raw(self, me, stride, names, o=None):
+    def points_raw(self, me, stride, names, o=None, bone=None):
         n = len(me.vertices)
         co = np.zeros(n * 3, dtype=np.float64)
         me.vertices.foreach_get('co', co)
@@ -1062,12 +1066,28 @@ class Exporter:
             ub = np.zeros(n, dtype=np.int64)
             a.data.foreach_get('value', ub)
             f['unk_bit'] = ub
-        if stride >= 13 and o is not None:
+        if stride >= 13 and bone is not None:
+            # parented to one bone: every sprite follows that bone
+            f['bone_ids'] = np.tile(np.array([bone, 255, 255, 255], dtype=np.uint8), (n, 1))
+            f['bone_weights'] = np.tile(np.array([255, 0, 0, 0], dtype=np.uint8), (n, 1))
+        elif stride >= 13 and o is not None:
             f['bone_ids'], f['bone_weights'] = self._vertex_bones(o, me, names)
         return VX.encode_billboard(f, stride), bbox
 
     def billboard_chunk(self, o):
         skinned = o.parent is not None and o.parent.type == 'ARMATURE' and any(md.type == 'ARMATURE' for md in o.modifiers)
+        # 1.9.1: parented to a bone (Parent Type Bone) = skinned too, every sprite on that bone. Before, a billboard
+        # parented to a bone was always saved static, whatever type was set.
+        bone = None
+        if o.parent_type == 'BONE' and o.parent is not None and o.parent in self.skels:
+            names = self.skels[o.parent]['names']
+            if o.parent_bone in names:
+                bone = names.index(o.parent_bone)
+                skinned = True
+        want = P.parse_hex(o.gsf.p_billboard.type_id, 1)
+        if want == 0x80000001 and not skinned:
+            self.warnings.append('%s: saved as a static billboard: a skinned one needs the armature as parent and '
+                                 'either Parent Type Bone or an Armature modifier with vertex groups' % o.name)
         t = self._variant(o, 'billboard', skinned)
         c = KINDS['billboard'](t)
         self._common(o, c)
@@ -1080,7 +1100,7 @@ class Exporter:
             c.v['vertex_size'] = max(13, c.v['vertex_size'])
         else:
             c.v['vertex_size'] = 5
-        c.raw, c.v['bounding_box'] = self.points_raw(o.data, c.v['vertex_size'], names, o)
+        c.raw, c.v['bounding_box'] = self.points_raw(o.data, c.v['vertex_size'], names, o, bone)
         return c
 
     def particle_chunk(self, o):
